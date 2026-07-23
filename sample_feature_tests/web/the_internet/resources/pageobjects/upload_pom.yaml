@@ -1,0 +1,11 @@
+# Page object — upload page (/upload). The <input type=file> has no
+# <label>/aria-label; its computed accessible name is the browser's own
+# "Choose File" button text, not anything derived from the page, so an
+# explicit override is required.
+# NB: filename must match the URL path segment ("upload", not "file_upload")
+# — an unmatched-word stem makes the auto-scope match: {url_contains: ...}
+# never activate (docs/feature-packages.md § per-page POM files need match:).
+# Found this the hard way: it silently fell through to healing on first run.
+
+file upload input:
+  css: "#file-upload"

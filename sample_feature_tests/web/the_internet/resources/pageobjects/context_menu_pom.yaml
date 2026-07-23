@@ -1,0 +1,5 @@
+# Page object — context_menu. The right-click target is an empty <div> with
+# no text or accessible name.
+
+hot spot:
+  css: "#hot-spot"

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BusterBlock.ca — Login</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body data-page="login">
+
+<main class="login-page">
+  <div class="login-box">
+
+    <div class="login-hero">
+      <!-- VHS Cassette Logo SVG -->
+      <svg class="login-logo" viewBox="0 0 120 80" xmlns="http://www.w3.org/2000/svg" aria-label="BusterBlock VHS logo">
+        <defs>
+          <linearGradient id="body-grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#1a1a35"/>
+            <stop offset="100%" stop-color="#0d0d20"/>
+          </linearGradient>
+        </defs>
+        <!-- Cassette body -->
+        <rect x="3" y="8" width="114" height="64" rx="8" fill="url(#body-grad)" stroke="#00e87a" stroke-width="1.5"/>
+        <!-- Label area -->
+        <rect x="12" y="15" width="96" height="30" rx="4" fill="#080814"/>
+        <!-- Brand label -->
+        <text x="60" y="27" text-anchor="middle" fill="#00e87a" font-size="8" font-family="monospace" font-weight="700" letter-spacing="2">BUSTERBLOCK</text>
+        <text x="60" y="38" text-anchor="middle" fill="#ffaa00" font-size="6" font-family="monospace" letter-spacing="1">.ca  ·  VHS</text>
+        <!-- Tape window -->
+        <rect x="20" y="50" width="80" height="16" rx="3" fill="#050510" stroke="#1e1e42" stroke-width="1"/>
+        <!-- Left reel -->
+        <g transform="translate(40, 58)">
+          <circle r="11" fill="#0a0a20" stroke="#1e1e42" stroke-width="1" class="vhs-reel-left"/>
+          <circle r="5" fill="#00e87a" opacity=".8" class="vhs-reel-left"/>
+          <circle r="2" fill="#080814" class="vhs-reel-left"/>
+        </g>
+        <!-- Right reel -->
+        <g transform="translate(80, 58)">
+          <circle r="11" fill="#0a0a20" stroke="#1e1e42" stroke-width="1" class="vhs-reel-right"/>
+          <circle r="5" fill="#00e87a" opacity=".8" class="vhs-reel-right"/>
+          <circle r="2" fill="#080814" class="vhs-reel-right"/>
+        </g>
+        <!-- Tape ribbon -->
+        <path d="M29 58 Q40 53 52 58 Q60 62 68 58 Q80 53 91 58" stroke="#ffaa00" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+        <!-- Hub holes -->
+        <circle cx="40" cy="58" r="2.5" fill="none" stroke="#00e87a" stroke-width="1" opacity=".5"/>
+        <circle cx="80" cy="58" r="2.5" fill="none" stroke="#00e87a" stroke-width="1" opacity=".5"/>
+      </svg>
+
+      <h1>BusterBlock<span class="dot-ca">.ca</span></h1>
+      <p class="tagline">Be kind, rewind. Rent a classic tonight.</p>
+    </div>
+
+    <div id="login-error" class="alert alert-error hidden" role="alert"></div>
+
+    <form id="login-form" novalidate>
+      <div class="form-group">
+        <label for="username">Username</label>
+        <input
+          id="username"
+          type="text"
+          name="username"
+          class="form-control"
+          placeholder="your_username"
+          autocomplete="username"
+          required
+        >
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input
+          id="password"
+          type="password"
+          name="password"
+          class="form-control"
+          placeholder="••••••••"
+          autocomplete="current-password"
+          required
+        >
+      </div>
+      <button type="submit" class="btn btn-primary btn-full btn-lg">Login</button>
+    </form>
+
+    <p class="mt-2 text-muted" style="text-align:center;font-size:0.78rem;">
+      Demo: <span class="mono text-green">reel_ryan</span> /
+      <span class="mono text-amber">Popcorn1!</span>
+    </p>
+  </div>
+</main>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

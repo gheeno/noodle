@@ -1,0 +1,6 @@
+{
+  "cucumberautocomplete.steps": [".cucumber_stubs.py"],
+  "cucumberautocomplete.syncfeatures": "tests/**/*.feature",
+  "cucumberautocomplete.strictGherkinCompletion": false,
+  "chat.promptFiles": true
+}

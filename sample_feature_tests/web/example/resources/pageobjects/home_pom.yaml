@@ -1,0 +1,13 @@
+# Page object — Example home page. Filename 'home' == page name.
+# Scoped by URL; pin with: User is on the "home" page
+#
+# Why these selectors (verified against the live site):
+#   - #search-input is a DUPLICATED id (hidden mobile + desktop); the visible
+#     one is targeted with :visible rather than the id.
+#   - the framework's fill does not submit, so a separate submit button is needed.
+match: { url_contains: "en.html" }
+
+searchbox:
+  css: 'input[data-testid="search-input"]:visible'
+searchbutton:
+  css: 'button[aria-label="Search"]:visible'

@@ -1,0 +1,8 @@
+# noodle.yaml — this repo is its own workspace; the bundled sample suites
+# live in sample_feature_tests/ (renamed from tests/ — NOOD_0062 follow-up).
+# User workspaces created by `noodle init` scaffold tests_dir: noodle_tests.
+tests_dir: sample_feature_tests
+env_file: .env
+reports_dir: artifacts/reports
+browser: chromium
+headless: true

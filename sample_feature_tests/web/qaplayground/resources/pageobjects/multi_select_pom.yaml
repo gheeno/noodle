@@ -1,0 +1,14 @@
+# Page object — qaplayground /practice/multi-select
+match: { url_contains: "/practice/multi-select" }
+fruit multi select: { id: fruitMultiSelect }
+skills multi select: { id: skillsMultiSelect }
+country multi select: { id: countryMultiSelect }
+React: { id: tech-react }
+Svelte: { id: tech-svelte }
+tag count: { id: tagCountOutput }
+
+# Both of these also appear in this page's own FAQ/help copy ("How do I
+# select multiple options...", "How do I automate checkbox-based
+# multi-select..."), so the plain-text locator matches the FAQ button too.
+select all: { id: selectAllBtn }
+selenium: { id: tag-option-selenium }

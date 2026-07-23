@@ -1,0 +1,265 @@
+# Noodle — Azure DevOps pipeline (Windows)
+trigger:
+  - main
+  - develop
+
+pool:
+  vmImage: windows-latest
+
+# See azure-pipelines.yml (Linux) for the full rationale on every parameter
+# and variable below — this file mirrors it, powershell instead of bash.
+parameters:
+  - name: useExternalTestsRepo
+    displayName: 'Run against an external tests repo instead of this repo''s bundled tests/ (classic mode)'
+    type: boolean
+    default: false
+  - name: testsRepoType
+    displayName: 'External tests repo host (only used when useExternalTestsRepo is true)'
+    type: string
+    default: git
+    values:
+      - git      # Azure Repos, same organization
+      - github   # GitHub — needs a service connection, see testsRepoGithubEndpoint
+  - name: testsRepoName
+    displayName: 'External tests repo, e.g. "MyProject/noodle_tests" (Azure Repos) or "my-org/noodle_tests" (GitHub)'
+    type: string
+    default: ''
+  - name: testsRepoRef
+    displayName: 'External tests repo ref'
+    type: string
+    default: refs/heads/main
+  - name: testsRepoGithubEndpoint
+    displayName: 'GitHub service connection name (only used when testsRepoType is github)'
+    type: string
+    default: ''
+  - name: testsRepoDir
+    displayName: 'tests_dir inside the external repo (its noodle.yaml tests_dir value — e.g. "tests" or "noodle_tests")'
+    type: string
+    default: tests
+  - name: testTag
+    displayName: 'Only run scenarios with this tag, e.g. smoke (blank = run everything discovered)'
+    type: string
+    default: ''
+  - name: headless
+    displayName: 'Run browsers headless (recommended — leave true unless debugging a specific run)'
+    type: boolean
+    default: true
+
+resources:
+  repositories:
+    - ${{ if and(eq(parameters.useExternalTestsRepo, true), eq(parameters.testsRepoType, 'github')) }}:
+      - repository: testsRepo
+        type: github
+        name: ${{ parameters.testsRepoName }}
+        ref: ${{ parameters.testsRepoRef }}
+        endpoint: ${{ parameters.testsRepoGithubEndpoint }}
+    - ${{ if and(eq(parameters.useExternalTestsRepo, true), ne(parameters.testsRepoType, 'github')) }}:
+      - repository: testsRepo
+        type: git
+        name: ${{ parameters.testsRepoName }}
+        ref: ${{ parameters.testsRepoRef }}
+
+variables:
+  - group: noodle-secrets
+  # Parallelism toggle — see the Linux pipeline. 0 = single process per shard.
+  - name: parallelProcesses
+    value: 0
+  - name: workspaceDir
+    ${{ if eq(parameters.useExternalTestsRepo, true) }}:
+      value: $(Pipeline.Workspace)/testsRepo
+    ${{ else }}:
+      value: $(Build.SourcesDirectory)
+  - name: testsRoot
+    ${{ if eq(parameters.useExternalTestsRepo, true) }}:
+      value: $(Pipeline.Workspace)/testsRepo/${{ parameters.testsRepoDir }}
+    ${{ else }}:
+      value: sample_feature_tests
+  - name: headlessFlag
+    ${{ if eq(parameters.headless, true) }}:
+      value: '--headless'
+    ${{ else }}:
+      value: '--headed'
+  - name: tagFlag
+    ${{ if ne(parameters.testTag, '') }}:
+      value: '--tag ${{ parameters.testTag }}'
+    ${{ else }}:
+      value: ''
+
+# File-level web sharding (Phase E) — see the Linux pipeline for the full notes.
+# `discover` emits a dynamic matrix of WEB .feature files; `tests` runs one per
+# agent. Other platforms (@appium/@desktop) are excluded and shard elsewhere.
+jobs:
+  - job: discover
+    steps:
+      - checkout: self
+      - ${{ if eq(parameters.useExternalTestsRepo, true) }}:
+        - checkout: testsRepo
+
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: '3.11'
+      # NOOD_0058 — the Windows unit-suite run that the readiness audit
+      # called out as asserted-but-never-executed; also fails fast before
+      # the browser shard fan-out, mirroring azure-pipelines.yml.
+      # NOOD_0074 — `llm` is excluded from `all` (see azure-pipelines.yml);
+      # add it back explicitly so the LLM-dependent unit tests still run.
+      - powershell: |
+          pip install -e ".[all,llm]"
+          python -m pytest unit_tests -q
+        displayName: 'Unit tests (gate the shard matrix)'
+        workingDirectory: $(Build.SourcesDirectory)
+      - powershell: |
+          $matrix = python scripts/list_features.py --root "$(testsRoot)"
+          Write-Host "##vso[task.setvariable variable=matrix;isOutput=true]$matrix"
+        name: gen
+        displayName: 'Discover web feature files'
+        workingDirectory: $(Build.SourcesDirectory)
+
+  - job: tests
+    dependsOn: discover
+    strategy:
+      maxParallel: 4
+      matrix: $[ dependencies.discover.outputs['gen.matrix'] ]
+
+    steps:
+      - checkout: self
+      - ${{ if eq(parameters.useExternalTestsRepo, true) }}:
+        - checkout: testsRepo
+
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: '3.11'
+
+      - script: |
+          pip install -e ".[all,llm]"
+          playwright install chromium --with-deps
+        displayName: Install Noodle
+        workingDirectory: $(Build.SourcesDirectory)
+
+      # NOOD_0042 — see azure-pipelines.yml (Linux) for the rationale: BusterBlock
+      # is the bundled Node/Express test app, not a real remote site.
+      - task: NodeTool@0
+        inputs:
+          versionSpec: '18.x'
+        displayName: 'Use Node.js 18'
+
+      - powershell: |
+          cd test-apps/busterblock
+          npm ci
+          Start-Process npm -ArgumentList 'start' -RedirectStandardOutput "$(Build.SourcesDirectory)\busterblock.log" -RedirectStandardError "$(Build.SourcesDirectory)\busterblock.err.log"
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try { Invoke-WebRequest -Uri http://localhost:3333 -UseBasicParsing | Out-Null; $ok = $true; break } catch { Start-Sleep -Seconds 1 }
+          }
+          if (-not $ok) { Write-Error "BusterBlock never came up on :3333"; Get-Content "$(Build.SourcesDirectory)\busterblock.log","$(Build.SourcesDirectory)\busterblock.err.log" -ErrorAction SilentlyContinue; exit 1 }
+        displayName: 'Start BusterBlock test app'
+        workingDirectory: $(Build.SourcesDirectory)
+
+      - script: |
+          # NOOD_0086 — shards run single .feature files, which would route
+          # artifacts into each app's report/ folder; CI needs the classic
+          # shared artifacts/ tree for the publish steps below, so pin it.
+          noodle run "$(featurePath)" --workspace "$(workspaceDir)" $(headlessFlag) $(tagFlag)
+        displayName: 'Run tests — $(featurePath)'
+        env:
+          NOODLE_ARTIFACTS_DIR: artifacts
+          BASE_URL: $(BASE_URL)
+          MY_EMAIL: $(MY_EMAIL)
+          MY_CARD: $(MY_CARD)
+          NOODLE_LLM_URL: $(NOODLE_LLM_URL)
+          NOODLE_MODEL: $(NOODLE_MODEL)
+          NOODLE_PARALLEL_PROCESSES: $(parallelProcesses)   # 0 = single process
+          # Optional Key Vault — see the Linux pipeline for setup notes.
+          NOODLE_KEYVAULT_URL: $(NOODLE_KEYVAULT_URL)
+
+      # `noodle run` only auto-writes a bare markdown RCA when a scenario
+      # failed AND parallelProcesses is 0 (see noodle/hooks.py::after_all) —
+      # never the HTML view, never on a clean run. Generate both explicitly
+      # here (condition: always()) so the published artifact always has one.
+      - powershell: |
+          New-Item -ItemType Directory -Force -Path "$(workspaceDir)/artifacts/allure-results" | Out-Null
+          noodle rca-report --workspace "$(workspaceDir)" --out "$(workspaceDir)/artifacts/reports/rca.md"
+          python -c "from pathlib import Path; from noodle.reporting import rca_report as r; Path('$(workspaceDir)/artifacts/reports/rca.html').write_text(r.render_html('$(workspaceDir)/artifacts/allure-results'))"
+          Write-Host "##vso[task.uploadsummary]$(workspaceDir)/artifacts/reports/rca.md"
+        displayName: 'Generate RCA report'
+        condition: always()
+        workingDirectory: $(Build.SourcesDirectory)
+
+      - task: PublishTestResults@2
+        condition: always()
+        inputs:
+          testResultsFormat: JUnit
+          testResultsFiles: $(workspaceDir)/artifacts/reports/junit.xml
+          testRunTitle: 'Noodle — $(Build.SourceBranchName) — $(featurePath)'
+
+      # Raw allure-results feed the suite-report job below (same split as
+      # the Linux pipeline): publish them per-shard, then drop them from
+      # TestArtifacts so they aren't shipped twice.
+      - task: PublishPipelineArtifact@1
+        condition: always()
+        inputs:
+          targetPath: $(workspaceDir)/artifacts/allure-results
+          artifact: 'allure-results-$(System.JobName)'
+          publishLocation: pipeline
+
+      - powershell: Remove-Item -Recurse -Force "$(workspaceDir)/artifacts/allure-results" -ErrorAction SilentlyContinue
+        condition: always()
+        displayName: 'Drop raw allure-results from TestArtifacts'
+
+      # Everything else a run produces (allure report, RCA, junit, screenshots,
+      # traces, videos, healing report) lives under artifacts/ in the
+      # workspace that was actually tested — publish it in one shot.
+      - task: PublishPipelineArtifact@1
+        condition: always()
+        inputs:
+          targetPath: $(workspaceDir)/artifacts
+          artifact: 'TestArtifacts-$(System.JobName)'
+          publishLocation: pipeline
+
+  # Suite-level Allure 3 report + history tab — near-direct port of the Linux
+  # pipeline's `report` job (see azure-pipelines.yml for the full rationale:
+  # --single-file is REQUIRED for the Qameta tab, history capped at 30 runs).
+  - job: report
+    displayName: 'Suite Allure report + history tab'
+    dependsOn: tests
+    condition: always()
+    steps:
+      - checkout: none
+      - powershell: |
+          npm install -g allure@3.14.1
+          if ((allure --version) -ne "3.14.1") { Write-Error "allure version mismatch"; exit 1 }
+        displayName: 'Install Allure 3 CLI (pinned)'
+      - task: DownloadPipelineArtifact@2
+        inputs:
+          patterns: 'allure-results-*/**'
+          path: $(Pipeline.Workspace)/shards
+        displayName: 'Download shard results'
+      - task: Cache@2
+        inputs:
+          key: '"allure-history-suite-win" | "$(Build.BuildId)"'
+          restoreKeys: |
+            "allure-history-suite-win"
+          path: $(Pipeline.Workspace)/allure-history
+        displayName: 'Restore suite Allure history (7-day pipeline cache)'
+      - powershell: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path merged, allure-history | Out-Null
+          Get-ChildItem shards -Directory | ForEach-Object { Copy-Item "$($_.FullName)/*" merged -Recurse -Force }
+          $history = "$(Pipeline.Workspace)/allure-history/history.jsonl"
+          allure awesome --single-file --report-name "Noodle Suite" --output allure-report --history-path "$history" merged
+          if (Test-Path $history) { Get-Content $history -Tail 30 | Set-Content "$history.tmp"; Move-Item "$history.tmp" $history -Force }
+        workingDirectory: $(Pipeline.Workspace)
+        displayName: 'Merge shard results + generate suite report'
+      # testResultsDir + reportDir both set on purpose — see the Linux
+      # pipeline's version-adaptive note on PublishAllureReport@2.
+      - task: PublishAllureReport@2
+        inputs:
+          testResultsDir: $(Pipeline.Workspace)/merged
+          reportDir: $(Pipeline.Workspace)/allure-report
+          reportName: 'Allure Report'
+        displayName: 'Publish Allure Report tab'
+      - task: PublishPipelineArtifact@1
+        inputs:
+          targetPath: $(Pipeline.Workspace)/allure-report
+          artifact: 'AllureReport-SingleFile'
+        displayName: 'Publish single-file Allure report'

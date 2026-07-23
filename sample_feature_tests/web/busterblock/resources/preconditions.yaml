@@ -1,0 +1,28 @@
+# Data preconditions for BusterBlock. Reference one from a scenario with a
+# @precondition:NAME tag. `setup:` runs before the scenario, `teardown:` after
+# (even on failure). Each line is "METHOD URL [JSON-body]"; {env:BUSTERBLOCK}
+# resolves from environments.yaml. Quote any line with a JSON body — the ': '
+# inside it is YAML-significant otherwise.
+
+# Force the movie "Jaws" (id 1) out of stock before the test.
+jaws_out_of_stock:
+  setup:
+    - POST {env:BUSTERBLOCK}/api/test/reset
+    - 'PATCH {env:BUSTERBLOCK}/api/test/stock {"movieId": 1, "stock": 0}'
+  teardown:
+    - POST {env:BUSTERBLOCK}/api/test/reset
+
+# Reset server state (stock + carts + orders) before scenarios that write data.
+reset_state:
+  setup:
+    - POST {env:BUSTERBLOCK}/api/test/reset
+  teardown:
+    - POST {env:BUSTERBLOCK}/api/test/reset
+
+# Pre-fill reel_ryan's cart with "Star Wars: A New Hope" (id 2) — no UI clicks.
+cart_preseeded:
+  setup:
+    - POST {env:BUSTERBLOCK}/api/test/reset
+    - 'POST {env:BUSTERBLOCK}/api/test/seed-cart {"username": "reel_ryan", "items": [{"movieId": 2, "qty": 1}]}'
+  teardown:
+    - POST {env:BUSTERBLOCK}/api/test/reset

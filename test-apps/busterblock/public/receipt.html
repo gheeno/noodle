@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Receipt — BusterBlock.ca</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body data-page="receipt">
+
+<div class="receipt-page">
+
+  <!-- Error state -->
+  <div id="receipt-error" class="alert alert-error hidden" role="alert">
+    Receipt not found. <a href="/catalog.html">Return to catalog</a>.
+  </div>
+
+  <!-- Receipt card -->
+  <div id="receipt-content" class="receipt-card hidden">
+
+    <header class="receipt-header scanlines">
+      <!-- VHS logo -->
+      <svg width="64" height="44" viewBox="0 0 120 80" style="margin-bottom:0.75rem" aria-hidden="true">
+        <rect x="3" y="8" width="114" height="64" rx="8" fill="#0a1a12" stroke="#00e87a" stroke-width="1.5"/>
+        <rect x="12" y="15" width="96" height="30" rx="4" fill="#050f09"/>
+        <text x="60" y="27" text-anchor="middle" fill="#00e87a" font-size="8" font-family="monospace" font-weight="700" letter-spacing="2">BUSTERBLOCK</text>
+        <text x="60" y="38" text-anchor="middle" fill="#ffaa00" font-size="6" font-family="monospace" letter-spacing="1">.ca  ·  VHS</text>
+        <rect x="20" y="50" width="80" height="16" rx="3" fill="#030a05" stroke="#0d2010" stroke-width="1"/>
+        <circle cx="40" cy="58" r="8" fill="#030a05" stroke="#0d2010" stroke-width="1"/>
+        <circle cx="40" cy="58" r="3.5" fill="#00e87a" opacity=".6"/>
+        <circle cx="80" cy="58" r="8" fill="#030a05" stroke="#0d2010" stroke-width="1"/>
+        <circle cx="80" cy="58" r="3.5" fill="#00e87a" opacity=".6"/>
+        <path d="M29 58 Q40 53 52 58 Q60 62 68 58 Q80 53 91 58" stroke="#ffaa00" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+      </svg>
+      <p class="receipt-brand">BusterBlock<span style="color:var(--amber)">.ca</span></p>
+      <p class="receipt-tagline">Thank you for renting with us!</p>
+    </header>
+
+    <div class="receipt-body">
+
+      <!-- Order meta -->
+      <div class="receipt-meta">
+        <div>
+          <p class="label">Order ID</p>
+          <p class="value" id="receipt-order-id">—</p>
+        </div>
+        <div>
+          <p class="label">Date</p>
+          <p class="value" id="receipt-date">—</p>
+        </div>
+        <div>
+          <p class="label">Customer</p>
+          <p class="value" id="receipt-customer">—</p>
+        </div>
+        <div>
+          <p class="label">Status</p>
+          <p class="value" style="color:var(--green)">Confirmed ✓</p>
+        </div>
+      </div>
+
+      <!-- Items -->
+      <table class="data-table" style="min-width:unset;width:100%" aria-label="Receipt items">
+        <thead>
+          <tr>
+            <th scope="col">Title</th>
+            <th scope="col">Qty</th>
+            <th scope="col">Unit</th>
+            <th scope="col">Total</th>
+          </tr>
+        </thead>
+        <tbody id="receipt-tbody"></tbody>
+      </table>
+
+      <!-- Totals -->
+      <div class="receipt-totals">
+        <div class="receipt-total-row">
+          <span>Subtotal</span>
+          <span class="mono" id="receipt-subtotal">—</span>
+        </div>
+        <div class="receipt-total-row">
+          <span>HST (13%)</span>
+          <span class="mono" id="receipt-tax">—</span>
+        </div>
+        <div class="receipt-total-row grand">
+          <span>Total</span>
+          <span id="receipt-total">—</span>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div style="display:flex;gap:0.75rem;margin-top:1.5rem;flex-wrap:wrap">
+        <button class="btn btn-ghost" onclick="window.print()">Print Receipt</button>
+        <a href="/catalog.html" class="btn btn-primary">Rent More</a>
+        <button class="btn btn-ghost" onclick="window.close()">Close Tab</button>
+      </div>
+    </div>
+
+    <footer class="receipt-footer">
+      Be kind, rewind &nbsp;·&nbsp; BusterBlock.ca &nbsp;·&nbsp; Established 1985<br>
+      Questions? reel_support@busterblock.ca
+    </footer>
+
+  </div>
+</div>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

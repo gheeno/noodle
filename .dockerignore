@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+allure-results
+allure-report
+screenshots
+traces
+videos
+baselines
+node_modules
+*.vsix

@@ -1,0 +1,5 @@
+# Page object — dropdown. The <select> has no name/label/aria-label, so its
+# accessible name is empty — an explicit css override is required.
+
+dropdown:
+  css: "#dropdown"

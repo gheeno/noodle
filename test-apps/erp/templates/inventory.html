@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Inventory — BeanCounter ERP{% endblock %}
+{% block content %}
+<h1>Inventory</h1>
+<p class="page-hint">Click a header to sort. Double-click a cell to edit — Enter or click away saves.</p>
+<div class="grid-toolbar">
+  <input id="grid-filter" data-testid="grid-filter" placeholder="Filter rows…" autocomplete="off">
+  <span class="row-count" id="row-count" data-testid="row-count"></span>
+</div>
+<div class="spinner" id="spinner" data-testid="loading-spinner">Loading beans…</div>
+<div class="grid-scroll">
+  <table class="grid hidden" id="grid" data-testid="inventory-grid"></table>
+</div>
+<form id="add-row-form" class="add-row-form hidden" data-testid="add-row-form">
+  <input name="sku" placeholder="SKU *" data-testid="add-sku" required>
+  <input name="name" placeholder="Name *" data-testid="add-name" required>
+  <input name="category" placeholder="Category *" data-testid="add-category" required>
+  <input name="qty" placeholder="Qty" type="number" value="0" data-testid="add-qty">
+  <input name="unit_price" placeholder="Unit price" type="number" step="0.01" value="0" data-testid="add-price">
+  <input name="reorder_level" placeholder="Reorder lvl" type="number" value="0" data-testid="add-reorder">
+  <input name="supplier" placeholder="Supplier" data-testid="add-supplier">
+  <button type="submit" data-testid="add-row-button">Add product</button>
+  <span class="form-error" id="add-row-error" data-testid="add-row-error"></span>
+</form>
+{% endblock %}
+{% block scripts %}<script>renderInventory();</script>{% endblock %}

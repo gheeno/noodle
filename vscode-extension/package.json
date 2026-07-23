@@ -1,0 +1,62 @@
+{
+  "name": "noodle",
+  "displayName": "Noodle",
+  "description": "Syntax highlighting, step validation and autocompletion for Noodle .feature files",
+  "version": "0.1.0",
+  "publisher": "noodle",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Testing", "Programming Languages"],
+  "keywords": ["bdd", "gherkin", "feature", "testing", "cucumber"],
+  "activationEvents": ["onLanguage:noodle"],
+  "main": "./client/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "noodle",
+        "aliases": ["Noodle Feature", "Gherkin", "BDD"],
+        "extensions": [".feature"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "noodle",
+        "scopeName": "source.noodle",
+        "path": "./syntaxes/noodle.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "noodle",
+        "path": "./snippets/noodle.code-snippets"
+      }
+    ],
+    "configuration": {
+      "title": "Noodle",
+      "properties": {
+        "noodle.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Python interpreter that has noodle installed. Leave blank to auto-detect the workspace .venv, falling back to python3 (python on Windows)."
+        },
+        "noodle.unknownStepSeverity": {
+          "type": "string",
+          "default": "warning",
+          "enum": ["warning", "information", "none"],
+          "enumDescriptions": [
+            "Yellow squiggle on steps the LLM will handle at runtime.",
+            "Blue dot in Problems panel only — no squiggle in the editor.",
+            "Silent — unknown steps show no indicator at all."
+          ],
+          "description": "How to mark steps that don't match a built-in pattern."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0"
+  }
+}

@@ -1,0 +1,61 @@
+# Page objects for BusterBlock (http://localhost:3333).
+# Most elements resolve via the accessibility tree without any POM entry.
+# These entries exist only for elements the a11y layer can't find by name.
+#
+# POM key rule: the key IS the locator you write in the step.
+#   User clicks the "genre dropdown"  →  key = "genre dropdown"
+#
+# Explicit empty `match: {}` opts into folder-global resolution — pom.py
+# otherwise auto-scopes a no-match per-page file to its filename stem
+# ("busterblock"), which never appears in a real localhost:3333 URL and
+# would silently make every key below unreachable.
+#
+# See docs/pom-key-mapping.md for the full lookup algorithm.
+
+match: {}
+
+# The catalog's genre <select> has aria-label="Filter by genre".
+# Both aliases resolve to the same element — use whichever reads most naturally.
+genre dropdown:
+  id: genre-filter
+
+genre filter:
+  id: genre-filter
+
+# The movie count badge (e.g. "50 movies") is a <span id="movie-count">
+# with no aria-label — JS fills it after load. No a11y name → POM required.
+movie count:
+  id: movie-count
+
+# The catalog heading is an <h1> that wraps the movie count badge.
+# Useful when you need to grab or assert the full heading text precisely.
+catalog heading:
+  css: 'main h1'
+
+# The catalog search box: aria-label="Search movies", not "search field".
+# Key is 'search', not 'search field' — "enters X in the search field" strips
+# the trailing " field" before the POM lookup (NOOD_0109), same rule as the
+# 'login'-not-'login button' note in docs/feature-packages.md.
+search:
+  id: search-input
+
+# The Checkout button on the cart page. Disambiguates against paragraph text
+# that also contains the word "checkout".
+checkout:
+  id: checkout-btn
+
+# The trailer page's runtime VALUE (e.g. "107 min"), not its "Runtime" label —
+# plain text-match on "runtime" would resolve to the label <p> instead.
+trailer runtime:
+  id: trailer-runtime
+
+# The catalog table renders one "Add to Cart"/"Preview" pair per movie row —
+# plain text-match is ambiguous across all 50+ rows. Scope to the first row
+# for scenarios that just need "some" movie in the cart, not a specific one
+# (see click.feature's "in the row containing 'Die Hard'" pattern for when a
+# scenario does care which movie).
+add to cart:
+  css: "#movies-tbody tr:first-child button.btn-primary"
+
+preview:
+  css: "#movies-tbody tr:first-child a.btn-ghost"

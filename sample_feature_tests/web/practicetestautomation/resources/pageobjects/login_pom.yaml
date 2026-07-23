@@ -1,0 +1,12 @@
+# Page object — login. The form's <input>/<button> have no <label>, so
+# accessible-name resolution can't find them — id-based css is required.
+# NB: key is 'login', not 'login button' — "clicks the login button" strips
+# the trailing " button" before the POM lookup (docs/feature-packages.md).
+# Same rule for fields (NOOD_0109): "enters X in the username field" looks
+# up 'username', so the keys below must not carry the ' field' suffix.
+username:
+  css: "#username"
+password:
+  css: "#password"
+login:
+  css: "#submit"

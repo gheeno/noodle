@@ -1,0 +1,7 @@
+# Page object — qaplayground /practice/alerts-dialogs
+match: { url_contains: "/practice/alerts-dialogs" }
+
+# "Sweet Alert" text also appears in this page's own FAQ/help copy
+# ("...using the Cancel button", "How do I close a modal dialog..."),
+# so the plain-text locator is ambiguous. Scope to the button's own id.
+sweet alert: { id: btn-modal-alert }

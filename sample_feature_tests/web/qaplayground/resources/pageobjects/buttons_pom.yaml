@@ -1,0 +1,6 @@
+# Page object — qaplayground /practice/buttons
+match: { url_contains: "/practice/buttons" }
+locked-btn: { id: btn-disabled }
+dbl-btn: { id: btn-double-click }
+rc-btn: { id: btn-right-click }
+home-btn: { id: btn-goto-home }

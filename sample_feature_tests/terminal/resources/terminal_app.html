@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Noodle Terminal Fixture</title>
+  <style>html,body{margin:0;background:#000}canvas{display:block}</style>
+</head>
+<body>
+  <!--
+    A deliberately DOM-less terminal: everything is painted to <canvas>, so
+    there is NO selectable text in the DOM. Playwright's get_by_text finds
+    nothing here — this is exactly the case the OCR/coordinate bridge exists for.
+    Black background, green monospace. Type a command, press Enter.
+    "login admin" → ACCESS GRANTED.  document.title mirrors the last line so the
+    keyboard/coordinate path stays verifiable even without OCR.
+  -->
+  <canvas id="t" width="800" height="400" tabindex="0"></canvas>
+  <script>
+    const c = document.getElementById('t'), x = c.getContext('2d');
+    let lines = ['Noodle Terminal v1', 'type a command and press Enter', ''];
+    let cur = '';
+
+    function setTitle(s) { document.title = s; }
+
+    function draw() {
+      x.fillStyle = '#000'; x.fillRect(0, 0, 800, 400);
+      x.fillStyle = '#00ff00'; x.font = '20px monospace';
+      lines.concat(['> ' + cur]).slice(-16)
+        .forEach((l, i) => x.fillText(l, 10, 28 + i * 22));
+    }
+
+    function run(cmd) {
+      lines.push('> ' + cmd);
+      let out = cmd === 'login admin' ? 'ACCESS GRANTED'
+              : cmd ? 'unknown command: ' + cmd : '';
+      if (out) { lines.push(out); setTitle(out); }
+    }
+
+    c.focus();
+    c.addEventListener('click', () => c.focus());
+    window.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { run(cur.trim()); cur = ''; }
+      else if (e.key === 'Backspace') { cur = cur.slice(0, -1); }
+      else if (e.key.length === 1) { cur += e.key; }
+      else return;
+      draw(); e.preventDefault();
+    });
+    draw();
+  </script>
+</body>
+</html>

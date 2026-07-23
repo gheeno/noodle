@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Employees — BeanCounter ERP{% endblock %}
+{% block content %}
+<h1>Employees</h1>
+<div class="grid-toolbar">
+  <input id="grid-filter" data-testid="grid-filter" placeholder="Filter rows…" autocomplete="off">
+  <span class="row-count" id="row-count" data-testid="row-count"></span>
+</div>
+<div class="spinner" id="spinner" data-testid="loading-spinner">Loading beans…</div>
+<div class="grid-scroll">
+  <table class="grid hidden" id="grid" data-testid="employees-grid"></table>
+</div>
+{% endblock %}
+{% block scripts %}<script>renderEmployees();</script>{% endblock %}

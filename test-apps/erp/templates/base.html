@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}BeanCounter ERP{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar" data-testid="topbar">
+    <a class="brand" href="/dashboard" data-testid="brand">🫘 BeanCounter <span class="brand-sub">ERP</span></a>
+    <nav data-testid="main-nav">
+      <a href="/dashboard" data-testid="nav-dashboard" class="{{ 'active' if page == 'dashboard' }}">Dashboard</a>
+      <a href="/inventory" data-testid="nav-inventory" class="{{ 'active' if page == 'inventory' }}">Inventory</a>
+      <a href="/orders" data-testid="nav-orders" class="{{ 'active' if page == 'orders' }}">Orders</a>
+      <a href="/employees" data-testid="nav-employees" class="{{ 'active' if page == 'employees' }}">Employees</a>
+    </nav>
+    <div class="user-box">
+      <span data-testid="current-user">{{ session.display_name }} ({{ session.role }})</span>
+      <a href="/logout" data-testid="logout-link">Log out</a>
+    </div>
+  </header>
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="footer">BeanCounter ERP — Enterprise Resource Punishment. Counting beans since 2026.</footer>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

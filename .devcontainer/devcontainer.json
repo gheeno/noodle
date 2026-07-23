@@ -1,0 +1,10 @@
+{
+  "name": "Noodle",
+  "build": { "dockerfile": "../Dockerfile" },
+  "overrideCommand": true,
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python"]
+    }
+  }
+}

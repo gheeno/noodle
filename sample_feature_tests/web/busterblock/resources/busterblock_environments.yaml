@@ -1,0 +1,4 @@
+# Base URL for this package only. Safe to commit — no secrets here.
+# See ../../../../docs/feature-packages.md for the resolution order.
+
+busterblock: http://localhost:3333

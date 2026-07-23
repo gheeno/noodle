@@ -1,0 +1,43 @@
+# .env is committed (config only, no secrets). Secrets live in secrets.env.
+secrets.env
+# Per-app secrets — <tests_dir>/<type>/<app>/resources/<app>_secrets.env (see docs/feature-packages.md)
+**/resources/*_secrets.env
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+# All test-run output (allure-results/report, screenshots, traces, videos,
+# healing reports, junit) — one root so CI can archive it in a single step.
+reports/
+artifacts/
+# `noodle archive` zips artifacts/ here.
+archives/
+# Squad: ignore runtime state (logs, inbox, sessions)
+.squad/orchestration-log/
+.squad/log/
+.squad/decisions/inbox/
+.squad/sessions/
+.squad/.scratch/
+# Squad: SubSquad activation file (local to this machine)
+.squad-workstream
+# Squad: ignore runtime state (logs, inbox, sessions)
+.squad/.cache/
+# MAC
+.DS_Store
+
+# behavex parallel-run HTML report
+output/
+
+# scratch/planning docs, not shipped
+tmp/
+
+# generated LLM step-suggestion log (per-workspace runtime artifact, not a doc)
+docs/steps_dictionary_suggestions.md
+
+# Per-app run output written by `noodle run <app>` (NOOD_0086) — generated
+# artifacts, except the scaffolded placeholder README.
+**/report/*
+!**/report/README.md
+
+# Last-run pointer written by `noodle run` (NOOD_0086)
+.noodle/

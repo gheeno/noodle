@@ -1,0 +1,155 @@
+{
+  "Navigate to URL": {
+    "prefix": ["nav", "goto"],
+    "body": ["Given User is on '${1:[BASE_URL]}'"],
+    "description": "Open a page (URL or [VAR] from environments.yaml)"
+  },
+  "Click": {
+    "prefix": "click",
+    "body": ["When User clicks the '${1:Login}' button"],
+    "description": "Click a button/link/element by its visible name"
+  },
+  "Fill a field": {
+    "prefix": "fill",
+    "body": ["When User enters '${1:value}' in the ${2:username} field"],
+    "description": "Type into a form field"
+  },
+  "Select from dropdown": {
+    "prefix": "select",
+    "body": ["When User selects '${1:Option}' from the ${2:country} select"],
+    "description": "Pick a dropdown option"
+  },
+  "Assert visible": {
+    "prefix": "see",
+    "body": ["Then User should see '${1:Products}'"],
+    "description": "Assert text/element is visible"
+  },
+  "Wait until visible": {
+    "prefix": "wait",
+    "body": ["When User waits until '${1:spinner}' disappears"],
+    "description": "Wait for an element to appear/disappear"
+  },
+  "REST call + status assert": {
+    "prefix": "rest",
+    "body": [
+      "When User performs a ${1|GET,POST,PUT,PATCH,DELETE|} call at '${2:/objects}'",
+      "Then the response status should be ${3:200}"
+    ],
+    "description": "HTTP call with a status assertion"
+  },
+  "Scenario skeleton": {
+    "prefix": "scenario",
+    "body": [
+      "Scenario: ${1:Name}",
+      "  Given User is on '${2:[BASE_URL]}'",
+      "  When User ${3:clicks the 'Login' button}",
+      "  Then User should see '${4:Welcome}'"
+    ],
+    "description": "A minimal Given/When/Then scenario"
+  },
+  "No console errors (Phase M)": {
+    "prefix": "console",
+    "body": ["Then no console errors should be logged"],
+    "description": "Fail if the page logged JS console errors"
+  },
+  "No failed requests (Phase M)": {
+    "prefix": "netfail",
+    "body": ["Then no network requests should fail"],
+    "description": "Fail if any network request failed during the scenario"
+  },
+  "Request was made (Phase L)": {
+    "prefix": "reqmade",
+    "body": ["Then a request to '${1:**/api/cart*}' should have been made"],
+    "description": "Assert an observed request URL (substring or glob)"
+  },
+  "Set geolocation (Phase N)": {
+    "prefix": "geo",
+    "body": [
+      "When User grants permission 'geolocation'",
+      "And User sets geolocation to '${1:51.5},${2:-0.12}'"
+    ],
+    "description": "Grant + set geolocation at runtime"
+  },
+  "Close location prompt (Phase N)": {
+    "prefix": "locprompt",
+    "body": ["And the user closes the ${1|location,geolocation,notifications,camera,microphone|} prompt"],
+    "description": "Deny + close the browser permission bubble (e.g. 'wants to know your location')"
+  },
+  "Go offline / online (Phase O)": {
+    "prefix": "offline",
+    "body": [
+      "When User goes offline",
+      "${1:# … assert the offline UI …}",
+      "When User goes back online"
+    ],
+    "description": "Toggle network connectivity mid-scenario"
+  },
+  "Throttle network (Phase O)": {
+    "prefix": "throttle",
+    "body": ["When User throttles the network to '${1|slow-3g,fast-3g,4g|}'"],
+    "description": "CDP network throttling (Chromium only)"
+  },
+  "Accessibility audit (Phase P)": {
+    "prefix": "a11y",
+    "body": ["Then the page should have no ${1|critical,serious,moderate,minor|} accessibility violations"],
+    "description": "axe-core audit at an impact threshold"
+  },
+  "Clipboard (Phase Q)": {
+    "prefix": "clipboard",
+    "body": [
+      "When User clicks the '${1:Copy link}' button",
+      "Then the clipboard should contain '${2:https://}'"
+    ],
+    "description": "Copy-to-clipboard flow assertion (Chromium only)"
+  },
+  "WebSocket message (Phase R)": {
+    "prefix": "ws",
+    "body": ["Then a websocket message containing '${1:order_filled}' should be received"],
+    "description": "Assert on observed WebSocket traffic"
+  },
+  "Print media + pixel baseline (Phase S)": {
+    "prefix": "print",
+    "body": [
+      "When User emulates print media",
+      "Then the '${1:invoice-print}' screen should match the pixel baseline"
+    ],
+    "description": "Verify a @media print stylesheet"
+  },
+  "Save page as PDF (Phase S)": {
+    "prefix": "pdf",
+    "body": ["When User saves the page as pdf '${1:reports/out.pdf}'"],
+    "description": "Export the page to PDF (Chromium only)"
+  },
+  "Two-user flow (Phase J)": {
+    "prefix": "context",
+    "body": [
+      "Given a new browser context as '${1:buyer}'",
+      "When acting as '${1:buyer}'",
+      "${2:# … steps in the second session …}",
+      "When acting as 'main'"
+    ],
+    "description": "Multi-user scenario with named browser contexts"
+  },
+  "Launch app (Phase G4)": {
+    "prefix": "app",
+    "body": [
+      "Given User launches the app '${1:python -m http.server 8000}'",
+      "And the app should be running on port ${2:8000}"
+    ],
+    "description": "Start a process and health-check it (auto-killed at scenario end)"
+  },
+  "Mobile swipe (Phase F)": {
+    "prefix": "swipe",
+    "body": ["When User swipes ${1|left,right,up,down|}"],
+    "description": "Appium swipe gesture (@appium scenario)"
+  },
+  "Table-driven form fill": {
+    "prefix": "form",
+    "body": [
+      "When User fills in the form with:",
+      "  | field      | value      |",
+      "  | ${1:username} | ${2:standard} |"
+    ],
+    "description": "Fill several fields via a Gherkin table"
+  }
+}

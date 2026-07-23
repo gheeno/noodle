@@ -1,0 +1,20 @@
+# Page object — qaplayground /practice/forms
+match: { url_contains: "/practice/forms" }
+first-name-input: { id: firstName }
+last-name-input: { id: lastName }
+email-input: { id: email }
+phone-input: { id: phone }
+dob-input: { id: dob }
+gender-female-radio: { id: gender-female }
+country-select: { id: country }
+india-option: { css: "[role='option']:has-text('India')" }
+city-input: { id: city }
+bio-input: { id: bio }
+interest-selenium-box: { id: interest-selenium }
+interest-playwright-box: { id: interest-playwright }
+password-input: { id: password }
+confirm-password-input: { id: confirmPassword }
+terms-box: { id: terms }
+submit-btn: { id: submitFormBtn }
+reset-btn: { id: resetFormBtn }
+success-msg: { testid: form-success-msg }

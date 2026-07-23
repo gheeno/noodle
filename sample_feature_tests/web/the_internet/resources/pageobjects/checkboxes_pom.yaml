@@ -1,0 +1,8 @@
+# Page object — checkboxes. Neither <input> has an id, name, or <label> on
+# this page, so accessible-role/label resolution can't find them — nth-of-type
+# css overrides are the only reliable locator here.
+
+checkbox 1:
+  css: "#checkboxes input:nth-of-type(1)"
+checkbox 2:
+  css: "#checkboxes input:nth-of-type(2)"

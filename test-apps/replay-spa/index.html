@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Store Portal</title>
+<!-- NOOD_0131 Phase 1 — replay fixture for the baseline agent pipeline:
+     unfamiliar SPA login page, hidden dev-panel trigger, asset-tag
+     input, CUSTOM device-type dropdown, save/config transition,
+     username/password login, post-login heading + search control.
+     One file, no server: probe/run it via file:// . Credentials the
+     replay's secrets.env must carry: RSPA_USER=demo RSPA_PASS=demo123 -->
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem; }
+  .view { display: none; }
+  .view.active { display: block; }
+  /* hidden dev-panel hitbox — zero-size, undetectable except by class */
+  .trigger-dev-panel { position: fixed; top: 0; right: 0; width: 0; height: 0; }
+  .combo-options { display: none; border: 1px solid #999; width: 12rem; }
+  .combo-options.open { display: block; }
+  .combo-options div { padding: .25rem .5rem; cursor: pointer; }
+  .error { color: #b00; }
+</style>
+</head>
+<body>
+
+<div class="trigger-dev-panel" onclick="showView('dev')"></div>
+
+<section id="login" class="view active">
+  <h1>Store Portal Sign In</h1>
+  <label for="username">Username</label>
+  <input id="username" type="text">
+  <label for="password">Password</label>
+  <input id="password" type="password">
+  <button onclick="signIn()">Sign In</button>
+  <p id="loginError" class="error"></p>
+</section>
+
+<section id="dev" class="view">
+  <h2>Development Panel</h2>
+  <label for="assetTag">Asset Tag</label>
+  <input id="assetTag" type="text">
+  <label id="deviceTypeLabel">Device Type</label>
+  <div id="deviceType" role="combobox" aria-labelledby="deviceTypeLabel"
+       aria-expanded="false" tabindex="0" onclick="toggleCombo()">Select…</div>
+  <div id="deviceTypeOptions" class="combo-options">
+    <div role="option" onclick="pickDevice('Register')">Register</div>
+    <div role="option" onclick="pickDevice('Kiosk')">Kiosk</div>
+    <div role="option" onclick="pickDevice('Handheld')">Handheld</div>
+  </div>
+  <button onclick="saveConfig()">Save Configuration</button>
+  <p id="devError" class="error"></p>
+</section>
+
+<section id="home" class="view">
+  <h1>Branch #12 — Dashboard</h1>
+  <p>Device configured and signed in.</p>
+  <label for="inventorySearch">Search inventory</label>
+  <input id="inventorySearch" type="search" placeholder="Search inventory">
+</section>
+
+<script>
+  const state = { configured: false };
+
+  function showView(id) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  function toggleCombo() {
+    const opts = document.getElementById('deviceTypeOptions');
+    const open = opts.classList.toggle('open');
+    document.getElementById('deviceType').setAttribute('aria-expanded', open);
+  }
+
+  function pickDevice(name) {
+    document.getElementById('deviceType').textContent = name;
+    document.getElementById('deviceTypeOptions').classList.remove('open');
+  }
+
+  function saveConfig() {
+    const tag = document.getElementById('assetTag').value.trim();
+    const device = document.getElementById('deviceType').textContent;
+    if (!tag || device === 'Select…') {
+      document.getElementById('devError').textContent =
+        'Asset tag and device type are required.';
+      return;
+    }
+    state.configured = true;
+    // config saved → transition back to the login view (SPA, no reload)
+    showView('login');
+  }
+
+  function signIn() {
+    const u = document.getElementById('username').value;
+    const p = document.getElementById('password').value;
+    const err = document.getElementById('loginError');
+    if (!state.configured) { err.textContent = 'Device not configured.'; return; }
+    if (u !== 'demo' || p !== 'demo123') { err.textContent = 'Invalid credentials.'; return; }
+    err.textContent = '';
+    showView('home');
+  }
+</script>
+</body>
+</html>

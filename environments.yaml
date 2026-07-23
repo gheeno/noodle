@@ -1,0 +1,11 @@
+# Base URLs per app/environment. Safe to commit — no secrets here.
+# Top-level keys become [KEY] references in .feature files (e.g. [SAUCEDEMO]).
+# Real env vars / .env win over these, so CI can override without editing this file.
+
+saucedemo: https://www.saucedemo.com
+staging: https://staging.example.com
+uitestingplayground: http://uitestingplayground.com
+restfulapi: https://api.restful-api.dev
+appium_server: http://localhost:4723   # Appium server for @appium scenarios (Phase F)
+# busterblock moved to tests/web/busterblock/resources/busterblock_environments.yaml
+# (per-app packaging — see docs/feature-packages.md)

@@ -1,0 +1,18 @@
+# Shared page object — fallback-demo. ONE entry; everything else in this
+# folder's .feature files resolves via the accessibility tree and never reaches
+# a POM file. Explicit empty `match: {}` opts into folder-global resolution
+# (pom.py otherwise auto-scopes a no-match per-page file to its filename
+# stem, "shared" — which never appears in a real saucedemo.com URL, silently
+# making the key below unreachable).
+#
+# This entry exists because the saucedemo burger button is icon-only:
+#   <button id="react-burger-menu-btn">Open Menu</button>   ← text is hidden
+# so get_by_role / get_by_text return 0 matches for the label "burger menu".
+#
+# Key rule (see docs/pom-key-mapping.md):
+#   step  "User clicks the burger menu"  →  POM key = "burger menu"
+
+match: {}
+
+burger menu:
+  id: react-burger-menu-btn

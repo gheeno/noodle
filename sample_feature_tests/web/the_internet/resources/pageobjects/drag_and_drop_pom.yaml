@@ -1,0 +1,8 @@
+# Page object — drag_and_drop. The columns have no accessible name (just a
+# bare <header>A</header>/<header>B</header>), so id-based overrides are used
+# both as drag source/target and as the section scope for the post-drag assert.
+
+column a:
+  css: "#column-a"
+column b:
+  css: "#column-b"

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Preview — BusterBlock.ca</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body data-page="trailer">
+
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <linearGradient id="half-star-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="50%" stop-color="#ffaa00"/>
+      <stop offset="50%" stop-color="transparent"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<div class="trailer-page">
+
+  <div class="trailer-card">
+
+    <!-- Header banner -->
+    <div class="trailer-banner">
+      <!-- Animated VHS tape SVG -->
+      <div class="vhs-tape-anim">
+        <svg width="90" height="60" viewBox="0 0 120 80" aria-hidden="true">
+          <rect x="3" y="8" width="114" height="64" rx="8" fill="#1a0a0a" stroke="#ffaa00" stroke-width="1.5"/>
+          <rect x="12" y="15" width="96" height="26" rx="4" fill="#0a0505"/>
+          <text x="60" y="25" text-anchor="middle" fill="#ffaa00" font-size="7" font-family="monospace" font-weight="700" letter-spacing="1.5">PREVIEW</text>
+          <text x="60" y="34" text-anchor="middle" fill="#ff6644" font-size="5.5" font-family="monospace">NOT FOR RENTAL · DEMO ONLY</text>
+          <rect x="20" y="48" width="80" height="16" rx="3" fill="#060505" stroke="#1a0a0a" stroke-width="1"/>
+          <g transform="translate(40,56)">
+            <circle r="9" fill="#060505" stroke="#2a0a0a" stroke-width="1" class="vhs-reel-left"/>
+            <circle r="4" fill="#ffaa00" opacity=".7" class="vhs-reel-left"/>
+            <circle r="1.5" fill="#0a0505" class="vhs-reel-left"/>
+          </g>
+          <g transform="translate(80,56)">
+            <circle r="9" fill="#060505" stroke="#2a0a0a" stroke-width="1" class="vhs-reel-right"/>
+            <circle r="4" fill="#ffaa00" opacity=".7" class="vhs-reel-right"/>
+            <circle r="1.5" fill="#0a0505" class="vhs-reel-right"/>
+          </g>
+          <path d="M29 56 Q40 51 52 56 Q60 60 68 56 Q80 51 91 56" stroke="#ffaa00" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div>
+        <h1 id="trailer-title" style="font-size:1.4rem;font-weight:800;color:var(--text);margin-bottom:0.25rem">Loading…</h1>
+        <p id="trailer-year" class="mono text-amber" style="font-size:0.9rem"></p>
+        <div id="trailer-rating" style="margin-top:0.5rem"></div>
+      </div>
+    </div>
+
+    <div class="trailer-body">
+
+      <!-- Rewind indicator (visual test target) -->
+      <div class="rewind-indicator" aria-label="Now loading preview">
+        <span class="rewind-dot"></span>
+        LOADING PREVIEW… PLEASE STAND BY
+      </div>
+
+      <!-- Movie metadata grid -->
+      <div class="trailer-meta">
+        <div class="meta-item">
+          <p class="meta-label">Director</p>
+          <p class="meta-value" id="trailer-director">—</p>
+        </div>
+        <div class="meta-item">
+          <p class="meta-label">Cast</p>
+          <p class="meta-value" id="trailer-cast">—</p>
+        </div>
+        <div class="meta-item">
+          <p class="meta-label">Runtime</p>
+          <p class="meta-value" id="trailer-runtime">—</p>
+        </div>
+        <div class="meta-item">
+          <p class="meta-label">Genre</p>
+          <p class="meta-value" id="trailer-genre">—</p>
+        </div>
+      </div>
+
+      <!-- Description -->
+      <p id="trailer-desc" style="color:var(--text-dim);font-size:0.9rem;line-height:1.7;margin-bottom:1.5rem"></p>
+
+      <!-- VHS static placeholder (SVG) — visual agent target -->
+      <div style="
+        background: #080810;
+        border: 1px solid var(--border);
+        border-radius: var(--r);
+        padding: 2rem;
+        text-align: center;
+        margin-bottom: 1.5rem;
+        position: relative;
+        overflow: hidden;
+      ">
+        <svg viewBox="0 0 400 200" width="100%" height="140" aria-label="VHS static screen">
+          <defs>
+            <filter id="static-noise">
+              <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/>
+              <feColorMatrix type="saturate" values="0"/>
+              <feComposite in="SourceGraphic" operator="in"/>
+            </filter>
+          </defs>
+          <rect width="400" height="200" fill="#050508"/>
+          <rect width="400" height="200" fill="url(#noise-fill)" filter="url(#static-noise)" opacity=".15"/>
+          <!-- Horizontal scan lines (VHS static effect) -->
+          <g opacity=".4">
+            <rect y="20"  width="400" height="2" fill="#00e87a" opacity=".3"/>
+            <rect y="60"  width="400" height="1" fill="#00e87a" opacity=".2"/>
+            <rect y="95"  width="400" height="3" fill="#ffffff" opacity=".08"/>
+            <rect y="140" width="400" height="1" fill="#00e87a" opacity=".2"/>
+            <rect y="175" width="400" height="2" fill="#ffffff" opacity=".06"/>
+          </g>
+          <!-- "PLAY" text -->
+          <text x="200" y="90" text-anchor="middle" fill="#00e87a" font-size="28" font-family="monospace" font-weight="700" opacity=".6">&#9654; PLAY</text>
+          <text x="200" y="120" text-anchor="middle" fill="#ffaa00" font-size="11" font-family="monospace" opacity=".5">INSERT TAPE AND PRESS PLAY</text>
+          <text x="200" y="140" text-anchor="middle" fill="#444466" font-size="9" font-family="monospace">TRACKING ▪▪▪▪▪▪▪▪▪▪</text>
+          <!-- Blinking REC dot -->
+          <circle cx="30" cy="25" r="6" fill="#ff3355">
+            <animate attributeName="opacity" values="1;0.1;1" dur="1.2s" repeatCount="indefinite"/>
+          </circle>
+          <text x="42" y="29" fill="#ff3355" font-size="10" font-family="monospace" font-weight="700">REC</text>
+        </svg>
+      </div>
+
+      <!-- CTAs -->
+      <div class="trailer-cta">
+        <a
+          id="youtube-link"
+          class="btn btn-amber"
+          href="#"
+          target="_blank"
+          rel="noopener noreferrer"
+          onclick="openYouTube(event)"
+        >
+          &#9654; Find Trailer on YouTube
+        </a>
+        <button class="btn btn-ghost" onclick="window.close()">Close Tab</button>
+        <a href="/catalog.html" class="btn btn-ghost">Back to Catalog</a>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<script src="/assets/app.js"></script>
+<script>
+  function openYouTube(e) {
+    e.preventDefault();
+    const title = document.getElementById('trailer-title').textContent;
+    const year  = document.getElementById('trailer-year').textContent;
+    const query = encodeURIComponent(`${title} ${year} official trailer`);
+    window.open(`https://www.youtube.com/results?search_query=${query}`, '_blank', 'noopener');
+  }
+</script>
+</body>
+</html>

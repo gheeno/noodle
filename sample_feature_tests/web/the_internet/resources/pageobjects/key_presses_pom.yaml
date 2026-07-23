@@ -1,0 +1,5 @@
+# Page object — key_presses. The <input id='target'> has no accessible name
+# (no label/placeholder) — an id override is needed to focus it before typing.
+
+target:
+  css: "#target"

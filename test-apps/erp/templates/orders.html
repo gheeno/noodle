@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Orders — BeanCounter ERP{% endblock %}
+{% block content %}
+<h1>Orders</h1>
+<p class="page-hint">Change an order's status with the dropdown — it saves immediately.</p>
+<div class="grid-toolbar">
+  <input id="grid-filter" data-testid="grid-filter" placeholder="Filter rows…" autocomplete="off">
+  <span class="row-count" id="row-count" data-testid="row-count"></span>
+</div>
+<div class="spinner" id="spinner" data-testid="loading-spinner">Loading beans…</div>
+<div class="grid-scroll">
+  <table class="grid hidden" id="grid" data-testid="orders-grid"></table>
+</div>
+{% endblock %}
+{% block scripts %}<script>renderOrders();</script>{% endblock %}

@@ -1,0 +1,44 @@
+{
+  "includeGitInstructions": true,
+  "permissions": {
+    "allow": [
+      "Bash(git status)",
+      "Bash(git status --short)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git branch *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git stash *)",
+      "Bash(git fetch *)",
+      "Bash(git merge *)",
+      "Bash(git rebase *)",
+      "Bash(git push *)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git status --porcelain -- noodle/ | grep -q . && ! git status --porcelain -- CHANGELOG.md | grep -q . && echo \"{\\\"decision\\\":\\\"block\\\",\\\"reason\\\":\\\"noodle/ source changed but CHANGELOG.md was not updated. Add an entry under [Unreleased] before finishing.\\\"}\" || echo \"{}\"",
+            "timeout": 15,
+            "statusMessage": "Checking CHANGELOG.md was updated..."
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git diff --quiet && git diff --cached --quiet && exit 0; python -c 'import noodle' || exit 0; python -m pytest tests/ -x -q || exit 0; git add -A && git commit -m \"auto: build and smoke tests passing [$(date +%Y-%m-%d)]\" && git push",
+            "timeout": 120,
+            "statusMessage": "Checking build + smoke tests before auto-commit..."
+          }
+        ]
+      }
+    ]
+  }
+}

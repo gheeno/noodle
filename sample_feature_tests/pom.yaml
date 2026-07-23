@@ -1,0 +1,18 @@
+# Global POM — applies to ALL feature files.
+# Add elements here that appear across multiple pages / features.
+#
+# Selector types: css | xpath | id | testid | text | role
+#
+# Example entries (uncomment and adapt):
+#
+# hero banner:
+#   css: ".hero-banner"
+#
+# navigation menu:
+#   role: navigation
+#
+# profile avatar:
+#   css: "img.user-avatar"
+#
+# cookie accept button:
+#   id: "onetrust-accept-btn-handler"

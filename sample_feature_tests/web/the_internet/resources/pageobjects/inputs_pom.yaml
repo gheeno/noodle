@@ -1,0 +1,5 @@
+# Page object — inputs. The <input type=number> has no id/name/label/
+# placeholder at all — css type-selector is the only way to reach it.
+
+number input:
+  css: "input[type=number]"

@@ -1,0 +1,6 @@
+# Page object — qaplayground /practice/date-picker
+match: { url_contains: "/practice/date-picker" }
+today-input: { id: input-today-date }
+bday-input: { id: input-birthday }
+range-start-input: { id: input-date-start }
+range-end-input: { id: input-date-end }

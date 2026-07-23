@@ -1,0 +1,110 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Noodle Feature",
+  "scopeName": "source.noodle",
+  "fileTypes": ["feature"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#tag" },
+    { "include": "#feature-keyword" },
+    { "include": "#scenario-keyword" },
+    { "include": "#step" },
+    { "include": "#table-row" },
+    { "include": "#docstring" }
+  ],
+  "repository": {
+
+    "comment": {
+      "match": "^\\s*#.*$",
+      "name": "comment.line.hash.noodle"
+    },
+
+    "tag": {
+      "match": "@\\w+(?:\\([^)]*\\))?",
+      "name": "entity.name.tag.noodle"
+    },
+
+    "feature-keyword": {
+      "match": "^(\\s*)(Feature|Background|Rule)(:)(.*)?$",
+      "captures": {
+        "2": { "name": "keyword.control.noodle" },
+        "3": { "name": "punctuation.definition.noodle" },
+        "4": { "name": "entity.name.section.noodle" }
+      }
+    },
+
+    "scenario-keyword": {
+      "match": "^(\\s*)(Scenario Outline|Scenario|Example|Examples)(:)(.*)?$",
+      "captures": {
+        "2": { "name": "keyword.control.noodle" },
+        "3": { "name": "punctuation.definition.noodle" },
+        "4": { "name": "entity.name.section.noodle" }
+      }
+    },
+
+    "step": {
+      "match": "^(\\s*)(Given|When|Then|And|But)(\\s+)(.+)$",
+      "captures": {
+        "2": { "name": "keyword.other.step.noodle" },
+        "4": {
+          "patterns": [
+            { "include": "#variable" },
+            { "include": "#outline-param" },
+            { "include": "#string-double" },
+            { "include": "#string-single" }
+          ]
+        }
+      }
+    },
+
+    "variable": {
+      "match": "\\{(env|var|pom):[^}]+\\}|\\[[^\\]]+\\]|`[^`]+`",
+      "name": "variable.other.noodle"
+    },
+
+    "outline-param": {
+      "match": "<[^>]+>",
+      "name": "variable.parameter.noodle"
+    },
+
+    "string-double": {
+      "match": "\"[^\"]*\"",
+      "name": "string.quoted.double.noodle"
+    },
+
+    "string-single": {
+      "match": "'[^']*'",
+      "name": "string.quoted.single.noodle"
+    },
+
+    "table-row": {
+      "match": "^\\s*\\|.*\\|\\s*$",
+      "name": "markup.list.table.noodle",
+      "captures": {
+        "0": {
+          "patterns": [
+            {
+              "match": "\\|",
+              "name": "punctuation.separator.table.noodle"
+            },
+            { "include": "#variable" },
+            { "include": "#outline-param" }
+          ]
+        }
+      }
+    },
+
+    "docstring": {
+      "begin": "^\\s*\"\"\"",
+      "end": "^\\s*\"\"\"",
+      "name": "string.unquoted.docstring.noodle",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.noodle" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.noodle" }
+      }
+    }
+
+  }
+}

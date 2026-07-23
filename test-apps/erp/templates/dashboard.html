@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — BeanCounter ERP{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<div class="spinner" id="spinner" data-testid="loading-spinner">Loading beans…</div>
+<div id="dash" class="hidden">
+  <div class="kpi-row" data-testid="kpi-row">
+    <div class="kpi" data-testid="kpi-revenue"><span class="kpi-label">Revenue</span><span class="kpi-value" id="kpi-revenue"></span></div>
+    <div class="kpi" data-testid="kpi-open-orders"><span class="kpi-label">Open orders</span><span class="kpi-value" id="kpi-open-orders"></span></div>
+    <div class="kpi" data-testid="kpi-low-stock"><span class="kpi-label">Low stock items</span><span class="kpi-value" id="kpi-low-stock"></span></div>
+    <div class="kpi" data-testid="kpi-headcount"><span class="kpi-label">Headcount</span><span class="kpi-value" id="kpi-headcount"></span></div>
+  </div>
+  <div class="chart-row">
+    <figure class="chart-card" data-testid="revenue-chart">
+      <figcaption>Revenue by category ($)</figcaption>
+      <svg id="bar-chart" viewBox="0 0 460 260" role="img" aria-label="Bar chart: revenue by category"></svg>
+    </figure>
+    <figure class="chart-card" data-testid="status-chart">
+      <figcaption>Orders by status</figcaption>
+      <div class="donut-wrap">
+        <svg id="donut-chart" viewBox="0 0 200 200" role="img" aria-label="Donut chart: orders by status"></svg>
+        <ul class="legend" id="donut-legend"></ul>
+      </div>
+    </figure>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script>renderDashboard();</script>{% endblock %}

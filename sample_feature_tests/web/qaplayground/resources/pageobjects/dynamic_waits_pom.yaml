@@ -1,0 +1,6 @@
+# Page object — qaplayground /practice/dynamic-waits
+match: { url_contains: "/practice/dynamic-waits" }
+show-btn: { id: btn-show-element }
+spin-btn: { id: btn-start-spinner }
+delay-btn: { id: btn-enable-after-delay }
+delayed-element: { id: delayed-element }

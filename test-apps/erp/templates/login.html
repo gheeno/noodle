@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in — BeanCounter ERP</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-body">
+  <div class="login-card" data-testid="login-card">
+    <div class="login-logo">🫘</div>
+    <h1>BeanCounter <span class="brand-sub">ERP</span></h1>
+    <p class="tagline">Enterprise Resource Punishment</p>
+    {% if error %}<div class="error-banner" data-testid="login-error" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" data-testid="login-form">
+      <label for="username">Username</label>
+      <input id="username" name="username" data-testid="username-input" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" data-testid="password-input" autocomplete="current-password" required>
+      <button type="submit" data-testid="login-button">Count me in</button>
+    </form>
+    <p class="login-hint">demo: bean_barry / Lentils1!</p>
+  </div>
+</body>
+</html>

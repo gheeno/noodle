@@ -1,0 +1,10 @@
+# Page object — qaplayground /practice/input-fields
+# Hyphenated alias keys: must NOT appear in page prose, or the accessibility
+# locator wins with a wrong unique match before the POM is consulted.
+match: { url_contains: "/practice/input-fields" }
+movie-input: { id: movieName }
+append-input: { id: appendText }
+verify-input: { id: insideText }
+clear-input: { id: clearText }
+locked-input: { id: disabledInput }
+readonly-input: { id: readonlyInput }

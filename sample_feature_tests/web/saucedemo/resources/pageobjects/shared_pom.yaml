@@ -1,0 +1,29 @@
+# Shared page object — Saucedemo header/chrome elements that appear across
+# pages (login -> inventory -> cart -> checkout). Explicit empty `match: {}`
+# opts into folder-global resolution (pom.py otherwise auto-scopes a
+# no-match per-page file to its filename stem, e.g. "shared" — which never
+# appears in a real saucedemo.com URL, silently making every key below
+# unreachable). Page-specific selectors would go in their own
+# <page>_pom.yaml alongside this file.
+#
+# These have no usable accessible text label, hence explicit selectors:
+
+match: {}
+
+burger menu:
+  id: react-burger-menu-btn
+
+shopping cart:
+  css: ".shopping_cart_link"
+
+product list:
+  css: ".inventory_list"
+
+cart badge:
+  css: ".shopping_cart_badge"
+
+# Every product tile has an "Add to cart" button with identical text — scope
+# to the first product (Sauce Labs Backpack) so the click target is
+# deterministic instead of an implicit lenient-mode first-match.
+add to cart:
+  css: "#add-to-cart-sauce-labs-backpack"

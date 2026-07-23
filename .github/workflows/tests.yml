@@ -1,0 +1,28 @@
+# Lint + unit tests on every PR, so a red guard test can't reach main.
+# azure-pipelines.yml runs the same two commands, but nothing wires that run to
+# GitHub's merge button — that gap let the VALID_TYPES drift guard fail across
+# four merges (NOOD_0152 → NOOD_0156). Mark this check required in branch
+# protection to close it. ponytail: mirrors the pipeline's gate step verbatim,
+# no matrix — engine code is 3.11+ and the browser suites live in Azure.
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      # `llm` is excluded from `all` (a from-source litellm build shouldn't
+      # block unrelated installs on a laptop); add it back so the
+      # LLM-dependent unit tests actually run.
+      - run: pip install -e ".[all,llm]"
+      - run: ruff check .
+      - run: python -m pytest unit_tests -q

@@ -1,0 +1,19 @@
+# Page object — Example search results page. Filename 'results' == page name.
+# Scoped by URL; pin with: User is on the "results" page
+#
+# Why these selectors (verified against the live site):
+#   - product links are <a href*="pdp">; the first is the top result.
+match: { url_contains: "search-results" }
+
+firstresult:
+  css: 'a[href*="pdp"]:visible'
+# the title text node inside the first result card. The anchor's full text
+# also includes "Best Seller"/"Options" badges + newlines, so target the
+# title element specifically for a clean, single-line capture.
+firstresulttitle:
+  css: 'a[href*="pdp"]:visible [class*="title" i]'
+# second result card's title. Each product link contains the title twice
+# (mobile + desktop copies), so scope to the 2nd ANCHOR (card) first, then
+# take its title — :nth-match on the title alone would hit a duplicate.
+secondresulttitle:
+  css: ':nth-match(a[href*="pdp"]:visible, 2) [class*="title" i]'

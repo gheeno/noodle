@@ -1,0 +1,8 @@
+# Page object — qaplayground /practice/radio-checkbox
+match: { url_contains: "/practice/radio-checkbox" }
+yes-radio: { id: radio-yes-1 }
+no-radio: { id: radio-no-1 }
+rememberme-box: { id: checkbox-remember-me }
+terms-box: { id: checkbox-terms }
+going-radio: { id: radio-going }
+maybe-radio: { id: radio-maybe }
