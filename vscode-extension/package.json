@@ -13,8 +13,7 @@
     "languages": [
       {
         "id": "noodle",
-        "aliases": ["Noodle Feature", "Gherkin", "BDD"],
-        "extensions": [".feature"],
+        "aliases": ["Noodle Feature", "BDD"],
         "configuration": "./language-configuration.json"
       }
     ],

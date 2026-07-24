@@ -118,6 +118,30 @@ MCP client config:
 Next: cd my-project && noodle repl  — next steps in README.md
 ```
 
+## noodle install-extension
+
+Install the VS Code extension (syntax highlighting, step squiggles,
+`{env:/var:/pom:}` hover + completion).
+
+```
+noodle install-extension [--extensions-dir DIR]
+```
+
+Links `vscode-extension/` into the editor's extensions dir (default
+`~/.vscode/extensions`; `--extensions-dir ~/.cursor/extensions` for Cursor,
+`~/.vscode-oss/extensions` for VSCodium). The extension's `node_modules` are
+vendored, so this needs no `vsce`, no `.vsix`, and no `code` CLI. It removes
+any prior noodle install first — the fix for a stale sideload that keeps
+shadowing new builds — then symlinks (so a `git pull` + **Reload Window**
+picks up changes; a copy is used only where symlinks are refused, e.g.
+Windows without developer mode). Only available from a git checkout /
+editable install, not a wheel (the extension source isn't packaged into the
+wheel). Fully quit VS Code and reopen to load it.
+
+Pairs with `noodle init`, which writes the workspace `files.associations`
+that scopes the extension to this workspace's `.feature` files so it doesn't
+collide with a Cucumber/Gherkin extension (NOOD_0174).
+
 ## noodle init mcp / noodle init-mcp
 
 Wire the workspace up for MCP-driven agents.

@@ -1,4 +1,5 @@
 {
+  "files.associations": { "**/*.feature": "noodle" },
   "cucumberautocomplete.steps": [".cucumber_stubs.py"],
   "cucumberautocomplete.syncfeatures": "tests/**/*.feature",
   "cucumberautocomplete.strictGherkinCompletion": false,

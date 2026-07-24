@@ -177,39 +177,41 @@ uv pip install -e ".[llm]"      # optional — LiteLLM-backed manual mode (cloud
 ### Part 3 — VS Code + syntax highlighting (optional, recommended)
 
 Gives `.feature` files Gherkin colouring, `{env:...}`/`{var:...}` highlighting,
-step-validation squiggles, and `@tag` autocomplete. Same steps on both OS —
-this uses the `Makefile` target already in the repo, not a manual symlink.
+step-validation squiggles, and `@tag` autocomplete. Same command on both OS —
+the extension's dependencies ship vendored, so there's no `vsce`, no `.vsix`,
+and no `code` CLI to set up:
 
 ```bash
-npm install -g @vscode/vsce          # one-time — packages the extension
-cd vscode-extension && npm install && cd ..
-make install-ext                     # builds and installs into VS Code
+noodle install-extension     # links the extension into ~/.vscode/extensions
 ```
 
-> No `make` on Windows? Run the two commands inside `make install-ext`
-> directly: `cd vscode-extension && npx @vscode/vsce package --allow-missing-repository --skip-license --out ../noodle.vsix`,
-> then `code --install-extension ../noodle.vsix --force`. The two package
-> flags skip two interactive `[y/N]` prompts (`vsce` refuses to package
-> without an answer) — safe either way since this build never publishes to
-> the Marketplace. `--force` on the install matters even on a first-ever
-> install of this repo: the extension's own manifest version never changes
-> between Noodle releases, so if *anything* ever sideloaded a `noodle`
-> extension on this machine before (an earlier attempt, a different clone,
-> an agent that already tried), VS Code sees "same version already
-> installed" and silently skips the reinstall without `--force` — the
-> extension shows as installed but keeps running whatever old build got
-> there first, which is why `.feature` files can stay uncoloured even
-> after a full quit and reopen.
+Fully quit VS Code (`Cmd+Q` on macOS, close all windows on Windows — not just
+close the window) and reopen. Cursor or VSCodium? Point it at their dir:
+`noodle install-extension --extensions-dir ~/.cursor/extensions` (or
+`~/.vscode-oss/extensions`).
 
-This needs the `code` command on your `PATH`. The Windows installer adds it
-automatically (leave "Add to PATH" checked). On macOS, open VS Code, open
-the Command Palette (`Cmd+Shift+P`), and run **Shell Command: Install
-'code' command in PATH**.
+**Reinstalling** (to pick up a fix, or clear a broken install) is the same
+command — it removes any prior noodle extension first, then re-links, so a
+stale sideload can't keep shadowing the new build. A symlinked install also
+tracks your clone: after a `git pull`, **Developer: Reload Window** picks up
+the change, no reinstall.
 
-Fully quit VS Code (`Cmd+Q` on macOS, close all windows on Windows — not
-just close the window) and reopen. If you have the **Cucumber** extension
-installed, disable it for this workspace first — both extensions bind
-`.feature` files and conflict. Full details:
+> Prefer a real `.vsix` (CI, an air-gapped copy, marketplace-style install)?
+> The old path still works: `make install-ext` (or `cd vscode-extension &&
+> npx @vscode/vsce package --allow-missing-repository --skip-license --out
+> ../noodle.vsix && cd .. && code --install-extension ../noodle.vsix
+> --force`). The `--force` matters: the manifest version never changes
+> between releases, so without it VS Code silently skips a same-version
+> reinstall and keeps running the old build. `noodle install-extension`
+> sidesteps that entirely — it replaces the folder directly.
+
+**Cucumber extension installed too?** You no longer need to disable it.
+`noodle init` scaffolds a `.vscode/settings.json` `files.associations` that
+scopes the `noodle` language to *this* workspace's feature files
+(`noodle_tests/**/*.feature`), leaving every other `.feature` to Cucumber —
+they stop fighting over `.feature`. If a noodle feature file still shows
+Cucumber's highlighting, run `noodle init` in the workspace to add that
+association, then reload. Full details:
 [docs/encyclopedia.md § 12](encyclopedia.md#12-vs-code-extension).
 
 **`.feature` files still plain black-and-white after a full quit and
@@ -217,20 +219,18 @@ reopen — no colour at all, not even keywords?** This is different from the
 squiggles/hover issue below (that's the language server; this is the
 syntax grammar not being applied at all) and almost always means the
 install itself didn't take, not that it needs another reload:
-1. Confirm it's actually installed: `code --list-extensions | grep noodle`.
-   Nothing? The install command failed silently — re-run it and read the
-   output this time.
-2. Something there, but still no colour? Re-run the install with
-   `--force` (`make install-ext` already does this; the manual command is
-   `code --install-extension <path-to-vsix> --force`) — a same-version
-   reinstall is silently skipped without it, see the callout above. Then
+1. Confirm it's actually installed: `ls ~/.vscode/extensions | grep noodle`
+   (or `code --list-extensions | grep noodle`). Nothing? Re-run
+   `noodle install-extension` and read the output this time.
+2. Something there, but still no colour? Re-run `noodle install-extension`
+   — it replaces any prior install, so a stale build can't linger. Then
    fully quit and reopen again.
-3. Still nothing? Open any `.feature` file, `Cmd+Shift+P` → **Developer:
-   Inspect Editor Tokens and Scopes**, click into the text. It should say
-   `source.noodle` somewhere in the scope list — `source.plaintext` or no
-   scope at all means a different extension (Cucumber, or another Gherkin
-   highlighter) is claiming `.feature` files instead; disable it for this
-   workspace and reopen.
+3. Still nothing? Open a feature file *inside your workspace*, `Cmd+Shift+P`
+   → **Developer: Inspect Editor Tokens and Scopes**, click into the text.
+   It should say `source.noodle` somewhere in the scope list — a
+   `feature`/`gherkin` scope instead means Cucumber is highlighting it
+   because the workspace has no association yet: run `noodle init` (adds
+   `.vscode/settings.json` `files.associations`), then reload.
 
 **No squiggles or hover tooltips at all on a fresh machine?** The extension
 starts the language server with the workspace `.venv` Python it auto-detects
@@ -1398,7 +1398,8 @@ its purpose, when to use it, and sample output, see
 | Command | Purpose | Example |
 |---|---|---|
 | `run` | Run `.feature` files | `noodle run web/busterblock --headless --tag @smoke` |
-| `init` | Scaffold a workspace (`noodle.yaml`, `.env`, `noodle_tests/`) | `noodle init ~/my-tests --llm ollama` |
+| `init` | Scaffold a workspace (`noodle.yaml`, `.env`, `noodle_tests/`, `.vscode/settings.json`) | `noodle init ~/my-tests --llm ollama` |
+| `install-extension` | Link the VS Code extension into the editor (no vsce/.vsix/`code` CLI) | `noodle install-extension` |
 | `doctor` | Context-aware, read-only health check: install + launcher provenance always, plus engine-checkout or workspace checks by context ([reference](#health-check--noodle-doctor)) | `noodle doctor --json` |
 | `validate` | Parse features + check step/var resolution, no browser | `noodle validate . --resolve` |
 | `list` | List discovered scenarios without running them | `noodle list --workspace ~/my-tests --json` |

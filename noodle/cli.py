@@ -1104,6 +1104,11 @@ def init(
     # back to raw CLI + port-hunting.
     typer.echo("\nMCP client config:")
     init_mcp(path, force=False)
+    # NOOD_0174 — scope the VS Code `noodle` language to this workspace's
+    # feature files so our extension stops fighting Cucumber over `.feature`.
+    settings = root / ".vscode" / "settings.json"
+    typer.echo("\nVS Code language association:")
+    typer.echo(f"  {settings}: {_merge_vscode_association(settings)}")
     # NOOD_0098 — same reasoning for the /noodle skill (Claude Code, Copilot
     # CLI): without it, a workspace has MCP tools but no slash-command
     # shortcut, and the gap only surfaces as "why did /noodle disappear"
@@ -1181,6 +1186,34 @@ def _merge_mcp_json(f: Path, container_key: str, entry: dict, force: bool) -> st
     return "updated" if existed else "created"
 
 
+# NOOD_0174 — the VS Code extension no longer claims `.feature` globally (that
+# collided with Cucumber extensions over who owns highlighting/LSP). Instead we
+# scope our `noodle` language to *this* workspace's feature files via a
+# `files.associations` glob; every other `.feature` on the machine stays
+# Cucumber's. ponytail: hardcode the default tests_dir glob — a renamed
+# tests_dir is a one-line edit the user can make.
+_NOODLE_ASSOC = "**/noodle_tests/**/*.feature"
+
+
+def _merge_vscode_association(f: Path) -> str:
+    """Map noodle_tests feature files to the `noodle` language in `.vscode/
+    settings.json`, preserving every other setting. created|updated|kept."""
+    data = {}
+    if f.exists():
+        try:
+            data = json.loads(f.read_text() or "{}")
+        except json.JSONDecodeError:
+            return f"kept (unparseable JSON — fix {f} by hand)"
+    assoc = data.setdefault("files.associations", {})
+    if assoc.get(_NOODLE_ASSOC) == "noodle":
+        return "kept (already configured)"
+    existed = f.exists()
+    assoc[_NOODLE_ASSOC] = "noodle"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(data, indent=2) + "\n")
+    return "updated" if existed else "created"
+
+
 @app.command("init-mcp")
 def init_mcp(
     path: str = typer.Argument(".", help="Workspace directory"),
@@ -1218,6 +1251,60 @@ def init_mcp(
                    "Copilot CLI reads .copilot/mcp-config.json (launch `copilot` "
                    "from this directory). The server runs on demand — nothing to "
                    "start manually.")
+
+
+# NOOD_0174 — the extension's runtime deps are vendored under
+# vscode-extension/node_modules, so installing it needs no vsce/.vsix/`code`
+# CLI: drop (link) the folder into the editor's extensions dir and reload.
+# ponytail: symlink so the install tracks the clone (a `git pull` + reload
+# picks up fixes, no repackage); copytree only where symlinks are refused.
+def _install_extension_into(src: Path, ext_dir: Path) -> tuple[Path, str]:
+    """Link/copy the shipped extension `src` into `ext_dir`, replacing any
+    prior noodle install first. Returns (destination, 'linked'|'copied')."""
+    ext_dir.mkdir(parents=True, exist_ok=True)
+    for old in ext_dir.glob("noodle.noodle*"):        # a stale sideload is the
+        if old.is_symlink() or old.is_file():         # usual reason highlighting
+            old.unlink()                              # /LSP silently stops working
+        else:
+            shutil.rmtree(old)
+    ver = json.loads((src / "package.json").read_text())["version"]
+    dst = ext_dir / f"noodle.noodle-{ver}"            # VS Code's publisher.name-version
+    try:
+        dst.symlink_to(src, target_is_directory=True)
+        return dst, "linked"
+    except OSError:                                    # Windows w/o dev-mode, etc.
+        shutil.copytree(src, dst)
+        return dst, "copied"
+
+
+@app.command("install-extension")
+def install_extension(
+    extensions_dir: str = typer.Option(
+        None, "--extensions-dir",
+        help="Editor extensions dir. Default ~/.vscode/extensions; use "
+             "~/.cursor/extensions (Cursor) or ~/.vscode-oss/extensions (VSCodium)."),
+):
+    """Install the VS Code extension (syntax highlighting, step squiggles,
+    {env:/var:/pom:} hover/completion) — no vsce, no .vsix, no `code` CLI.
+    Deps ship vendored, so this just links the extension into your editor;
+    fully quit VS Code and reopen to load it. Re-run after a `git pull` is
+    unnecessary for a symlinked install — a Reload Window suffices.
+
+    Pair with `noodle init`, which scopes the extension to this workspace's
+    feature files (.vscode/settings.json files.associations) so it no longer
+    collides with a Cucumber/Gherkin extension over `.feature`."""
+    src = Path(__file__).resolve().parent.parent / "vscode-extension"
+    if not (src / "package.json").is_file():
+        typer.echo("vscode-extension/ isn't part of this install (installed from a "
+                   "wheel?) — clone the noodle repo to install the editor extension.")
+        raise typer.Exit(1)
+    ext_dir = Path(extensions_dir).expanduser() if extensions_dir else \
+        Path.home() / ".vscode" / "extensions"
+    dst, how = _install_extension_into(src, ext_dir)
+    typer.echo(f"  {how}: {dst} -> {src}")
+    typer.echo("Fully quit VS Code (Cmd+Q / close all windows) and reopen to load it.\n"
+               "Then run `noodle init` in your workspace if you haven't — it adds the "
+               "files.associations that keeps this from colliding with Cucumber.")
 
 
 @app.command()

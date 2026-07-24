@@ -1022,11 +1022,15 @@ dictionary, reload the window and it graduates to a first-class step with
 hover examples and no squiggle.
 
 ```bash
-uv pip install -e ".[lsp]"
-cd vscode-extension && npm install && cd ..
-ln -s $(pwd)/vscode-extension ~/.vscode/extensions/noodle-0.1.0
+uv pip install -e ".[lsp]"     # the language server the extension talks to
+noodle install-extension       # links vscode-extension/ into ~/.vscode/extensions
 ```
 
+`noodle install-extension` replaces the older manual `ln -s … ~/.vscode/
+extensions/noodle-0.1.0`: it removes any prior noodle install first (so a
+stale sideload can't shadow the new build) and needs no `vsce`/`.vsix`/`code`
+CLI — the extension's `node_modules` are vendored. `--extensions-dir` targets
+Cursor (`~/.cursor/extensions`) or VSCodium (`~/.vscode-oss/extensions`).
 Fully quit VS Code (`Cmd+Q`, not just close the window), then reopen.
 
 **Which Python runs the server?** `noodle.pythonPath` if set; otherwise the
@@ -1040,9 +1044,19 @@ Python can't import noodle; set the path explicitly:
 { "noodle.pythonPath": "/absolute/path/to/python" }
 ```
 
-**Disable the Cucumber extension for this workspace** — both activate on
-`.feature` files and conflict: `Cmd+Shift+X` → search "Cucumber" → right-click
-`alexkrechik.cucumberautocomplete` → **Disable (Workspace)** → reload window.
+**Coexisting with the Cucumber extension** (NOOD_0174) — you no longer disable
+it. The extension stopped claiming the `.feature` extension globally; instead
+`noodle init` writes a workspace `.vscode/settings.json`:
+
+```json
+{ "files.associations": { "**/noodle_tests/**/*.feature": "noodle" } }
+```
+
+That maps only *this* workspace's feature files to the `noodle` language (→
+noodle grammar + LSP); every other `.feature` on the machine stays owned by
+`alexkrechik.cucumberautocomplete`. They no longer fight. If a noodle feature
+file still gets Cucumber's highlighting, the workspace is missing that
+association — run `noodle init` and reload the window.
 
 Unknown steps get a yellow squiggle (the LLM may handle them at runtime). Tune it
 in `.vscode/settings.json`:
