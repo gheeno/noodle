@@ -184,10 +184,17 @@ def _load_secrets(path: Path, override: bool = False):
 
 
 def before_all(context):
+    # NOOD_0171 — correlation: adopt the run_id the CLI/MCP minted (it crosses
+    # the subprocess boundary via env — contextvars don't), or mint one for a
+    # bare `behave` invocation. workspace = the tenant dimension on a shared
+    # multi-team server (the /data/<team> leaf = cwd basename).
+    rid = os.environ.setdefault("NOODLE_RUN_ID", log.new_run_id())
+    log.bind(run_id=rid, workspace=os.path.basename(os.getcwd()) or ".")
     # NOOD_0062 — explicit ".env": bare load_dotenv() find_dotenv()-walks up
     # from THIS file's directory, not the workspace cwd, so a workspace's own
     # .env was silently skipped whenever the engine ran as a package.
     log._secret_values.clear()             # NOOD_0118 — fresh redaction set per run, before we register any
+    log.register_env_secrets()             # NOOD_0171 — host/container-injected secrets (env values → scrub set)
     _snapshot_shell_env()                  # NOOD_0133 — pre-run env keys beat every config file
     load_dotenv(".env")                    # config (committed) — cwd = workspace
     _load_secrets(Path("secrets.env"))     # secrets (gitignored) — soon AKV
@@ -200,6 +207,10 @@ def before_all(context):
         # cleans the shared parent once, before spawning the workers.
         os.environ["NOODLE_RESULTS_DIR"] = str(_paths.artifacts_root() / "allure-results" / f"p{os.getpid()}")
         log.attach_file_handler(str(_paths.logs_dir() / f"noodle.p{os.getpid()}.log"))
+        # NOOD_0171 — all workers share the run_id (inherited via env), so a
+        # merged log needs a per-lane tag to disentangle interleaved features/
+        # scenarios. pid matches this worker's noodle.p<pid>.log filename.
+        log.bind(worker=os.getpid())
     else:
         _clean_allure_results()
         log.attach_file_handler(str(_paths.logs_dir() / "noodle.log"))
@@ -243,6 +254,7 @@ def _clean_allure_results():
 
 
 def before_feature(context, feature):
+    log.bind(feature=Path(feature.filename).name)  # NOOD_0171 — correlation
     feature_dir = Path(feature.filename).parent
     # Tell POM loader which folder to look in for local pom.yaml
     pom_module.set_context(str(feature_dir))
@@ -447,6 +459,7 @@ def _wire_capture_listeners(context):
 
 
 def before_scenario(context, scenario):
+    log.bind(scenario=scenario.name)  # NOOD_0171 — correlation
     tags = set(scenario.effective_tags)
 
     # @live scenarios hit a real external site — opt-in only, so CI and casual

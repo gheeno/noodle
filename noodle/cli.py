@@ -241,6 +241,12 @@ def run(
 
     env = os.environ.copy()
 
+    # NOOD_0171 — correlation id for the whole run. Reuse an inherited one (an
+    # MCP tool call that triggered this run already set it, so the run stitches
+    # back to that call); otherwise mint one. The behave child adopts it in
+    # hooks.before_all.
+    env.setdefault("NOODLE_RUN_ID", os.urandom(8).hex())
+
     # Bug 1: always write a canonical "true"/"false" — never pass raw env through
     if headed:
         env["NOODLE_HEADLESS"] = "false"
