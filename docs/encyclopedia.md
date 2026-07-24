@@ -1033,12 +1033,17 @@ CLI — the extension's `node_modules` are vendored. `--extensions-dir` targets
 Cursor (`~/.cursor/extensions`) or VSCodium (`~/.vscode-oss/extensions`).
 Fully quit VS Code (`Cmd+Q`, not just close the window), then reopen.
 
-**Which Python runs the server?** `noodle.pythonPath` if set; otherwise the
-extension auto-detects the workspace `.venv` (`.venv/bin/python`, or
-`.venv\Scripts\python.exe` on Windows), falling back to `python3` (`python`
-on Windows). No hover/squiggles on a machine where noodle lives outside the
-workspace `.venv` — e.g. installed via `uv tool install` — means the fallback
-Python can't import noodle; set the path explicitly:
+**How the server is launched** (NOOD_0176): the extension prefers the
+`noodle-lsp` console script (`pyproject [project.scripts]`), resolved to an
+**absolute** path — its shebang is the exact interpreter that installed noodle,
+so the LSP extra is guaranteed present and no `noodle.pythonPath` is needed. It
+searches, in order: the sibling of a configured `noodle.pythonPath`, the
+workspace `.venv` bin, `~/.local/bin` (uv-tool default shim dir), then every
+`PATH` entry — looking for the real file, since VS Code launched from
+Finder/Dock often has a stripped `PATH`. If `noodle-lsp` isn't found it falls
+back to `<python> -m noodle.lsp.server` (workspace `.venv` python, else
+`python3`/`python`). Override the interpreter only when noodle lives somewhere
+unusual:
 
 ```json
 { "noodle.pythonPath": "/absolute/path/to/python" }
@@ -1049,7 +1054,7 @@ it. The extension stopped claiming the `.feature` extension globally; instead
 `noodle init` writes a workspace `.vscode/settings.json`:
 
 ```json
-{ "files.associations": { "**/*.feature": "noodle" } }
+{ "files.associations": { "**/noodle_tests/**/*.feature": "noodle" } }
 ```
 
 That maps *this* workspace's feature files to the `noodle` language (→ noodle
@@ -1060,11 +1065,17 @@ fight. If a noodle feature file gets Cucumber's highlighting (no hover, no
 param tooltips), the workspace is missing that association — run `noodle init`
 (or add the line above by hand) and reload the window.
 
-> NOOD_0175 — the glob is `**/*.feature`, not `**/noodle_tests/**/*.feature`.
-> Features live under `<app>/features/` (`web/busterblock/features`,
-> `api/features`, …) and the default `tests_dir` is `tests` — a `noodle_tests`
-> glob matched nothing, so the LSP never attached. Everything under a noodle
-> workspace is noodle's, so claiming all `.feature` there is correct.
+> NOOD_0176 — the glob is scoped to the workspace's **`tests_dir`**
+> (`**/<tests_dir>/**/*.feature`; the default scaffold's `tests_dir` is
+> `noodle_tests`, hence the line above). Scoping it — rather than the earlier
+> repo-wide `**/*.feature` — means a monorepo that also holds a
+> Selenium/Playwright project *under the same opened folder* keeps those
+> `.feature` files for Cucumber. `noodle init` migrates an existing workspace's
+> old broad `**/*.feature` to the scoped glob. **Caveat:** the legacy
+> `sample_feature_tests/` layout keeps features at root wok dirs
+> (`web/`, `api/`), not under `tests_dir` — for that shape keep `**/*.feature`
+> (or add a per-wok glob). The engine repo's own `.vscode/settings.json` stays
+> `**/*.feature` for exactly that reason (all-noodle, mixed layout).
 
 Unknown steps get a yellow squiggle (the LLM may handle them at runtime). Tune it
 in `.vscode/settings.json`:

@@ -1104,11 +1104,13 @@ def init(
     # back to raw CLI + port-hunting.
     typer.echo("\nMCP client config:")
     init_mcp(path, force=False)
-    # NOOD_0174 — scope the VS Code `noodle` language to this workspace's
-    # feature files so our extension stops fighting Cucumber over `.feature`.
+    # NOOD_0174/0177 — scope the VS Code `noodle` language to this workspace's
+    # tests_dir so our extension stops fighting Cucumber over `.feature`, and
+    # doesn't over-claim a sibling framework's features in a monorepo.
     settings = root / ".vscode" / "settings.json"
+    glob = _noodle_assoc(config.load(str(root)).get("tests_dir", "noodle_tests"))
     typer.echo("\nVS Code language association:")
-    typer.echo(f"  {settings}: {_merge_vscode_association(settings)}")
+    typer.echo(f"  {settings}: {_merge_vscode_association(settings, glob)}")
     # NOOD_0098 — same reasoning for the /noodle skill (Claude Code, Copilot
     # CLI): without it, a workspace has MCP tools but no slash-command
     # shortcut, and the gap only surfaces as "why did /noodle disappear"
@@ -1191,18 +1193,30 @@ def _merge_mcp_json(f: Path, container_key: str, entry: dict, force: bool) -> st
 # scope our `noodle` language via a per-workspace `files.associations` glob —
 # it only applies to THIS workspace folder, so a separate Cucumber project (a
 # different folder, no association) is untouched.
-# NOOD_0175 — glob is `**/*.feature`, not `**/noodle_tests/**`: features live
-# under <app>/features/ (web/busterblock/features, api/features, …) and the
-# default tests_dir is "tests", not "noodle_tests" — the narrow glob matched
-# nothing, so the LSP never attached (no hover). Every `.feature` in a noodle
-# workspace is noodle's own, so claiming all of them (still folder-scoped) is
-# correct, same as the engine repo's own .vscode/settings.json.
-_NOODLE_ASSOC = "**/*.feature"
+# NOOD_0175 — the glob must match where features actually live, or the LSP never
+# attaches (no hover); a hardcoded `**/noodle_tests/**` broke workspaces whose
+# tests_dir differs.
+# NOOD_0176 — so scope it to the workspace's ACTUAL tests_dir:
+# `**/<tests_dir>/**/*.feature` (default scaffold → `**/noodle_tests/**`). This
+# narrows the claim to the noodle subtree, so a monorepo that also holds a
+# Selenium/Playwright project under the same opened folder keeps those
+# `.feature` files for Cucumber. The prior broad `**/*.feature` default is
+# migrated away on re-init (see below). The engine repo's own hand-committed
+# .vscode/settings.json stays `**/*.feature` — it's all-noodle with a mixed
+# web/api layout and has no foreign framework to protect.
+_ASSOC_LANG = "noodle"
+_STALE_ASSOC = "**/*.feature"  # our pre-0177 default — removed on re-init
 
 
-def _merge_vscode_association(f: Path) -> str:
-    """Map this workspace's feature files to the `noodle` language in `.vscode/
-    settings.json`, preserving every other setting. created|updated|kept."""
+def _noodle_assoc(tests_dir: str) -> str:
+    return f"**/{tests_dir}/**/*.feature"
+
+
+def _merge_vscode_association(f: Path, glob: str) -> str:
+    """Map this workspace's feature files (under `glob`) to the `noodle`
+    language in `.vscode/settings.json`, preserving every other setting. Drops
+    our old broad `**/*.feature` default if it's the one we wrote, so re-init
+    narrows an existing workspace. created|updated|kept."""
     data = {}
     if f.exists():
         try:
@@ -1210,10 +1224,15 @@ def _merge_vscode_association(f: Path) -> str:
         except json.JSONDecodeError:
             return f"kept (unparseable JSON — fix {f} by hand)"
     assoc = data.setdefault("files.associations", {})
-    if assoc.get(_NOODLE_ASSOC) == "noodle":
+    # Migrate our own prior broad default to the scoped glob (skip if the
+    # workspace genuinely wants both, i.e. tests_dir itself is root-level).
+    stale = (glob != _STALE_ASSOC and assoc.get(_STALE_ASSOC) == _ASSOC_LANG)
+    if assoc.get(glob) == _ASSOC_LANG and not stale:
         return "kept (already configured)"
     existed = f.exists()
-    assoc[_NOODLE_ASSOC] = "noodle"
+    if stale:
+        del assoc[_STALE_ASSOC]
+    assoc[glob] = _ASSOC_LANG
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps(data, indent=2) + "\n")
     return "updated" if existed else "created"

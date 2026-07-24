@@ -1,6 +1,39 @@
 import pytest
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _guard_repo_not_polluted():
+    """NOOD_0176 — a test that runs a cwd-relative command (`noodle init`,
+    `init mcp`, generate…) without `monkeypatch.chdir(tmp_path)` first
+    scaffolds straight into the engine checkout (that's how stray
+    noodle_tests/, AGENTS.md, .vscode/mcp.json turned up in `git status`).
+    Snapshot untracked files at the repo root and fail the session if the
+    suite added any, so the leak is caught here — with the filenames — instead
+    of surfacing later as mystery files. Session-scoped: one `git status` each
+    side, so it can't name the offending test, only the files it left behind.
+    Skips silently outside a git checkout (e.g. a wheel test env)."""
+    import subprocess
+    from pathlib import Path
+    repo = Path(__file__).resolve().parent.parent
+
+    def untracked():
+        r = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=repo, capture_output=True, text=True)
+        if r.returncode != 0:
+            return None  # not a git checkout — nothing to guard against
+        return {ln[3:] for ln in r.stdout.splitlines() if ln.startswith("??")}
+
+    before = untracked()
+    yield
+    after = untracked()
+    if before is not None and after is not None:
+        leaked = sorted(after - before)
+        assert not leaked, (
+            "tests scaffolded into the repo checkout — a cwd-relative command "
+            "ran without monkeypatch.chdir(tmp_path). Leaked: " + ", ".join(leaked))
+
+
 @pytest.fixture(autouse=True)
 def _reset_workspace_docs_override():
     """NOOD_0027 — step_resolver.set_docs_dir()/patterns.set_agent_patterns_dir()
