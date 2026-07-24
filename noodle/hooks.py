@@ -1,6 +1,8 @@
 import json
+import logging
 import os
 import re
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -460,6 +462,9 @@ def _wire_capture_listeners(context):
 
 def before_scenario(context, scenario):
     log.bind(scenario=scenario.name)  # NOOD_0171 — correlation
+    context._noodle_scenario_t0 = time.monotonic()  # NOOD_0173 — scenario.end duration
+    log.telemetry("scenario.start", "▶️ scenario.start",
+                  tags=sorted(scenario.effective_tags))
     tags = set(scenario.effective_tags)
 
     # @live scenarios hit a real external site — opt-in only, so CI and casual
@@ -758,6 +763,14 @@ def after_step(context, step):
         os.makedirs(shots_dir, exist_ok=True)
         safe_name = step.name.replace(" ", "_").replace("/", "_")[:80]
         raw_path = str(shots_dir / f"FAILED_{safe_name}.png")
+        # NOOD_0173 — step.fail telemetry. error message is redacted by the log
+        # filter; @api scenarios have no page, so no screenshot.
+        _exc = getattr(step, "exception", None)
+        log.telemetry("step.fail", f"\n  ❌ step failed: {step.name}",
+                      level=logging.WARNING, step=step.name,
+                      error_class=type(_exc).__name__ if _exc else "",
+                      error=(getattr(step, "error_message", "") or "")[:500],
+                      screenshot=raw_path if getattr(context, "page", None) is not None else None)
         annotated_path = None
         shot_taken = False
         try:
@@ -1037,6 +1050,15 @@ def after_scenario(context, scenario):
                 method(resource)
             except Exception:
                 pass
+
+    # NOOD_0173 — scenario.end telemetry (feature/scenario ride the correlation
+    # context; status is behave's final Status enum).
+    _sc_t0 = ctx_get(context, "_noodle_scenario_t0", None)
+    log.telemetry("scenario.end", "⏹️ scenario.end",
+                  status=getattr(getattr(scenario, "status", None), "name", None)
+                  or str(getattr(scenario, "status", "")),
+                  duration_ms=int((time.monotonic() - _sc_t0) * 1000) if _sc_t0 else None,
+                  tags=sorted(scenario.effective_tags))
 
 
 def after_all(context):

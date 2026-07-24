@@ -6,14 +6,38 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
 import typer
 from typer.core import TyperGroup
 
-from noodle import config, payload_budget
+from noodle import config, log, payload_budget
 from noodle.reporting import paths as _paths
+
+
+def _log_run_end(results_root: str, rc: int, t0: float, data: dict | None = None) -> None:
+    """NOOD_0173 — the one authoritative run.end (json mode only): counts,
+    exit code, wall time, LLM spend, and model/engine provenance the behave
+    child can't see. Emitted once from the CLI (not per behave worker), so a
+    parallel run gets exactly one run.end. `data` reuses the CLI's own scan."""
+    if not log._json_mode():
+        return
+    from noodle import install_check
+    from noodle.llm import cost as _cost
+    from noodle.reporting import summary as _summary
+    s = data if data is not None else _summary.collect(results_root)
+    usd = (_cost.load_total(results_root) or {}).get("usd")
+    vr = install_check.version_report()
+    log.event("run.end", "🏁 run.end",
+              duration_ms=int((time.monotonic() - t0) * 1000),
+              passed=s.get("passed"), failed=s.get("failed"),
+              verified=s.get("verified"), exit_code=rc, llm_usd=usd,
+              model=os.getenv("NOODLE_MODEL"),
+              llm_mode=os.getenv("NOODLE_LLM_MODE", "auto"),
+              engine_version=vr.get("source") or vr.get("installed"),
+              git_sha=install_check.git_sha())
 
 
 class _OrderedGroup(TyperGroup):
@@ -257,6 +281,14 @@ def run(
         env["NOODLE_HEADLESS"] = _normalize_headless(env.get("NOODLE_HEADLESS", default))
 
     env["NOODLE_BROWSER"] = browser
+
+    # NOOD_0173 — run.start telemetry (json mode only). Bind the run_id so the
+    # CLI's own run.start/run.end correlate with the child's scenario/step events.
+    _run_t0 = time.monotonic()
+    log.bind(run_id=env["NOODLE_RUN_ID"])
+    log.telemetry("run.start", "🏁 run.start", target=path, tags=tag,
+                  browser=browser, headless=env["NOODLE_HEADLESS"] == "true",
+                  parallel=parallel)
     if retries is not None:
         env["NOODLE_RETRIES"] = str(retries)
     if log_level is not None:
@@ -295,7 +327,9 @@ def run(
                 f"Unsupported scheme '{parallel_scheme}'. Valid options: feature, scenario",
                 param_hint="'--parallel-scheme'",
             )
-        raise typer.Exit(_run_parallel(path, parallel, tag, env, cwd, parallel_scheme))
+        rc = _run_parallel(path, parallel, tag, env, cwd, parallel_scheme)
+        _log_run_end(str(Path(cwd) / _paths.artifacts_root() / "allure-results"), rc, _run_t0)
+        raise typer.Exit(rc)
 
     # Bug 5: derive behave base from the passed path, not a hardcoded 'tests/'
     if path.endswith(".feature"):
@@ -336,6 +370,7 @@ def run(
         rc = 0
 
     data = _write_last_run(results_root, rc, cwd)
+    _log_run_end(results_root, rc, _run_t0, data)   # NOOD_0173 — one run.end (json mode)
     # NOOD_0147 — engine-side failure-trigger detection: a fired trigger is
     # surfaced with the summary so the driving agent logs a session diagnostic
     # (docs/session-diagnostics.md) without needing any always-on instruction.
