@@ -12,6 +12,41 @@ from noodle.reporting import paths as _paths
 from . import pom
 from .locator import _find_timeout_ms, _settle_timeout_ms, find, find_first
 
+# NOOD_0177 — guards for assert_matches, whose match subject is site-controlled.
+_MAX_ASSERT_PATTERN = 200
+_NESTED_QUANT = re.compile(r"\([^()]*[+*][^()]*\)\s*[+*]")
+
+
+def _safe_artifact_path(raw: str, kind: str):
+    """NOOD_0177 — contain a step-supplied artifact path.
+
+    Steps like `takes a screenshot "<name>"` and `saves the browser session as
+    "<path>"` passed their argument straight to open()/storage_state(), so
+    "../../.." escaped the workspace — while repl/core.py enforced containment
+    for the very same writes when they arrived over MCP. The two agreed on the
+    rule and disagreed on where it applied; this is the shared answer.
+
+    A relative path resolves under the artifacts root (where run output belongs).
+    Anything that still lands outside both the workspace and the artifacts root
+    is refused rather than silently rewritten — a test asking to write there has
+    a bug worth seeing.
+    """
+    from pathlib import Path
+    raw = (raw or "").strip()
+    if not raw:
+        raise AssertionError(f"{kind} path is empty")
+    p = Path(raw)
+    base = Path(_paths.artifacts_root())
+    if not base.is_absolute():
+        base = Path.cwd() / base
+    target = (p if p.is_absolute() else base / p).resolve()
+    allowed = {Path.cwd().resolve(), base.resolve()}
+    if not any(target == a or target.is_relative_to(a) for a in allowed):
+        raise AssertionError(
+            f"Refusing to write {kind} to {target} — outside the workspace "
+            f"({Path.cwd().resolve()}) and the artifacts root ({base.resolve()}).")
+    return target
+
 
 def _not_found(msg: str) -> str:
     """NOOD_0090 — every not-found failure names the smart-wait budget that was
@@ -192,6 +227,16 @@ _EFFECT_ARM_JS = """
 """
 
 
+def _page_count(page) -> int | None:
+    """NOOD_0177 — tabs open in this page's browser context, or None when the
+    driver can't say (fakes in unit tests). None on both sides of a comparison
+    means 'no signal', never a spurious difference."""
+    try:
+        return len(page.context.pages)
+    except Exception:
+        return None
+
+
 def _arm_click_probe(page: Page) -> dict | None:
     """Snapshot url/network state + install the mutation observer BEFORE the
     click. None (skip the check) when the page can't be scripted."""
@@ -200,7 +245,14 @@ def _arm_click_probe(page: Page) -> dict | None:
         url = page.url
         if not page.evaluate(_EFFECT_ARM_JS):
             return None
+        # NOOD_0177 — record how many tabs were open. Opening one IS the
+        # observable effect of a target="_blank" click, but it changes nothing
+        # on the CURRENT page, so the url/DOM/network checks all came up empty
+        # and every Preview-style click logged a false "no observable effect"
+        # plus a healing event — which drags an otherwise green run to
+        # verified: false.
         return {"url": url, "net": activity.last_seen(),
+                "pages": _page_count(page),
                 "announce": page.evaluate(_ANNOUNCE_JS)}
     except Exception:
         return None
@@ -293,6 +345,8 @@ def _warn_if_no_effect(page: Page, locator_text: str, probe: dict | None):
             return              # execution context destroyed ⇒ navigation
         if activity.last_seen() != probe["net"]:
             return                                # a request fired
+        if _page_count(page) != probe.get("pages"):
+            return                                # a tab opened (target=_blank)
         if time.monotonic() >= deadline:
             break
         try:
@@ -819,11 +873,13 @@ def scroll_to(page: Page, locator_text: str):
 
 
 def screenshot(page: Page, name: str, path: str = None):
+    # NOOD_0177 — `name` comes from the step sentence, so it could contain
+    # '../' and steer the write outside the workspace.
     path = path or str(_paths.screenshots_dir())
-    os.makedirs(path, exist_ok=True)
-    file_path = f"{path}/{name}.png"
-    page.screenshot(path=file_path, full_page=True)
-    return file_path
+    file_path = _safe_artifact_path(f"{path}/{name}.png", "screenshot")
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(file_path), full_page=True)
+    return str(file_path)
 
 
 # ---------------------------------------------------------------------------
@@ -976,8 +1032,14 @@ def assert_count(page: Page, count: int, locator_text: str, op: str = "=="):
         raise AssertionError(
             f"No POM entry for explicit '{{pom:{explicit_key}}}' — "
             + pom.explain_miss(explicit_key, page.url))
+    counted_via_pom = None
     if loc is not None:
         actual = loc.locator("visible=true").count()
+        # NOOD_0177 — remember that the count came from a POM entry. A key
+        # scoped for CLICKING ("tr:first-child button") counts 1 while 50 are
+        # plainly on screen, and "found 1" alone sent a reader hunting the app
+        # and the engine before the page object.
+        counted_via_pom = pom.entry_summary(explicit_key or locator_text, page.url)
     else:
         # Count VISIBLE occurrences only. A raw get_by_text count includes
         # sr-only duplicates, aria-label copies, and tooltip text, so "should
@@ -988,8 +1050,14 @@ def assert_count(page: Page, count: int, locator_text: str, op: str = "=="):
     if not ok:
         word = {"==": "", ">=": "at least ", "<=": "at most ",
                 ">": "more than ", "<": "fewer than "}[op]
+        via = ""
+        if counted_via_pom:
+            via = (f"\nCounted through the POM key '{explicit_key or locator_text}' "
+                   f"({counted_via_pom}) — if that selector is scoped to one row for "
+                   "clicking, add a separate all-rows key and count through that.")
         raise AssertionError(
-            f"Expected {word}{count} visible '{locator_text}' — found {actual}.\nURL: {page.url}"
+            f"Expected {word}{count} visible '{locator_text}' — found {actual}."
+            f"{via}\nURL: {page.url}"
         )
 
 
@@ -2461,6 +2529,18 @@ def assert_matches(page: Page, locator_text: str, pattern: str):
     """Regex/format assertion — price, ID, date and currency formats, which
     exact-string comparison can't express."""
     actual = get_text(page, locator_text)
+    # NOOD_0177 — the SUBJECT of this match is text read from the site under
+    # test, so a catastrophic pattern turns page content into a CPU bomb
+    # ((a+)+$ took 2.155s at 26 chars). Reject the nested-quantifier shape and
+    # cap the length. ponytail: a shape heuristic, not a full ReDoS analysis —
+    # swap in the `regex` module's timeout if a real pattern ever trips this.
+    if len(pattern) > _MAX_ASSERT_PATTERN:
+        raise AssertionError(
+            f"Regex too long ({len(pattern)} chars, max {_MAX_ASSERT_PATTERN}): {pattern[:80]!r}…")
+    if _NESTED_QUANT.search(pattern):
+        raise AssertionError(
+            f"Refusing regex {pattern!r}: a quantified group that is itself quantified "
+            "((x+)+, (x*)* …) backtracks exponentially on page text. Rewrite it flat.")
     try:
         rx = re.compile(pattern)
     except re.error as e:
@@ -2709,7 +2789,16 @@ def save_session(context, path: str):
     """Persist cookies + localStorage to `path` (Playwright storage_state).
     Runs load it back via NOODLE_STORAGE_STATE — log in once, reuse everywhere
     (the standard answer to SSO/MFA walls: Microsoft 365, Google, …)."""
-    from pathlib import Path
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    context._bctx.storage_state(path=path)
-    logger.info(f"\n  🔐 Session saved: {path} (reuse with NOODLE_STORAGE_STATE={path})")
+
+    # NOOD_0177 — a storage_state file is a pre-authenticated cookie jar that
+    # bypasses MFA, so it must never be world-readable, and it must never be
+    # written somewhere it gets served or committed. Contain it to the
+    # workspace, then tighten the mode Playwright created it with.
+    dest = _safe_artifact_path(path, "session")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    context._bctx.storage_state(path=str(dest))
+    try:
+        os.chmod(dest, 0o600)
+    except OSError:
+        pass
+    logger.info(f"\n  🔐 Session saved: {dest} (reuse with NOODLE_STORAGE_STATE={dest})")

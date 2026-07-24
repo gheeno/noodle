@@ -1723,9 +1723,16 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
         # guarantee). A probe-visible control can still lack a runtime accessible
         # name; the deterministic selector is what makes it resolvable.
         if ctrl and ctrl.get("selector"):
+            # NOOD_0177 — quote the KEY as well as the value. The key is
+            # page-derived text; unquoted it could carry a ':' (ScannerError,
+            # breaking authoring outright) or, before _clean_name, a newline
+            # that added attacker-chosen POM entries. A POM key silently
+            # re-binds every future step that uses that phrase, so this one
+            # persists across runs.
             pom_entries.setdefault(
                 ctrl["name"], ctrl.get("pom")
-                or [f'{ctrl["name"]}:', f'  css: {_yaml_str(ctrl["selector"])}'])
+                or [f'{_yaml_str(ctrl["name"])}:',
+                    f'  css: {_yaml_str(ctrl["selector"])}'])
         aid = a.get("id")
         if aid is not None:
             for c in checks:
@@ -1747,6 +1754,16 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
              f"  Scenario: {goal['scenario']}"]
     prev = None
     for kw, body in steps:
+        # NOOD_0177 — second gate on the same channel probe._clean_name closes.
+        # A step body is ONE Gherkin line; a body carrying \n or \r would append
+        # extra lines to the compiled .feature when the join below runs, and the
+        # pattern table would happily resolve an injected `runs the command …`
+        # line into subprocess.run(shell=True). Fail loudly rather than emit a
+        # feature nobody authored.
+        if "\n" in body or "\r" in body:
+            raise ValueError(
+                "refusing to compile a step body containing a line break — "
+                f"page-derived text leaked a newline into: {body!r}")
         lines.append(f"    {kw if kw != prev else 'And'} {body}")
         prev = kw
     feature = "\n".join(lines) + "\n"

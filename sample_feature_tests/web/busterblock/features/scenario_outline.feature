@@ -39,7 +39,7 @@ Feature: Scenario Outline and Data Tables — parameterised and table-driven tes
 
     Examples: Valid users
       | username    | password  | result       |
-      | reel_ryan   | Popcorn1! | VHS Catalog  |
+      | {env:BB_USER}   | {env:BB_PASS} | VHS Catalog  |
       | tape_tanya  | Rewind2#  | VHS Catalog  |
 
     Examples: Invalid credentials

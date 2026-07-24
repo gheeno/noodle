@@ -211,7 +211,7 @@ VALID_TYPES = frozenset({
     # table-driven form fill, browser session persistence
     'click_cell', 'scroll_table', 'assert_row_values', 'assert_table_headers',
     'assert_column_contains', 'assert_table_rows', 'fill_form_table',
-    'save_session',
+    'save_session',   # NOOD_0177: see LLM_FORBIDDEN_TYPES below re call_function
     # Phases M–S (2026-07) — console/network health, emulation, offline &
     # throttling, a11y, clipboard, websockets, print/PDF
     'assert_no_console_errors', 'assert_no_page_errors', 'assert_no_failed_requests',
@@ -251,6 +251,15 @@ VALID_TYPES = frozenset({
     'rotate_viewport', 'landscape', 'portrait', 'assert_viewport',
     'assert_request_count',
 })
+
+# NOOD_0177 — action types that execute code. They stay in VALID_TYPES because
+# the pattern table still dispatches them from a hand-authored step, but the LLM
+# fallback may never SELECT one: the model's input is the step text, and by the
+# time that prompt is built, page-derived {var:} values have already been
+# substituted into it (runner.substitute). Without this gate a site's own text
+# could name the action that runs it. Enforced in _llm_resolve_uncached, which
+# also stops advertising these names in its "valid types" hint.
+LLM_FORBIDDEN_TYPES = frozenset({'run_command', 'run_script', 'call_function'})
 
 
 # NOOD_0155 — the three pattern tables that share execute_step's dispatch,
@@ -383,11 +392,19 @@ Verb phrasings map onto the same action types — never invent a new type:
         )
 
     t = action.get('type')
+    if t in LLM_FORBIDDEN_TYPES:
+        raise AssertionError(
+            f"Refusing LLM-selected action type {t!r} for: \"{step_text}\"\n"
+            f"Response: {raw}\n"
+            f"  → {t!r} executes code (shell, script or in-process Python). It is "
+            "reachable only from an explicit pattern match in a hand-authored "
+            "step, never from model output."
+        )
     if t not in VALID_TYPES:
         raise AssertionError(
             f"LLM returned an unknown action type {t!r} for: \"{step_text}\"\n"
             f"Response: {raw}\n"
-            f"  → Valid types: {', '.join(sorted(VALID_TYPES))}"
+            f"  → Valid types: {', '.join(sorted(VALID_TYPES - LLM_FORBIDDEN_TYPES))}"
         )
     _log_suggestion(step_text, action)
     return action

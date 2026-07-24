@@ -57,5 +57,12 @@ trailer runtime:
 add to cart:
   css: "#movies-tbody tr:first-child button.btn-primary"
 
+# NOOD_0177 — the COUNT key, deliberately separate from the click key above.
+# `should see 50 "X" items` counts through the POM when a key matches, so
+# borrowing the row-scoped key above counted 1 while 50 were on screen. Keep
+# the two apart: one names "a movie to click", this one names "every movie".
+add to cart buttons:
+  css: "#movies-tbody button.btn-primary"
+
 preview:
   css: "#movies-tbody tr:first-child a.btn-ghost"

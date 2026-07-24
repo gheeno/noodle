@@ -80,11 +80,18 @@ def test_revealed_needs_pom_false_field_still_gets_a_pom_entry():
     ev, feat, pom = _compile(_settings_goal(), _settings_probe())
     assert ev["blocking"] == []
     # every action target — including the needs_pom=false field — is POM'd
+    # NOOD_0177 — POM keys are now emitted through _yaml_str (quoted), because
+    # the key is page-derived text: unquoted, a ':' broke authoring outright and
+    # a newline added attacker-chosen entries. Assert the parsed mapping rather
+    # than the raw text, which is the property that actually matters.
+    import yaml
+    loaded = yaml.safe_load(pom)
     for key, sel in [("open settings", "button#gear"),
                      ("delivery postal code", "input#zip"),
                      ("store location", "select#store"),
                      ("save preferences", "button#save")]:
-        assert f"{key}:" in pom and sel in pom, key
+        assert key in loaded, f"{key} missing from {sorted(loaded)}"
+        assert sel in str(loaded[key]), key
 
 
 def test_reveal_click_compiles_before_the_controls_it_exposes():

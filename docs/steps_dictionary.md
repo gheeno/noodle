@@ -698,11 +698,11 @@ run) already authenticated by pointing `NOODLE_STORAGE_STATE` at the file.
 The standard answer to SSO/MFA login walls (Microsoft 365, Google, …).
 
 ```gherkin
-When User saves the browser session as 'artifacts/reports/session.json'
+When User saves the browser session as 'artifacts/session.json'
 ```
 
 ```bash
-NOODLE_STORAGE_STATE=artifacts/reports/session.json noodle run noodle_tests/web/myapp --headless
+NOODLE_STORAGE_STATE=artifacts/session.json noodle run noodle_tests/web/myapp --headless
 ```
 
 ---

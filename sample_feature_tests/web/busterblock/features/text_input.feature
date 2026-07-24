@@ -18,8 +18,8 @@ Feature: Text Input — fill, clear, type, keyboard keys
   Scenario: Fill a field — "enters X in the Y field" (two parameters)
     # Two captured groups: X = value, Y = field name.
     # Field name resolves via aria-label, placeholder, or visible label text.
-    When User enters "reel_ryan" in the username field
-    And User enters "Popcorn1!" in the password field
+    When User enters "{env:BB_USER}" in the username field
+    And User enters "{env:BB_PASS}" in the password field
     And User clicks the login button
     Then User should see "VHS Catalog"
 
@@ -27,8 +27,8 @@ Feature: Text Input — fill, clear, type, keyboard keys
   Scenario: Fill a field — "fills in Y with X" (locator-first phrasing)
     # Equivalent to "enters X in Y" but the field name comes first.
     # Pattern: fills? (?:in )?(?:the )?(.+?) with (.+)
-    When User fills in the username field with "reel_ryan"
-    And User fills in the password field with "Popcorn1!"
+    When User fills in the username field with "{env:BB_USER}"
+    And User fills in the password field with "{env:BB_PASS}"
     And User clicks the login button
     Then User should see "VHS Catalog"
 
@@ -38,8 +38,8 @@ Feature: Text Input — fill, clear, type, keyboard keys
     # accidental appending when the field already has a value.
     When User enters "wrong_user" in the username field
     And User clears the username field
-    And User enters "reel_ryan" in the username field
-    And User enters "Popcorn1!" in the password field
+    And User enters "{env:BB_USER}" in the username field
+    And User enters "{env:BB_PASS}" in the password field
     And User clicks the login button
     Then User should see "VHS Catalog"
 
@@ -48,9 +48,9 @@ Feature: Text Input — fill, clear, type, keyboard keys
     # "types 'X'" sends keystrokes to whatever has focus — no element lookup.
     # "presses 'Tab'" moves focus. "presses 'Enter'" submits.
     When User clicks the username field
-    And User types "reel_ryan"
+    And User types "{env:BB_USER}"
     And User presses "Tab"
-    And User types "Popcorn1!"
+    And User types "{env:BB_PASS}"
     And User presses "Enter"
     Then User should see "VHS Catalog"
 
@@ -65,8 +65,8 @@ Feature: Text Input — fill, clear, type, keyboard keys
   @smoke @fill_search
   Scenario: Fill the catalog search field
     # After login, filter the catalog with a search term.
-    When User enters "reel_ryan" in the username field
-    And User enters "Popcorn1!" in the password field
+    When User enters "{env:BB_USER}" in the username field
+    And User enters "{env:BB_PASS}" in the password field
     And User clicks the login button
     And User waits until "VHS Catalog" is visible
     And User enters "Terminator" in the search movies field

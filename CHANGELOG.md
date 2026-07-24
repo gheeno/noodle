@@ -4,6 +4,67 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a30] — 2026-07-24
+
+**NOOD_0177** — fix: security audit remediation — page content could reach a shell, and credentials could reach every shared artifact.
+
+A seven-lens security audit (Trail of Bits methodology) plus a semgrep sweep found ~50 issues that reduce to two root causes. Both are closed here, with `unit_tests/test_nood_0177.py` pinning each invariant.
+
+**Root cause A — a `.feature` file is executable code, and humans no longer write feature files.** `script_runner.py`'s own docstring states the assumption ("feature files are trusted code"), and it was true when a person typed the feature. Three mechanisms broke it.
+
+- Fixed: **an `aria-label` could inject executable Gherkin.** `_COLLECT_JS` captures `aria`/`title`/`placeholder`/`alt` raw, and `_name_and_source` only did `.strip().lower()` — which trims the ends, so an interior newline survived. `compile_goal` builds the feature by `"\n".join()`-ing step bodies, so a crafted accessible name added real `When User runs the command '…'` lines to a compiled feature that `author_test(run_after_author=True)` then ran in the same call. New `probe._clean_name` collapses whitespace and caps at 80 chars; `compile_goal` independently refuses any step body containing a line break.
+- Fixed: **captured page text reached `shell=True`.** `runner.substitute()` expands `{var:}` *before* the step is parsed, so a stored element's text was indistinguishable from authored command text. `substitute()` grew `quote_captured=`, and `execute_step` re-resolves `run_command`/`run_script`/`app_launch` from the pre-substitution sentence with captured values `shlex.quote()`d. Workspace config (`{env:}` from `os.environ`) is left unquoted, so URLs and flags keep working.
+- Fixed: **the LLM could select an execution action type.** `run_command`, `run_script` and `call_function` were on `VALID_TYPES`, the only gate on model output — and the rejection message printed the full list, advertising them. New `LLM_FORBIDDEN_TYPES` rejects them from the model path (the pattern table still dispatches them from a hand-authored step).
+- Fixed: **`reflect.try_fix` let a page rewrite the feature file.** The prompt embeds the failure message, which quotes page content verbatim, and the reply was written to disk and run unattended. It now passes `validate.check_feature` and an execution-step denylist first, matching what `prompt_expander.model_fallback` already did.
+- Fixed: **POM key injection** — keys are page-derived text and were emitted unquoted, so a `:` broke authoring and a newline added attacker-chosen entries that silently re-bind a step phrase on every future run. Keys now go through `_yaml_str` like values.
+- Fixed: **`_FUNCTION_REF_RE` spanned newlines** (`[^'"]+` is a negated class), and its capture was interpolated into `def {func}(…)` in a file `call_function` later `exec_module()`s. Constrained to the spec alphabet, plus an `isidentifier()` check and workspace containment on the target path.
+
+**Root cause B — redaction was a logging filter, so every shared artifact bypassed it.** `log.redact()` masks by *value* (the right design) but was wired only into the logging pipeline and `diagnostics.py`: the console was scrubbed, the report you email was not.
+
+- Fixed: **Allure `statusDetails` and JUnit XML are redacted.** `assert_value` formats the expected `{env:PASSWORD}` *and* the live field value, so one failing login printed the credential twice into the served report and the CI Tests tab.
+- Fixed: **network log** — request URLs keep their path only, WebSocket frames keep url/direction/length instead of raw payloads (an auth handshake carries the bearer token in frame 0), and the whole document is value-scrubbed.
+- Fixed: **failure URLs drop their query string** — SSO callbacks and reset links carry their credential there.
+- Fixed: **a resolved secret was echoed to the driving agent.** `probe_page` substituted `{env:}` into `do` actions *before* `parse_do` validated them, and `parse_do`'s `ValueError` embeds the offending string — which is returned verbatim over MCP. Parsing now happens first, restoring the "raw credentials never transit the transcript" guarantee both `core.py` and `mcp/server.py` document.
+- Fixed: **step names and artifact filenames are scrubbed.** A step written with a literal credential put it in the Allure step title on the passing path, in the screenshot *filename*, and — via `annotate.py` — burned into the PNG itself, none of which any later text redaction reaches. Scrubbing now happens before the filename is built, and the character allowlist also closes a Windows traversal that stripping `/` alone left open (`\` was not stripped). The engine's own sample features no longer hard-code `Popcorn1!` / `secret_sauce` either — they are what an agent copies.
+- Fixed: **evidence metadata is redacted.** Found by running the real suite rather than by reading code: `locator` holds the resolved step phrase and `text` the matched element's own text, so `should see "{env:PASSWORD}"` recorded the live credential into *both* Allure `statusDetails` and `last_run.json` — and on the **passing** path, since evidence is captured by default (`NOODLE_EVIDENCE=last`). Redacting the failure message alone was not enough; the scrub now happens in `evidence.capture`, the one place that builds the dict, so every consumer inherits it.
+- Fixed: **secret and session files are written 0600** via `config.write_private`, created private rather than chmod'd after. `os.replace` swaps the inode, so hand-hardening a secrets file was silently reverted on every re-author.
+
+**Insecure defaults**
+
+- Changed: **TLS certificates are now VERIFIED by default** (`hooks.ignore_https_errors`), and the scaffolded `.env` writes `NOODLE_IGNORE_HTTPS_ERRORS=false`. Relaxing it is explicit — `@insecure_certs` per scenario or the env var run-wide — and logs a warning naming the risk. `@secure_certs` still forces verification and wins. The perf wok's `_LAX_TLS` was unconditional `CERT_NONE` with a comment claiming a caller honoured the flag; no caller did, so it had no way to verify at all. It now reads the same switch.
+- Fixed: **`noodle clean` could delete a home directory.** `Path(workspace) / "/abs"` collapses to `/abs`, so an absolute `NOODLE_ARTIFACTS_DIR` (or a pointer file holding one) made `rmtree` delete it. Containment is checked first; a CI variable typo was enough to trigger this.
+- Fixed: **the scaffolded workspace `.gitignore` now covers run output** — `artifacts/`, `reports/`, `archives/`, `output/`, `baselines/`, `session*.json`. Traces record request *and response* headers plus DOM snapshots, so `noodle init` → run → `git add .` published production session cookies.
+- Changed: `serve_report`/`_make_server` default to `127.0.0.1` instead of `0.0.0.0`, and **directory listing is disabled** (403). The report server has no authentication by design, so the listing was the whole exposure — and `docs/steps_dictionary.md` used to tell people to save a browser session into exactly that directory. The documented example now writes to `artifacts/session.json`, outside the served root.
+
+**Containment, SSRF and denial of service**
+
+- Added: **`noodle/target_policy.py`** — one chokepoint every outbound target passes through, used by `rest_client`, `preconditions`, `loadgen` and `probe_page`. http/https only (the default urllib opener speaks `file://` and `ftp://`, so `REST_BASE_URL=file:///etc` made the API wok a local file reader), cloud metadata endpoints always refused, optional `NOODLE_TARGET_ALLOWLIST` host globs. `rest_call` also stops following redirects, which used to carry an `Authorization` header across hosts.
+- Fixed: **exponential ReDoS in `press_key`** — `[^\s"']+` could swallow the `+` separating chord segments, so a 110-byte `.feature` file cost 39.8s through `check_feature()` and doubled per added pair. One character (`[^\s"'+]+`); verified behaviour-identical and linear.
+- Fixed: **cubic ReDoS** in the prompt compiler's clause patterns and probe's `_DO_RE` — `(.+?)` straddling two `\s+` boundaries ran past 120s on a 1200-space prompt, and `parse_do` runs *before* any browser launches. Whitespace is collapsed and clauses capped.
+- Fixed: **`assert_matches` compiled an unbounded regex** whose match subject is text read from the site under test. Nested quantifiers are refused and the pattern length capped.
+- Fixed: **`probe_page` was a local-file read oracle** — it returns a ±30-char window per `expect` hit, so `file:///…/.aws/credentials` exfiltrated a key a slice at a time. Local fixture pages now need `NOODLE_ALLOW_LOCAL_URLS`.
+- Fixed: **`serve_report(report_dir=…)` bypassed `_ALLOWED_ROOTS`**, so it could publish a directory listing of `$HOME` over localhost.
+- Fixed: **`environments.yaml` was built with an f-string**, and `environment_values` (MCP-exposed) was unvalidated — so a caller could set `LD_PRELOAD`/`NODE_OPTIONS` and have the next child process load their code. Now `yaml.safe_dump` plus a key check, and `hooks._apply` refuses loader/interpreter variables outright.
+- Fixed: **`_app_from_existing_url` returned an unsanitized app key**, letting `author_test` write outside the workspace (including `<app>_secrets.env`) while the containment check passed vacuously.
+- Fixed: **`noodle report stop` signalled unvalidated PIDs** from a workspace JSON file. `os.kill(-1, …)` signals every process the user owns.
+- Fixed: **screenshot and `save_session` paths are contained** to the workspace/artifacts root, matching what `repl/core.py` already enforced for the same writes over MCP.
+- Added: **perf load caps** (`NOODLE_PERF_MAX_USERS`/`_MAX_DURATION_S`/`_MAX_REQUESTS`) — `wok.infer_tag` routes anything mentioning "performance" to `@perf`, so an ambiguous sentence could point an uncapped flood at production.
+- Added: **`noodle/safe_xml.py`** — refuses a `DOCTYPE` before parsing Appium `page_source`, `.xlsx` members and merged JUnit files. ElementTree hasn't resolved external entities since 3.7.1, but entity expansion still takes the process down.
+
+**Suite failures found by running the samples (root-caused, fixed test-first — `unit_tests/test_nood_0177_tabs_and_counts.py`)**
+
+- Fixed: **`a new tab should open` could never pass.** `_switch_tab` went straight to `page.wait_for_event("popup")`, on the stated assumption that it "retrieves the queued popup event even if the click already fired". It does not — `wait_for_event` registers a listener and resolves on the *next* occurrence. The assertion is always its own step, so the popup had already fired during the preceding `User clicks "Preview"` and the step burned the full timeout every time. It now checks for an already-open tab first, and only waits when one is genuinely still in flight.
+- Fixed: **the acknowledged tab count leaked between scenarios**, which is why `trailer.feature` passed alone and failed in the suite: a scenario following one that opened a tab started life expecting two, so the already-open check missed and it fell back into the doomed wait. `before_scenario` now re-seeds it alongside the fresh browser context.
+- Fixed: **a `target="_blank"` click was reported as having "no observable effect".** Opening a tab *is* the effect, but it changes nothing on the current page, so the url/DOM/network checks all came up empty and every Preview-style click logged a false warning plus a healing event — dragging an otherwise green run to `verified: false`. The pre-click probe now snapshots the tab count too.
+- Fixed: **`should see N "X" items` counted 1 while 50 were on screen.** Not a bug — `assert_count` counts through a matching POM key by design (NOOD_0115), and the sample POM scopes `add to cart` to `tr:first-child` so click scenarios get one unambiguous target. The sample now has a separate all-rows `add to cart buttons` key and the scenario counts through it, and the failure message names the POM key and selector it counted through, so the next reader does not repeat the investigation.
+
+**Supply chain, container and editor**
+
+- Fixed: **`.dockerignore` excluded caches but not `secrets.env`/`.env`/`*_secrets.env`**, so `COPY . .` baked a developer's live credentials into an image layer pushed to ACR. The container also now runs as `pwuser` instead of root.
+- Fixed: **`squad-heartbeat.yml` checked out PR code** on `pull_request: closed` and executed a checked-in script from it. Pinned to the default branch.
+- Fixed: **the VS Code extension's `noodle.pythonPath` is now `machine`-scoped** and the extension declares `untrustedWorkspaces: false` — a cloned repo's `.vscode/settings.json` could otherwise point it at an executable of its choosing.
+- Fixed: **LSP hover masked by name only** while `log.py` masks by value, so `DB_PASS`, `ADMIN_PIN` and DSNs rendered in cleartext in a tooltip. The name list is widened and any value defined in a sibling secrets file is masked whatever it is called.
+
 ## [0.2.0a29] — 2026-07-24
 
 **NOOD_0176** — fix: LSP hover/tooltips dead when the extension launched a Python without noodle (highlighting worked, tooltips didn't).

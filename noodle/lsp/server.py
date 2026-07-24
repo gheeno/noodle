@@ -217,7 +217,13 @@ def did_save(ls: LanguageServer, params: lsp.DidSaveTextDocumentParams):
 
 _TOKEN_RE = re.compile(r'\{(env|var|pom):([^}]+)\}')
 _FN_SPEC_RE = re.compile(r'''["']([\w./ -]+\.py):([A-Za-z_]\w*)["']''')
-_SECRET_NAME_RE = re.compile(r'PASSWORD|SECRET|TOKEN|_KEY\b|APIKEY|CRED', re.IGNORECASE)
+# NOOD_0177 — widened well past the original PASSWORD|SECRET|TOKEN|_KEY|APIKEY|CRED,
+# which missed DB_PASS, ADMIN_PIN, SESSION_ID, AUTH_HEADER, a PAT and any DSN.
+_SECRET_NAME_RE = re.compile(
+    r'PASSWORD|PASSWD|\bPASS\b|_PASS\b|PWD|SECRET|TOKEN|_KEY\b|APIKEY|API_KEY|'
+    r'CRED|\bPIN\b|_PIN\b|OTP|AUTH|BEARER|SESSION|COOKIE|\bPAT\b|_PAT\b|'
+    r'PRIVATE|SIGNATURE|\bSALT\b|\bSEED\b|CONNECTION_STRING|\bDSN\b|_URL\b',
+    re.IGNORECASE)
 _YAML_KEY_RE = re.compile(r'^\s*(?:"([^"]+)"|\'([^\']+)\'|([^\s:#][^:]*)):')
 
 # Selector/structure words inside POM YAML that are never element keys.
@@ -327,9 +333,36 @@ def _find_env(name: str, feature_path: Path) -> tuple[Path, int, str] | None:
 
 
 def _mask(name: str, value: str, source: Path | None) -> str:
+    """NOOD_0177 — hover used to mask by FILENAME or NAME only, while log.py
+    masks by VALUE and says so explicitly ("the source is the signal, not the
+    name"). Two surfaces, two rules, and the weaker one rendered secrets in a
+    tooltip: DB_PASS never matched PASSWORD, nor did ADMIN_PIN, SESSION_ID or a
+    DSN named DB_URL. A tooltip is a screen-share and a recorded-demo away from
+    being public, so this now also masks any value that appears in a secrets
+    file under ANY name — the value-based check log.py already uses."""
     if (source and "secret" in source.name.lower()) or _SECRET_NAME_RE.search(name):
         return "••••••"
+    if value and value.strip() and _is_known_secret_value(value, source):
+        return "••••••"
     return value
+
+
+def _is_known_secret_value(value: str, source: Path | None) -> bool:
+    """True when this exact value is defined in a secrets file next to `source`
+    — the same value under a harmless-looking name is still the same secret."""
+    if source is None:
+        return False
+    try:
+        for sib in source.parent.glob("*secrets.env"):
+            for line in sib.read_text().splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                if stripped.split("=", 1)[1].strip().strip('"\'') == value:
+                    return True
+    except OSError:
+        pass
+    return False
 
 
 def _pom_sources(feature_path: Path) -> list[Path]:

@@ -38,6 +38,7 @@ import json
 import re
 from urllib.parse import urlsplit
 
+_MAX_CLAUSE_LEN = 600   # NOOD_0177 — a prompt clause is a sentence; bounds backtracking
 _BULLET = re.compile(r"^\s*(?:\d+\s*[.)]\s*|[-*•]\s+)")
 _INLINE_NUM = re.compile(r"\s+\d+\s*[.)]\s+")
 _URLISH = re.compile(r"^(?:https?://)?[\w-]+(?:\.[\w-]+)+(?:/\S*)?$", re.I)
@@ -177,6 +178,12 @@ def _clauses(text: str) -> list[dict]:
                  for part in re.split(r"\d+\s*[.)]\s+", lines[0][1])]
     frags: list[tuple[int, str]] = []
     for line_no, ln in lines:
+        # NOOD_0177 — collapse whitespace runs BEFORE any clause regex sees the
+        # line. The clause patterns use (.+?) straddling two independent \s+
+        # boundaries, which backtracks at ~n^2.9 in the number of spaces: a
+        # 1200-space prompt ran past 120s in expand(). One space per gap makes
+        # the split unambiguous. The cap bounds the remaining polynomial.
+        ln = re.sub(r"\s+", " ", ln)[:_MAX_CLAUSE_LEN]
         ln = _BULLET.sub("", ln).replace("`", "").strip().rstrip(".;,")
         ln = re.sub(r"^(?:the\s+)?users?\s+", "", ln, flags=re.I)
         # leading connectors are ordering words, not verbs: "Then url <u>"

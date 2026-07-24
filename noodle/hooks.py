@@ -32,6 +32,41 @@ _VALID_EVENTS = frozenset({
 _registry: dict[str, list] = defaultdict(list)
 
 
+# NOOD_0177 — variables that make a child process load attacker-chosen code
+# before it runs a line of its own. Never settable from workspace config.
+_BLOCKED_ENV_KEYS = frozenset({
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT",
+    "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+    "NODE_OPTIONS", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME",
+    "PATH", "BROWSER_PATH", "PERL5OPT", "RUBYOPT", "GEM_PATH",
+})
+
+
+# NOOD_0177 — a URL's query string is where SSO callbacks, password-reset links
+# and pre-signed storage URLs carry their credential, and these land in Allure,
+# the network log and the CI Tests tab. Everything RCA reads is in the path.
+def _safe_url(url) -> str:
+    try:
+        s = str(url or "")
+        base, sep, _ = s.partition("?")
+        return f"{base}?…" if sep else base
+    except Exception:
+        return ""
+
+
+def _safe_ws_frame(frame) -> dict:
+    """Keep the shape of a WebSocket frame, drop the body — an auth handshake
+    puts the bearer token in the first frame's payload."""
+    try:
+        f = dict(frame or {})
+        payload = f.pop("payload", "")
+        f["payload_len"] = len(payload) if isinstance(payload, (str, bytes)) else 0
+        f["url"] = _safe_url(f.get("url", ""))
+        return f
+    except Exception:
+        return {"payload_len": 0}
+
+
 def register(event: str, fn):
     """Register a callable for a lifecycle event.
 
@@ -98,6 +133,16 @@ def _load_environments():
         data = yaml.safe_load(path.read_text()) or {}
         for key, value in data.items():
             k = key.upper()
+            # NOOD_0177 — a config file has no legitimate reason to set the
+            # dynamic-loader or interpreter hooks, and this file is scaffolded
+            # with a header calling it "safe to commit", so a reviewer reads it
+            # as inert. It isn't: the next child process (Allure's Node binary,
+            # the behave subprocess, the browser) inherits os.environ.
+            if k in _BLOCKED_ENV_KEYS:
+                logger.warning(
+                    f"\n  ⚠️  Ignoring {k} from {path.name} — loader/interpreter "
+                    "variables cannot be set from workspace config.")
+                continue
             if override and not _shell_owned(k):
                 os.environ[k] = str(value)
             else:
@@ -327,15 +372,30 @@ def _tag_value(tags, prefix: str) -> str | None:
 
 
 def ignore_https_errors(tags) -> bool:
-    """NOOD_0089 — most sites under test live in dev/sandbox environments with
-    self-signed or missing certs, so TLS errors are ignored BY DEFAULT in every
-    browser (it's a context option, so chromium/firefox/webkit and the
-    safari/edge aliases all get it). Toggle back per-scenario with
-    @secure_certs, or run-wide with NOODLE_IGNORE_HTTPS_ERRORS=false, when a
-    test must see the certificate error."""
+    """Whether the browser context skips TLS certificate validation.
+
+    NOOD_0177 — this now defaults to VERIFYING. It used to default to ignoring
+    (NOOD_0089's reasoning: dev/sandbox sites carry self-signed certs), but the
+    same engine runs against live production with real credentials from
+    secrets.env, and a fail-open default meant any on-path attacker — corporate
+    proxy, hostile Wi-Fi, DNS spoof — could MITM the login, collect the password
+    the test types, and still see the run go green.
+
+    Relaxing it is now an explicit decision, per-scenario with @insecure_certs
+    or run-wide with NOODLE_IGNORE_HTTPS_ERRORS=true, and either way it logs a
+    warning naming the risk. @secure_certs still forces verification and always
+    wins, so existing scenarios that used it keep their meaning.
+    """
     if 'secure_certs' in tags:
         return False
-    return os.getenv("NOODLE_IGNORE_HTTPS_ERRORS", "true").lower() not in ("0", "false", "no")
+    env = os.getenv("NOODLE_IGNORE_HTTPS_ERRORS", "").strip().lower()
+    ignore = ('insecure_certs' in tags) or env in ("1", "true", "yes", "on")
+    if ignore:
+        logger.warning(
+            "\n  ⚠️  TLS certificate validation is DISABLED for this run "
+            "(NOODLE_IGNORE_HTTPS_ERRORS / @insecure_certs). Any credential this "
+            "test types can be intercepted. Never use it against production.")
+    return ignore
 
 
 # NOOD_0032 — platform tags that imply an Appium session with default caps.
@@ -656,6 +716,14 @@ def before_scenario(context, scenario):
         ctx_opts['http_credentials'] = {"username": user, "password": password}
 
     context._bctx = context._browser.new_context(**ctx_opts)
+    # NOOD_0177 — re-seed the acknowledged tab count for THIS scenario. The
+    # browser context above is brand new (one page), but `_tabs_acked` is set
+    # on behave's context during a scenario and survived into the next one, so
+    # a scenario that followed one which opened a tab started life already
+    # "expecting" two — and `a new tab should open` then fell through to the
+    # wait_for_event path that cannot see an already-fired popup. That is why
+    # trailer.feature passed alone and failed in the suite.
+    context._tabs_acked = 1
 
     # Playwright tracing — DOM snapshots + network + sources. Started for every
     # scenario, but only SAVED on failure (after_scenario); discarded on pass so
@@ -761,7 +829,12 @@ def after_step(context, step):
         context._manual_screenshot = None
         shots_dir = _paths.screenshots_dir()
         os.makedirs(shots_dir, exist_ok=True)
-        safe_name = step.name.replace(" ", "_").replace("/", "_")[:80]
+        # NOOD_0177 — scrub BEFORE building the filename, and drop path
+        # separators on both platforms. A filename survives every later text
+        # redaction (and annotate.py burns the step name into the PNG itself),
+        # so a literal credential in step text became a permanent artifact name.
+        # Windows was also escapable here: '/' was stripped but '\' was not.
+        safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", log.redact(step.name))[:80]
         raw_path = str(shots_dir / f"FAILED_{safe_name}.png")
         # NOOD_0173 — step.fail telemetry. error message is redacted by the log
         # filter; @api scenarios have no page, so no screenshot.
@@ -821,7 +894,7 @@ def after_step(context, step):
                 step_warnings = (([note] if note else [])
                                  + ([stuck] if stuck else [])
                                  + ([resp] if resp else [])
-                                 + [f"URL: {context.page.url}", *step_warnings])
+                                 + [f"URL: {_safe_url(context.page.url)}", *step_warnings])
             except Exception:
                 pass
         ar = _allure_result(context)
@@ -948,16 +1021,23 @@ def after_scenario(context, scenario):
             os.makedirs(net_dir, exist_ok=True)
             safe_name = scenario.name.replace(" ", "_").replace("/", "_")[:80]
             net_path = net_dir / f"{safe_name}.json"
-            net_path.write_text(json.dumps({
+            # NOOD_0177 — this file is attached to Allure and published by CI.
+            # Request URLs keep their query strings (?access_token=, ?sig=, SAS)
+            # and ws_frames held RAW payloads both directions, where a GraphQL/WS
+            # auth handshake carries the bearer token in frame 0. Strip queries,
+            # drop frame bodies (keep url/direction/length, which is what RCA
+            # actually reads), then value-scrub the whole document.
+            net_doc = {
                 "console_errors": context._console_errors,
                 "page_errors": context._page_errors,
-                "failed_requests": context._failed_requests,
-                "requests": context._requests,
+                "failed_requests": [_safe_url(u) for u in context._failed_requests],
+                "requests": [_safe_url(u) for u in context._requests],
                 # NOOD_0156 — mutation-aware RCA inputs
                 "mutations": ctx_get(context, "_mutations", []),
                 "failed_responses": ctx_get(context, "_failed_responses", []),
-                "ws_frames": context._ws_frames,
-            }, indent=2))
+                "ws_frames": [_safe_ws_frame(f) for f in context._ws_frames],
+            }
+            net_path.write_text(log.redact(json.dumps(net_doc, indent=2)))
             ar_net = _allure_result(context)
             if ar_net is not None:
                 ar_net.add_attachment("network log", str(net_path), "application/json")

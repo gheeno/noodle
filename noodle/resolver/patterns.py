@@ -694,7 +694,12 @@ PATTERNS = [
     # (a click). MUST precede the press-button + click catch-alls.
     # Chords (NOOD_0009): 'Control+A', 'Shift+Tab', 'Ctrl+Shift+K' — the action
     # normalises Ctrl/Cmd/Option aliases before handing to Playwright.
-    (r'^presses? (?:the )?["\']?((?:Control|Ctrl|Alt|Option|Shift|Meta|Cmd|Command)(?:\s*\+\s*[^\s"\']+)+)["\']?(?: keys?)?$',
+    # NOOD_0177 — the chord segment excludes '+' itself. With [^\s"']+ the class
+    # could swallow the very '+' that separates segments, giving 2^k ways to
+    # split k pairs: a 110-byte .feature file cost 39.8s of backtracking through
+    # check_feature(). Excluding '+' makes the split unambiguous (linear) and is
+    # behaviour-identical — no real key name contains '+'.
+    (r'^presses? (?:the )?["\']?((?:Control|Ctrl|Alt|Option|Shift|Meta|Cmd|Command)(?:\s*\+\s*[^\s"\'+]+)+)["\']?(?: keys?)?$',
                                                    'press_key',      lambda m: {'key': m.group(1)}),
     (r'^presses? (?:the )?["\']?(Enter|Return|Tab|Escape|Esc|Space|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Up|Down|Left|Right|Home|End|PageUp|PageDown)["\']?(?: key)?$',
                                                    'press_key',      lambda m: {'key': m.group(1)}),

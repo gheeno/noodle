@@ -38,6 +38,10 @@ def parse_call(line: str):
 
 
 def _http(method: str, url: str, body):
+    # NOOD_0177 — the URL comes from preconditions.yaml after {env:} substitution,
+    # and urlopen's default opener speaks file:// and ftp:// too.
+    from noodle.target_policy import check_target
+    check_target(url, what="precondition call")
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
         url, data=data, method=method,

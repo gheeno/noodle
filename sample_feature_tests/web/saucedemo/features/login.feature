@@ -15,7 +15,7 @@ Feature: Sauce Demo Login
 
     Given User is on "{env:SAUCEDEMO}"
     When User enters "locked_out_user" in the username field
-    And User enters "secret_sauce" in the password field
+    And User enters "{env:SAUCE_PASSWORD}" in the password field
     And User clicks the login button
     Then User should see "Epic sadface: Sorry, this user has been locked out."
 
