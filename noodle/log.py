@@ -182,6 +182,16 @@ def event(name: str, body: str = "", level: int = logging.INFO, **attrs) -> None
     logger.log(level, body or name, extra={"event": name, "attributes": attrs})
 
 
+def telemetry(name: str, body: str = "", level: int = logging.INFO, **attrs) -> None:
+    """NOOD_0173 — a structured lifecycle event emitted ONLY in json mode
+    (machine telemetry: run/scenario/step). Silent in text mode, so the human
+    console stays byte-for-byte unchanged (the phase-1 contract) — the human
+    already has behave's output and the CLI summary. Use event() for a signal a
+    person should also see on the console."""
+    if _json_mode():
+        event(name, body or name, level=level, **attrs)
+
+
 _OTEL_SEVERITY = {"DEBUG": 5, "INFO": 9, "WARNING": 13, "ERROR": 17, "CRITICAL": 21}
 
 

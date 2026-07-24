@@ -9,5 +9,9 @@ COPY . .
 RUN pip install --no-cache-dir -e ".[all]" && playwright install chromium
 
 ENV NOODLE_HEADLESS=true
+# NOOD_0173 — structured logs by default in a container: one JSON object per
+# line to stderr (OTel field names), which the platform log store ingests
+# directly (12-factor XI). Override NOODLE_LOG_FORMAT=text for a human console.
+ENV NOODLE_LOG_FORMAT=json
 ENTRYPOINT ["noodle"]
 CMD ["run", "--headless"]   # no path -> tests_dir from noodle.yaml (sample_feature_tests/)

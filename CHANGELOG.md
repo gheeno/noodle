@@ -4,6 +4,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a26] — 2026-07-24
+
+Phase 5 (final) of the NOOD_0171 logging plan, on ticket **NOOD_0173**: the run/scenario/step lifecycle events, the container default, and the docs. Completes the structured-logging + AI-governance work.
+
+- Added: **lifecycle telemetry** — `run.start`/`run.end` (from the CLI, once per run — so a parallel run gets exactly one, with counts, `exit_code`, `duration_ms`, `llm_usd`, and model/engine/`git_sha` provenance the behave child can't see), `scenario.start`/`scenario.end` (status, duration), and `step.fail` (step, error class, redacted error, screenshot). Emitted **json mode only** via new `log.telemetry()` — the text console stays byte-for-byte unchanged (the phase-1 contract); the human already has behave's output and the CLI summary.
+- Added: **`ENV NOODLE_LOG_FORMAT=json` in the `Dockerfile`** — a container ships structured logs to its platform store by default (12-factor XI); override to `text` for a human console.
+- Added: **`docs/logging.md`** — enabling json, the sinks (console / file log / per-worker), the OTel record shape, the full event reference table, the redaction guarantees, and starter Log Analytics KQL. Linked from `architecture.md`.
+- Tests: `unit_tests/test_nood_0173_logging.py` — `log.telemetry()` json-gating and the `run.end` provenance payload; live-run verification of `scenario.*`/`step.fail` in the file log.
+
 ## [0.2.0a25] — 2026-07-24
 
 Phases 3–4 of the NOOD_0171 logging plan (`tmp/nood_0171-logging-plan.md`), on ticket **NOOD_0172** now that phases 1–2 have merged: the `noodle-mcp` server audit trail (phase 3) and the AI-governance events (phase 4). Phase 5 (`run.end`/`scenario.*`/`step.fail` attributes, Dockerfile json default, dashboards) remains an independent follow-up.
