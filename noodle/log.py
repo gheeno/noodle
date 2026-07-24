@@ -1,17 +1,32 @@
 """Structured logging for Noodle.
 
-One logger, level from NOODLE_LOG_LEVEL (default INFO). Messages keep the
-emoji breadcrumbs that the runtime always printed — the formatter just passes
-them through, so console output looks the same but is now level-gated and
-silenceable (NOODLE_LOG_LEVEL=WARNING in noisy CI).
+One logger. Two output shapes, chosen by NOODLE_LOG_FORMAT:
 
-ponytail: the handler writes to the *live* sys.stdout on every emit (not the
-sys.stdout captured at import) so pytest's capsys still sees our output and
-behave's own stdout interleaving stays correct.
+- **text** (default) — the emoji breadcrumbs the runtime always printed, live to
+  sys.stdout, level-gated by NOODLE_LOG_LEVEL. A human/CI/TTY surface, unchanged.
+- **json** — one JSON object per line to *stderr* (never stdout: MCP stdio uses
+  stdout for protocol frames, so a stray line there corrupts the session). Field
+  names follow the OpenTelemetry log data model so a later OTel adoption is a
+  transport swap, not a schema migration. This is what a container ships to its
+  platform log store (12-factor XI: the app writes the stream, the platform owns
+  files/routing/retention).
+
+ponytail: the console handler writes to the *live* sys.stdout/sys.stderr on every
+emit (not the stream captured at import) so pytest's capsys still sees our output
+and behave's own stdout interleaving stays correct.
+
+Correlation (NOOD_0171): a contextvar carries run_id/workspace/feature/scenario
+onto every record via _ContextFilter, so one shared multi-team server's
+interleaved lines can be sliced back to a single run. run_id crosses the
+CLI->behave subprocess boundary through NOODLE_RUN_ID (contextvars don't).
 """
+import contextvars
+import json
 import logging
 import os
+import re
 import sys
+from datetime import datetime, timezone
 
 logger = logging.getLogger("noodle")
 
@@ -38,6 +53,25 @@ class _CaptureHandler(logging.Handler):
 _secret_values: set[str] = set()
 _PLACEHOLDERS = {"CHANGE_ME", "CHANGEME", "TODO", "XXX", "REPLACE_ME", "<SET IN .ENV>"}
 
+# NOOD_0171 — env-injected secrets. A container/K8s host delivers secrets as env
+# vars (Container Apps secrets, AKV CSI driver), which never pass through a
+# secrets.env file, so nothing registered them. register_env_secrets() sweeps
+# os.environ by key name and registers the values. Broad on purpose:
+# over-registering a value only widens the scrub set (safe-fail for compliance).
+_SENSITIVE_ENV_RE = re.compile(
+    r"(SECRET|PASSWORD|PASSWD|API[_-]?KEY|APIKEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|"
+    r"TOKEN|CREDENTIAL|CONNECTION[_-]?STRING|CONN[_-]?STR|BEARER|_JWT|_SAS|_PAT_)",
+    re.I)
+
+# NOOD_0171 — attribute key-name masking. Belt-and-suspenders over value-scrub:
+# a structured attribute literally named like a credential is masked whatever its
+# value. Deliberately precise — must NOT match `tokens` (a token *count* is
+# governance data, not a secret) or `path`/`model`/`duration`.
+_SENSITIVE_KEY_RE = re.compile(
+    r"^(.*[_-])?(password|passwd|secret|credential|apikey|api_key|access_key|"
+    r"private_key|authorization|auth_token|bearer|jwt|sas_token|conn_str|"
+    r"connection_string)([_-].*)?$", re.I)
+
 
 def register_secret(value) -> None:
     """Register a value to scrub from all log output. Empty/short/placeholder
@@ -46,6 +80,17 @@ def register_secret(value) -> None:
     v = str(value or "").strip()
     if len(v) >= 4 and v.upper() not in _PLACEHOLDERS:
         _secret_values.add(v)
+
+
+def register_env_secrets() -> None:
+    """NOOD_0171 — register the *values* of every credential-looking env var so
+    they're scrubbed everywhere register_secret already reaches (console, file
+    log, captured warnings, RCA, diagnostics). Called at run start (hooks) and
+    at server start (mcp.server.main) — the container's secrets get injected as
+    env, and this is the only thing that puts them in the redaction set."""
+    for k, v in os.environ.items():
+        if _SENSITIVE_ENV_RE.search(k):
+            register_secret(v)
 
 
 def _redact(msg: str) -> str:
@@ -61,11 +106,31 @@ def redact(text: str) -> str:
     return _redact(text)
 
 
+def _redact_attrs(attrs: dict) -> dict:
+    """NOOD_0171 — scrub a structured event's attributes: mask by credential
+    key-name, value-scrub every string, recurse into nested dicts. Leaves
+    numbers/bools (token counts, durations) untouched."""
+    out = {}
+    for k, v in attrs.items():
+        if _SENSITIVE_KEY_RE.search(str(k)):
+            out[k] = "***"
+        elif isinstance(v, str):
+            out[k] = _redact(v)
+        elif isinstance(v, dict):
+            out[k] = _redact_attrs(v)
+        else:
+            out[k] = v
+    return out
+
+
 class _RedactFilter(logging.Filter):
     def filter(self, record):
         if _secret_values:
             record.msg = _redact(record.getMessage())
             record.args = ()
+        attrs = getattr(record, "attributes", None)
+        if attrs:
+            record.attributes = _redact_attrs(attrs)  # key-name masking runs even with no registered values
         return True
 
 
@@ -77,26 +142,107 @@ def clear_warnings():
     _warnings.clear()
 
 
-class _LiveStdoutHandler(logging.StreamHandler):
-    """StreamHandler that always targets the current sys.stdout."""
+# NOOD_0171 — correlation context. Immutable-replace so a copy captured mid-run
+# isn't mutated under us. bind() merges; the filter stamps it onto every record.
+_context: contextvars.ContextVar[dict] = contextvars.ContextVar("noodle_log_ctx", default={})
+
+
+def bind(**kwargs) -> None:
+    """Merge non-None keys into the correlation context (run_id, workspace,
+    feature, scenario, …) for all subsequent log records in this context."""
+    merged = {**_context.get(), **{k: v for k, v in kwargs.items() if v is not None}}
+    _context.set(merged)
+
+
+def get_context() -> dict:
+    return dict(_context.get())
+
+
+def run_id() -> str:
+    return _context.get().get("run_id", "")
+
+
+def new_run_id() -> str:
+    """16 hex chars. Minted by whichever process starts the work; propagated to
+    the behave child via NOODLE_RUN_ID."""
+    return os.urandom(8).hex()
+
+
+class _ContextFilter(logging.Filter):
+    def filter(self, record):
+        record.noodle_context = _context.get()
+        return True
+
+
+def event(name: str, body: str = "", level: int = logging.INFO, **attrs) -> None:
+    """Emit one structured event (NOOD_0171). `body` doubles as the human console
+    line, so a text-mode reader sees exactly what a plain logger.info() gave;
+    json mode additionally carries `event` + `attributes`. An un-migrated
+    logger.info() still produces a valid, correlated line with no event."""
+    logger.log(level, body or name, extra={"event": name, "attributes": attrs})
+
+
+_OTEL_SEVERITY = {"DEBUG": 5, "INFO": 9, "WARNING": 13, "ERROR": 17, "CRITICAL": 21}
+
+
+class _JsonFormatter(logging.Formatter):
+    """One JSON object per line, OpenTelemetry log-data-model field names."""
+
+    def format(self, record):
+        ts = datetime.fromtimestamp(record.created, timezone.utc)
+        obj = {
+            "timestamp": ts.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "severity_text": record.levelname,
+            "severity_number": _OTEL_SEVERITY.get(record.levelname, 9),
+            "body": record.getMessage(),  # already redacted by _RedactFilter
+            "service_name": "noodle",
+        }
+        obj.update(getattr(record, "noodle_context", None) or {})  # run_id, workspace, feature, scenario
+        ev = getattr(record, "event", None)
+        if ev:
+            obj["event"] = ev
+        attrs = getattr(record, "attributes", None)
+        if attrs:
+            obj["attributes"] = attrs  # already redacted by _RedactFilter
+        if record.exc_info:
+            obj["exception"] = self.formatException(record.exc_info)
+        return json.dumps(obj, default=str, ensure_ascii=False)
+
+
+class _LiveStreamHandler(logging.StreamHandler):
+    """StreamHandler that always targets the current sys.stdout/sys.stderr,
+    resolved at emit time (so pytest capsys + behave interleaving still work)."""
+
+    def __init__(self, stream_name: str = "stdout"):
+        super().__init__()
+        self._stream_name = stream_name
 
     @property
     def stream(self):
-        return sys.stdout
+        return getattr(sys, self._stream_name)
 
     @stream.setter
     def stream(self, _value):
         pass  # ignore the base class's captured stream
 
 
+def _json_mode() -> bool:
+    return os.getenv("NOODLE_LOG_FORMAT", "text").lower() == "json"
+
+
 def _configure():
     if getattr(logger, "_noodle_configured", False):
         return
-    handler = _LiveStdoutHandler()
-    handler.setFormatter(logging.Formatter("%(message)s"))
+    if _json_mode():
+        handler = _LiveStreamHandler("stderr")
+        handler.setFormatter(_JsonFormatter())
+    else:
+        handler = _LiveStreamHandler("stdout")
+        handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(handler)
     logger.addHandler(_CaptureHandler())
-    logger.addFilter(_RedactFilter())
+    logger.addFilter(_ContextFilter())   # stamp context first...
+    logger.addFilter(_RedactFilter())    # ...then scrub
     logger.propagate = False
     set_level(os.getenv("NOODLE_LOG_LEVEL", "INFO"))
     logger._noodle_configured = True
@@ -114,6 +260,14 @@ def attach_file_handler(path: str):
     """Mirror everything the console gets into a file too (the run's "sys log").
     Replaces any previously attached file handler — one file per process.
 
+    This is the RELIABLE sink for a run: a direct FileHandler writes to its own
+    file object, so unlike the console handler it's immune to behave's
+    per-scenario stdout/stderr capture (which otherwise swallows a passing run's
+    events). In a no-MCP / no-streaming deployment (CORP: CI archives the
+    artifacts/ tree, nothing streams to a log store) this file IS the log
+    destination — so it honors NOODLE_LOG_FORMAT: JSON when json mode is set
+    (structured, correlated, redacted — CI-shippable), human text otherwise.
+
     Removes every FileHandler on the logger, not just the tracked one — a
     stray handler can outlive its owner (e.g. a caller that attached one
     without going through this function's own replacement logic), and "one
@@ -125,7 +279,9 @@ def attach_file_handler(path: str):
             logger.removeHandler(h)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     _file_handler = logging.FileHandler(path, mode="w", encoding="utf-8")
-    _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    _file_handler.setFormatter(
+        _JsonFormatter() if _json_mode()
+        else logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(_file_handler)
 
 

@@ -749,6 +749,12 @@ def main(argv: list[str] | None = None) -> None:
         # explicitly allowed at startup.
         _ALLOWED_ROOTS = [Path(args.workspace).resolve()]
     _load_workspace_env(_WORKSPACE)
+    # NOOD_0171 — the server is long-lived and its secrets arrive as env vars
+    # (container/AKV-injected, plus the workspace .env just loaded). Register
+    # their values so anything the server logs scrubs them. Per-run scrubbing
+    # still happens in hooks.before_all; this covers the server's own output.
+    from noodle import log
+    log.register_env_secrets()
     info = _info()
     print(f"noodle-mcp {info['noodle_version']} pid={info['pid']} "
           f"workspace={info['workspace']} started={info['started_at']} — "

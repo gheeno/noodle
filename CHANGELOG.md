@@ -4,6 +4,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a24] — 2026-07-24
+
+Structured logging + AI-governance groundwork for the container future state (NOOD_0171, plan in `tmp/nood_0171-logging-plan.md`, phases 1–2). The engine kept stdlib `logging` — no new dependency; ~120 lines in `noodle/log.py`. Phases 3–5 (per-event `mcp.tool`/`llm.call`/`run.end` taxonomy, Dockerfile default, dashboards) are independent follow-ups.
+
+- Added: **`NOODLE_LOG_FORMAT=json`** — one JSON object per line to **stderr** (never stdout: that's the MCP stdio protocol channel), field names following the OpenTelemetry log data model (`timestamp`/`severity_text`/`severity_number`/`body`/`attributes`) so a later OTel adoption is a transport swap, not a schema migration. Default stays `text` — the emoji console is byte-for-byte unchanged, so CI parsing, the `--json` run payload, and agent-facing summaries are untouched. This is the 12-factor-XI shape a container ships to its platform log store (Log Analytics is already wired in the Container Apps terraform).
+- Added: **run correlation** — a `run_id` (16 hex) plus `workspace`/`feature`/`scenario` ride on every log record via a `contextvars` filter, so one shared multi-team server's interleaved lines slice back to a single run. `run_id` crosses the CLI→behave subprocess boundary through `NOODLE_RUN_ID` (minted by the CLI/MCP caller, adopted in `hooks.before_all`).
+- Added: **`log.event(name, body, **attrs)`** — one structured event; `body` doubles as the human console line so text output is identical and only json mode gains queryable `event`+`attributes`. An un-migrated `logger.info()` still emits a valid, correlated line.
+- Fixed (compliance): **env-injected secrets are now redacted.** `register_secret` was fed only by `*secrets.env` files and Key Vault, so container/K8s-injected credentials (`NOODLE_MCP_API_KEY`, `NOODLE_HTTP_PASSWORD`, model API keys) were never in the scrub set. New `register_env_secrets()` sweeps `os.environ` by key name and registers the values — called at run start (`hooks.before_all`) and server start (`mcp.server.main`).
+- Added: **structured-attribute redaction** — the redact filter now also scrubs event `attributes` by value and masks any credential-named key (`api_key`, `password`, `authorization`, …), while leaving token *counts*, durations, paths and model ids intact (governance data, not secrets).
+- Added: **the per-run file log (`artifacts/logs/noodle.log`) honors json mode** — it's a direct `FileHandler`, immune to behave's per-scenario stdout/stderr capture, so it's the reliable structured sink for a no-MCP / no-streaming deployment (CI archives the `artifacts/` tree). Text in default mode; JSON (correlated + redacted) under `NOODLE_LOG_FORMAT=json`.
+- Added: `unit_tests/test_nood_0171_logging.py` — asserts the JSON shape, correlation context, and that a secret from either a `secrets.env` file or an injected env var leaks into none of the sinks (console, captured-warnings buffer, on-disk `log.redact` writer).
+
 ## [0.2.0a23] — 2026-07-22
 
 The NOOD_0168 baseline session (same retail prompt, live site, HEAD engine) reached green — but spent 67 agent interactions and three shell-approval prompts doing it: 30 calls re-learning what the engine already ships (help/docs/steps hunts), then a ~28-call hand-authoring fallback after goal mode blocked on "no search box found", plus greps of the payload spill file that each needed human approval. Every fix here removes one class of those round trips; none is site-specific. Target for that prompt class: probe → author(goal)+run, ≤ 10 interactions, single approved binary.
