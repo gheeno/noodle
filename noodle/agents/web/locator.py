@@ -4,7 +4,7 @@ import time
 
 from playwright.sync_api import Locator, Page
 
-from noodle import healing
+from noodle import healing, log
 from noodle.log import logger
 
 from . import activity, dom_scan, pom
@@ -300,7 +300,10 @@ def _find(page: Page, text: str, scope=None, poll: bool = True,
     if heal and _is_full_llm() and os.getenv("NOODLE_MODEL"):
         loc = _vision_locate(page, text)
         if loc:
-            logger.info(f"\n  🤖 LLM-located '{text}' via vision model (full mode)")
+            # NOOD_0172 — governance: a MODEL, not the author, chose this element.
+            log.event("locator.resolve",
+                      f"\n  🤖 LLM-located '{text}' via vision model (full mode)",
+                      target=text, strategy="vision")
             healing.record(text, "vision-llm-primary")
             _set_source("vision-llm-primary")
             return loc

@@ -22,15 +22,17 @@ Transports (NOOD_0045 — MAF/Foundry support):
 import argparse
 import functools
 import hmac
+import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from noodle import payload_budget
+from noodle import log, payload_budget
 from noodle.repl import core
 
 # NOOD_0096 — surfaced by MCP-compliant hosts at connect time regardless of
@@ -104,12 +106,39 @@ _BUDGET_HINTS = {
 
 
 def _tool():
-    """`@mcp.tool()` plus the payload budget (NOOD_0164)."""
+    """`@mcp.tool()` plus the payload budget (NOOD_0164) and the mcp.tool audit
+    event (NOOD_0172) — every call is timed, correlated, and logged in one place."""
     def decorate(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            return payload_budget.bound(fn(*args, **kwargs),
-                                        hint=_BUDGET_HINTS.get(fn.__name__, ""))
+            # NOOD_0172 — one run_id per tool call. A tool that triggers a run
+            # (run_and_report/run_test shell out to `noodle run`) inherits it via
+            # os.environ, so the run's own logs correlate back to this call.
+            # ponytail: os.environ is process-global — best-effort under
+            # concurrent calls; the server is single-replica and the heavy tools
+            # serialize in practice (per-call env isolation if that ever bites).
+            call_rid = log.new_run_id()
+            log.bind(run_id=call_rid)
+            os.environ["NOODLE_RUN_ID"] = call_rid
+            ws = kwargs.get("workspace") or _WORKSPACE
+            t0 = time.monotonic()
+            result, ok, err = None, True, None
+            try:
+                result = payload_budget.bound(fn(*args, **kwargs),
+                                              hint=_BUDGET_HINTS.get(fn.__name__, ""))
+                if isinstance(result, dict) and result.get("ok") is False:
+                    ok = False  # a tool's own logical failure, not an exception
+                return result
+            except Exception as e:
+                ok, err = False, type(e).__name__
+                raise
+            finally:
+                dur = int((time.monotonic() - t0) * 1000)
+                log.event("mcp.tool",
+                          f"🔧 {fn.__name__} — {'ok' if ok else 'error'} ({dur}ms)",
+                          tool=fn.__name__, workspace=ws, ok=ok, error=err,
+                          duration_ms=dur,
+                          payload_bytes=payload_budget.size(result) if result is not None else 0)
         wrapper.__budgeted__ = True
         return mcp.tool()(wrapper)
     return decorate
@@ -697,6 +726,15 @@ def _require_key(app, key: str):
             supplied = headers.get("x-api-key") or \
                 headers.get("authorization", "").removeprefix("Bearer").strip()
             if not hmac.compare_digest(supplied, key):
+                # NOOD_0172 — the security-audit event. Log who/where/why, NEVER
+                # the supplied value. Behind Container Apps' ingress the real
+                # caller IP is in x-forwarded-for; fall back to the socket peer.
+                client_ip = (headers.get("x-forwarded-for", "").split(",")[0].strip()
+                             or (scope.get("client") or ("", 0))[0])
+                log.event("mcp.auth.deny", f"🚫 auth denied: {scope.get('path', '')}",
+                          level=logging.WARNING, remote_ip=client_ip,
+                          path=scope.get("path", ""),
+                          reason="missing key" if not supplied else "bad key")
                 await send({"type": "http.response.start", "status": 401,
                             "headers": [(b"content-type", b"text/plain")]})
                 await send({"type": "http.response.body", "body": b"unauthorized"})
@@ -749,11 +787,13 @@ def main(argv: list[str] | None = None) -> None:
         # explicitly allowed at startup.
         _ALLOWED_ROOTS = [Path(args.workspace).resolve()]
     _load_workspace_env(_WORKSPACE)
-    # NOOD_0171 — the server is long-lived and its secrets arrive as env vars
-    # (container/AKV-injected, plus the workspace .env just loaded). Register
-    # their values so anything the server logs scrubs them. Per-run scrubbing
-    # still happens in hooks.before_all; this covers the server's own output.
-    from noodle import log
+    # NOOD_0172 — the server's own log lines (mcp.tool / mcp.auth.deny) must go
+    # to stderr: stdout is the stdio protocol channel. No-op in json mode.
+    log.route_console_to_stderr()
+    # The server is long-lived and its secrets arrive as env vars (container/
+    # AKV-injected, plus the workspace .env just loaded). Register their values
+    # so anything the server logs scrubs them. Per-run scrubbing still happens
+    # in hooks.before_all; this covers the server's own output.
     log.register_env_secrets()
     info = _info()
     print(f"noodle-mcp {info['noodle_version']} pid={info['pid']} "

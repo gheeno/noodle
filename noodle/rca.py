@@ -16,7 +16,7 @@ import os
 import re
 from pathlib import Path
 
-from noodle.log import logger
+from noodle import log
 
 # Single-letter categories keep the model's reply terse and easy to validate;
 # the human-readable label is what lands in the report.
@@ -97,10 +97,17 @@ def review(step_name: str, error_message: str, screenshot_path: str) -> dict | N
         verdict = parse(raw)
         if verdict is None:
             return None
-        logger.info(
-            f"\n  🔍 RCA [{verdict['label']}] ({verdict['confidence']}): "
-            f"{verdict['reason']}\n  💡 Suggested fix: {verdict['suggested_fix']}"
-        )
+        # NOOD_0172 — AI provenance: mark this analysis as model-authored so no
+        # reader mistakes a model's guess for an engine fact, and record which
+        # model produced it.
+        verdict["ai_authored"] = True
+        verdict["model"] = os.getenv("NOODLE_MODEL")
+        log.event("rca.verdict",
+                  f"\n  🔍 RCA [{verdict['label']}] ({verdict['confidence']}): "
+                  f"{verdict['reason']}\n  💡 Suggested fix: {verdict['suggested_fix']}",
+                  category=verdict["category"], label=verdict["label"],
+                  confidence=verdict["confidence"], ai_authored=True,
+                  model=verdict["model"])
         return verdict
     except Exception:
         return None
