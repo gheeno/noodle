@@ -27,17 +27,21 @@ def reset():
     _model = None
 
 
-def record(purpose: str, response) -> None:
-    """Add one litellm response to the ledger. Never raises — cost tracking
-    must not break the call that produced the response."""
+def record(purpose: str, response) -> dict:
+    """Add one litellm response to the ledger, and return this single call's
+    {input_tokens, output_tokens, usd} (NOOD_0172, for the llm.call log event —
+    the ledger stays the source of truth for run totals). Never raises — cost
+    tracking must not break the call that produced the response."""
     global _model
     try:
         usage = getattr(response, "usage", None)
+        in_tok = getattr(usage, "prompt_tokens", 0) or 0
+        out_tok = getattr(usage, "completion_tokens", 0) or 0
         entry = _ledger.setdefault(
             purpose, {"calls": 0, "input_tokens": 0, "output_tokens": 0, "usd": None})
         entry["calls"] += 1
-        entry["input_tokens"] += getattr(usage, "prompt_tokens", 0) or 0
-        entry["output_tokens"] += getattr(usage, "completion_tokens", 0) or 0
+        entry["input_tokens"] += in_tok
+        entry["output_tokens"] += out_tok
         _model = getattr(response, "model", None) or os.getenv("NOODLE_MODEL")
         try:
             import litellm
@@ -46,8 +50,9 @@ def record(purpose: str, response) -> None:
             usd = None  # unknown model pricing (e.g. self-hosted) — tokens still count
         if usd is not None:
             entry["usd"] = (entry["usd"] or 0.0) + usd
+        return {"input_tokens": in_tok, "output_tokens": out_tok, "usd": usd}
     except Exception:
-        pass
+        return {}
 
 
 def summary() -> dict | None:

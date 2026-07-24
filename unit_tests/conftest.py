@@ -24,3 +24,17 @@ def _reset_mcp_allowed_roots():
     server = sys.modules.get("noodle.mcp.server")
     if server is not None:
         server._ALLOWED_ROOTS = None
+
+
+@pytest.fixture(autouse=True)
+def _reset_noodle_console_stream():
+    """NOOD_0172 — server.main() calls log.route_console_to_stderr(), a
+    process-global flip of the console handler; without restoring it every
+    later capsys-stdout test sees no output. Restore to the stream the current
+    NOODLE_LOG_FORMAT implies (stdout for text, stderr for json)."""
+    yield
+    from noodle import log
+    stream = "stderr" if log._json_mode() else "stdout"
+    for h in log.logger.handlers:
+        if isinstance(h, log._LiveStreamHandler):
+            h._stream_name = stream

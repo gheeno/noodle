@@ -174,3 +174,190 @@ def test_redact_attrs_leaves_counts_and_paths_untouched():
                              "screenshot_path": "/artifacts/a.png", "model": "sonnet-5"})
     assert out == {"input_tokens": 1200, "duration_ms": 41,
                    "screenshot_path": "/artifacts/a.png", "model": "sonnet-5"}
+
+
+# --- phase 3: MCP server audit trail -------------------------------------
+def test_route_console_to_stderr_flips_the_handler():
+    _use_json()
+    log.route_console_to_stderr()
+    live = [h for h in log.logger.handlers if isinstance(h, log._LiveStreamHandler)]
+    assert live and all(h._stream_name == "stderr" for h in live)
+
+
+def test_mcp_tool_event_is_logged_per_call(capsys):
+    from noodle.mcp import server
+    _use_json()
+    log.route_console_to_stderr()
+    server.server_info()   # a cheap read-only tool; still goes through _tool()
+    events = [json.loads(ln) for ln in capsys.readouterr().err.strip().splitlines()
+              if '"mcp.tool"' in ln]
+    assert events, "no mcp.tool event emitted"
+    e = events[-1]
+    assert e["event"] == "mcp.tool"
+    assert e["attributes"]["tool"] == "server_info"
+    assert e["attributes"]["ok"] is True
+    assert e["attributes"]["duration_ms"] >= 0
+    assert e["attributes"]["payload_bytes"] > 0
+    assert e["run_id"]                     # correlated to this call
+
+
+def test_mcp_tool_event_marks_a_logical_failure(capsys):
+    from noodle.mcp import server
+    _use_json()
+    log.route_console_to_stderr()
+    r = server.run_test(browser="notabrowser")   # rejected before any subprocess
+    assert r["ok"] is False
+    events = [json.loads(ln) for ln in capsys.readouterr().err.strip().splitlines()
+              if '"mcp.tool"' in ln]
+    assert events[-1]["attributes"]["tool"] == "run_test"
+    assert events[-1]["attributes"]["ok"] is False
+
+
+def test_mcp_auth_deny_is_logged_without_the_key(capsys):
+    import asyncio
+
+    from noodle.mcp import server
+    _use_json()
+    log.route_console_to_stderr()
+
+    async def inner(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+
+    guarded = server._require_key(inner, "the-real-key-abc")
+    sent = []
+
+    async def send(m):
+        sent.append(m)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    scope = {"type": "http", "path": "/mcp", "client": ("203.0.113.7", 5555),
+             "headers": [(b"x-api-key", b"wrong-guess-xyz")]}
+    asyncio.run(guarded(scope, receive, send))
+    assert sent[0]["status"] == 401
+
+    err = capsys.readouterr().err
+    assert "the-real-key-abc" not in err and "wrong-guess-xyz" not in err  # never log either value
+    deny = [json.loads(ln) for ln in err.strip().splitlines() if '"mcp.auth.deny"' in ln]
+    assert deny, "no mcp.auth.deny event"
+    assert deny[-1]["severity_text"] == "WARNING"
+    assert deny[-1]["attributes"] == {"remote_ip": "203.0.113.7", "path": "/mcp",
+                                      "reason": "bad key"}
+
+
+# --- phase 4: AI-governance events (NOOD_0172) ---------------------------
+import types  # noqa: E402
+
+
+def _fake_litellm(content='{"ok": 1}', model="anthropic/claude-sonnet-5",
+                  in_tok=120, out_tok=8):
+    usage = types.SimpleNamespace(prompt_tokens=in_tok, completion_tokens=out_tok)
+    msg = types.SimpleNamespace(content=content)
+    resp = types.SimpleNamespace(model=model, usage=usage,
+                                 choices=[types.SimpleNamespace(message=msg)])
+    return types.SimpleNamespace(completion=lambda **kw: resp)
+
+
+def _events(err, name):
+    return [json.loads(ln) for ln in err.strip().splitlines() if f'"{name}"' in ln]
+
+
+def test_llm_call_event_carries_model_tokens_and_host(monkeypatch, capsys):
+    from noodle.llm import client, cost
+    client.reset_calls()
+    cost.reset()
+    monkeypatch.setenv("NOODLE_MODEL", "anthropic/claude-sonnet-5")
+    monkeypatch.delenv("NOODLE_LLM_URL", raising=False)
+    monkeypatch.setattr(client, "_litellm", _fake_litellm)
+    _use_json()
+    client.ask("classify this")
+    e = _events(capsys.readouterr().err, "llm.call")[-1]
+    a = e["attributes"]
+    assert a["purpose"] == "llm"
+    assert a["model"] == "anthropic/claude-sonnet-5"
+    assert a["input_tokens"] == 120 and a["output_tokens"] == 8
+    assert a["duration_ms"] >= 0
+    assert a["api_host"] == "anthropic"      # provider prefix, never a key-bearing URL
+
+
+def test_llm_call_event_purpose_is_rca_for_vision_rca_pool(monkeypatch, capsys):
+    import base64
+
+    from noodle.llm import client, cost
+    client.reset_calls()
+    cost.reset()
+    monkeypatch.setenv("NOODLE_MODEL", "anthropic/claude-sonnet-5")
+    monkeypatch.setattr(client, "_litellm", lambda: _fake_litellm(content='{"category":"A"}'))
+    _use_json()
+    client.ask_vision("why did it fail", base64.b64encode(b"img").decode(),
+                      cap_var="NOODLE_RCA_MAX_CALLS")
+    assert _events(capsys.readouterr().err, "llm.call")[-1]["attributes"]["purpose"] == "rca"
+
+
+def test_llm_call_capped_event_on_spend_cap(monkeypatch, capsys):
+    from noodle.llm import client
+    client.reset_calls()
+    monkeypatch.setenv("NOODLE_LLM_MAX_CALLS", "1")
+    _use_json()
+    client._check_cap()                      # 1st call — allowed, count → 1
+    with pytest.raises(AssertionError):
+        client._check_cap()                  # 2nd — cap hit, logs + raises
+    e = _events(capsys.readouterr().err, "llm.call")[-1]
+    assert e["severity_text"] == "WARNING"
+    assert e["attributes"]["capped"] is True and e["attributes"]["cap"] == 1
+
+
+def test_locator_heal_event_flags_fuzzy_strategies(capsys):
+    from noodle import healing
+    _use_json()
+    healing.reset()
+    healing.record("Sign in", "partial-text", "matched 'Sign'")
+    healing.record("Menu", "scroll")
+    evs = _events(capsys.readouterr().err, "locator.heal")
+    fuzzy = next(e for e in evs if e["attributes"]["original"] == "Sign in")
+    confident = next(e for e in evs if e["attributes"]["original"] == "Menu")
+    assert fuzzy["attributes"]["technique"] == "partial-text"
+    assert fuzzy["attributes"]["fuzzy"] is True
+    assert confident["attributes"]["fuzzy"] is False   # scroll is an exact, off-screen match
+    healing.reset()
+
+
+def test_rca_verdict_is_marked_ai_authored(monkeypatch, tmp_path, capsys):
+    from noodle import rca
+    from noodle.llm import client
+    monkeypatch.setenv("NOODLE_RCA", "1")
+    monkeypatch.setenv("NOODLE_MODEL", "anthropic/claude-sonnet-5")
+    monkeypatch.setattr(client, "ask_vision",
+                        lambda **kw: '{"category":"B","confidence":"high",'
+                                     '"reason":"label changed","suggested_fix":"pin the POM"}')
+    shot = tmp_path / "fail.png"
+    shot.write_bytes(b"\x89PNG fake")
+    _use_json()
+    verdict = rca.review("clicks Sign in", "not found", str(shot))
+    assert verdict["ai_authored"] is True
+    assert verdict["model"] == "anthropic/claude-sonnet-5"
+    e = _events(capsys.readouterr().err, "rca.verdict")[-1]
+    assert e["attributes"]["ai_authored"] is True and e["attributes"]["label"] == "locator-rot"
+
+
+def test_llm_payload_log_is_opt_in_and_redacted(monkeypatch, tmp_path, capsys):
+    from noodle.llm import client, cost
+    client.reset_calls()
+    cost.reset()
+    monkeypatch.setenv("NOODLE_MODEL", "anthropic/claude-sonnet-5")
+    monkeypatch.setenv("NOODLE_ARTIFACTS_DIR", str(tmp_path))
+    monkeypatch.setenv("NOODLE_RUN_ID", "testrun01")
+    monkeypatch.setattr(client, "_litellm", lambda: _fake_litellm(content="the answer"))
+    log.register_secret("hunter2-secret-value")
+
+    # off by default → no file
+    client.ask("password is hunter2-secret-value")
+    assert not (tmp_path / "llm" / "testrun01.jsonl").exists()
+
+    # opted in → written, redacted
+    monkeypatch.setenv("NOODLE_LOG_LLM_PAYLOADS", "1")
+    client.ask("password is hunter2-secret-value")
+    body = (tmp_path / "llm" / "testrun01.jsonl").read_text()
+    assert "hunter2-secret-value" not in body and "***" in body
+    assert json.loads(body.strip().splitlines()[-1])["purpose"] == "llm"

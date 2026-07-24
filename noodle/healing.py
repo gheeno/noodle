@@ -12,6 +12,7 @@ so a flaky-by-naming locator becomes a one-line POM fix instead of a mystery.
 import json
 from pathlib import Path
 
+from noodle import log
 from noodle.log import logger
 from noodle.reporting import paths as _paths
 
@@ -33,6 +34,12 @@ FUZZY_STRATEGIES = {"dom-scan", "partial-text", "vision-llm",
 def record(locator: str, strategy: str, detail: str = ""):
     """Note that `locator` was resolved by a non-primary `strategy`."""
     EVENTS.append({"locator": locator, "strategy": strategy, "detail": detail})
+    # NOOD_0172 — governance: every non-primary resolution (a model guess, a
+    # fuzzy match, a disambiguation) is a place the engine, not the author,
+    # decided what to act on. `fuzzy` flags the tiers that don't prove intent.
+    log.event("locator.heal", f"🩹 healed '{locator}' via {strategy}",
+              original=locator, technique=strategy, detail=detail,
+              fuzzy=strategy in FUZZY_STRATEGIES)
 
 
 def reset():

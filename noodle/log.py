@@ -253,6 +253,16 @@ def set_level(level: str):
     logger.setLevel(getattr(logging, str(level).upper(), logging.INFO))
 
 
+def route_console_to_stderr() -> None:
+    """NOOD_0172 — force the console handler to stderr, never stdout. The MCP
+    stdio server uses stdout for its protocol frames, so any log line there
+    corrupts the session. Call once at server start; a no-op in json mode
+    (already stderr) and harmless for the http transport."""
+    for h in logger.handlers:
+        if isinstance(h, _LiveStreamHandler):
+            h._stream_name = "stderr"
+
+
 _file_handler: logging.Handler | None = None
 
 

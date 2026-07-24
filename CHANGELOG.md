@@ -4,6 +4,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a25] — 2026-07-24
+
+Phases 3–4 of the NOOD_0171 logging plan (`tmp/nood_0171-logging-plan.md`), on ticket **NOOD_0172** now that phases 1–2 have merged: the `noodle-mcp` server audit trail (phase 3) and the AI-governance events (phase 4). Phase 5 (`run.end`/`scenario.*`/`step.fail` attributes, Dockerfile json default, dashboards) remains an independent follow-up.
+
+Phase 3 — MCP server audit trail:
+
+- Added: **`mcp.tool` audit event** — every `noodle-mcp` tool call is timed and logged in one place (the `_tool()` wrapper): `tool`, `workspace`, `duration_ms`, `ok` (a tool's own `{"ok": false}` counts, not just exceptions), `error` class, `payload_bytes`. Each call mints a `run_id` that a triggered run inherits via `NOODLE_RUN_ID`, so "agent called `run_and_report`" ties to "scenario X failed" in one query.
+- Added: **`mcp.auth.deny` security event** — the streamable-http key gate logs denied requests at WARNING with `remote_ip` (x-forwarded-for aware, for the Container Apps ingress), `path`, and `reason` (`missing key`/`bad key`) — **never the supplied or configured key**.
+- Added: **`log.route_console_to_stderr()`** — the MCP server's own log lines go to stderr, never stdout (its stdio protocol channel); called once at server start, no-op in json mode.
+
+Phase 4 — AI governance (the "did a model change what this test did, and can you show me?" record):
+
+- Added: **`llm.call` event** on every model call (`llm/client.py`) — `model`, `purpose` (`llm`/`rca`), `input_tokens`/`output_tokens`, `usd`, `duration_ms`, `temperature`, and `api_host` (host/provider only, **never** the key-bearing URL). A spend cap firing logs its own `capped` event at WARNING. `cost.record()` now returns the per-call metrics so the event and the run-total ledger share one computation.
+- Added: **`locator.resolve` (strategy `vision`)** and **`locator.heal`** — the two places a model or a fuzzy heuristic, not the test author, decides what gets acted on. `locator.heal` fires for every non-primary resolution with `original`/`technique`/`fuzzy` (the `fuzzy` flag marks the tiers that don't prove intent).
+- Added: **RCA provenance** — a vision-model root-cause verdict is now marked `ai_authored: true` with its `model`, and emits an `rca.verdict` event, so no reader mistakes a model's guess for an engine fact.
+- Added: **`NOODLE_LOG_LLM_PAYLOADS`** (opt-in, off by default) — writes prompt + completion to a separate, gitignored `artifacts/llm/<run_id>.jsonl`, secret-redacted, screenshots omitted whole; **never** the log stream (prompts carry page text, which carries customer data).
+- Tests: extends `unit_tests/test_nood_0171_logging.py` with the `mcp.tool`/`mcp.auth.deny`/`llm.call`/`locator.heal`/`rca.verdict` events (no key/secret leaks), the opt-in payload log, and a conftest guard that restores console routing after `server.main()` tests (they flip a process-global handler).
+
 ## [0.2.0a24] — 2026-07-24
 
 Structured logging + AI-governance groundwork for the container future state (NOOD_0171, plan in `tmp/nood_0171-logging-plan.md`, phases 1–2). The engine kept stdlib `logging` — no new dependency; ~120 lines in `noodle/log.py`. Phases 3–5 (per-event `mcp.tool`/`llm.call`/`run.end` taxonomy, Dockerfile default, dashboards) are independent follow-ups.
