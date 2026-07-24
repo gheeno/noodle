@@ -90,8 +90,38 @@ _ENV_REF_RE = re.compile(r"\{env:([^}]+)\}")
 def env_refs(content: str) -> list[str]:
     """Every {env:KEY} referenced in feature text, normalized to the os.environ
     key the runner resolves them against (upper, spaces→underscores)."""
+    # NOOD_0177 — scan only lines that can actually carry a reference at run
+    # time. Several sample features *document* the syntax in prose ("the same
+    # {env:X}/{var:X} substitution as step text") — in a '#' comment and in a
+    # Feature: description block — and counting those made preflight demand env
+    # vars named X and NAME. Nothing can satisfy those, so it refused to launch
+    # a browser for a suite that was entirely fine.
+    #
+    # A Feature/Scenario description is free text between the keyword line and
+    # the first tag/step/table, and the engine never substitutes into it.
+    # Non-Gherkin callers (POM yaml, preconditions) have no description blocks,
+    # so this only ever strips comments for them.
+    body_lines, in_description = [], False
+    for ln in (content or "").splitlines():
+        stripped = ln.strip()
+        if stripped.startswith("#"):
+            continue
+        if re.match(r"^(Feature|Rule)\s*:", stripped, re.I):
+            in_description = True
+            continue
+        if in_description:
+            # description ends at the first tag, keyword or table row
+            if (stripped.startswith(("@", "|"))
+                    or re.match(r"^(Background|Scenario|Example|Scenario Outline|"
+                                r"Scenario Template|Given|When|Then|And|But)\b",
+                                stripped, re.I)):
+                in_description = False
+            else:
+                continue
+        body_lines.append(ln)
+    body = "\n".join(body_lines)
     seen, out = set(), []
-    for raw in _ENV_REF_RE.findall(content):
+    for raw in _ENV_REF_RE.findall(body):
         key = raw.strip().upper().replace(" ", "_")
         if key and key not in seen:
             seen.add(key)

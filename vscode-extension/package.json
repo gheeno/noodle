@@ -9,6 +9,12 @@
   "keywords": ["bdd", "gherkin", "feature", "testing", "cucumber"],
   "activationEvents": ["onLanguage:noodle"],
   "main": "./client/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Noodle launches a Python language server resolved from the workspace .venv, so opening an untrusted folder would run code from it."
+    }
+  },
   "contributes": {
     "languages": [
       {
@@ -36,7 +42,8 @@
         "noodle.pythonPath": {
           "type": "string",
           "default": "",
-          "description": "Python interpreter that has noodle installed. Leave blank to auto-detect the workspace .venv, falling back to python3 (python on Windows)."
+          "scope": "machine",
+          "description": "Python interpreter that has noodle installed. Leave blank to auto-detect the workspace .venv, falling back to python3 (python on Windows). Machine-scoped: a cloned repo's .vscode/settings.json cannot point this at an executable of its choosing."
         },
         "noodle.unknownStepSeverity": {
           "type": "string",

@@ -1,6 +1,7 @@
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from noodle import safe_xml as _safe_xml
 from noodle.reporting import paths as _paths
 
 
@@ -63,8 +64,8 @@ def merge_junits(suite_paths, out_path=None):
         if not p.is_file():
             continue
         try:
-            root.append(ET.parse(str(p)).getroot())
-        except ET.ParseError:
+            root.append(_safe_xml.parse_file(p).getroot())
+        except (ET.ParseError, _safe_xml.UnsafeXML, OSError):
             continue
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ")

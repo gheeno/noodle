@@ -29,8 +29,8 @@ Feature: Login — all the ways Noodle can authenticate
   Scenario: Log in with hardcoded credentials (literals)
     # Literal strings — fine for local exploration; use env vars in CI.
     Given User is on "{env:BUSTERBLOCK}"
-    When User enters "reel_ryan" in the username field
-    And User enters "Popcorn1!" in the password field
+    When User enters "{env:BB_USER}" in the username field
+    And User enters "{env:BB_PASS}" in the password field
     And User clicks the login button
     Then User should see "VHS Catalog"
 
@@ -57,7 +57,7 @@ Feature: Login — all the ways Noodle can authenticate
 
     Examples:
       | username      | password   |
-      | reel_ryan     | Popcorn1!  |
+      | {env:BB_USER}     | {env:BB_PASS}  |
       | tape_tanya    | Rewind2#   |
       | vhs_victor    | VCR_3way   |
 

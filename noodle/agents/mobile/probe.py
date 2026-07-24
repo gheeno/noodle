@@ -17,6 +17,8 @@ existing @ocr_fallback path instead of fabricating selectors.
 """
 import xml.etree.ElementTree as ET
 
+from noodle import safe_xml as _safe_xml
+
 # tag/class suffix → kind, one table for Android / iOS / Windows / macOS.
 # ponytail: extend a tuple when a real app surfaces a control class we miss.
 _KIND_SUFFIXES = (
@@ -86,7 +88,7 @@ def summarize_source(xml_text: str) -> dict:
     the mobile counterpart of web summarize()."""
     controls, seen, warnings = [], set(), []
     try:
-        root = ET.fromstring(xml_text)
+        root = _safe_xml.fromstring(xml_text)
     except ET.ParseError as e:
         return {"controls": [], "warnings": [f"page_source not parseable: {e}"],
                 "coverage": "visual_only", "author_ready": False}

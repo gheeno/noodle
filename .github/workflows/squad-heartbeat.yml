@@ -25,7 +25,14 @@ jobs:
   heartbeat:
     runs-on: ubuntu-latest
     steps:
+      # NOOD_0177 — pin the checkout to the default branch. On a `pull_request`
+      # event actions/checkout defaults to the PR's merge ref, so this job ran
+      # .squad/templates/ralph-triage.js FROM THE PULL REQUEST — code any
+      # contributor (including a fork author, by closing their own PR) can
+      # rewrite. The job only triages issues; it never needs PR content.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
 
       - name: Check triage script
         id: check-script

@@ -57,7 +57,14 @@ def wanted(tags, requested: bool, is_last_step: bool, has_page: bool) -> bool:
 
 
 def _safe_name(step_name: str) -> str:
-    return step_name.replace(" ", "_").replace("/", "_")[:80]
+    # NOOD_0177 — same rule as the failure screenshot: value-scrub first (a
+    # filename outlives every text redaction), then allow only filename-safe
+    # characters, which also closes the Windows '\' traversal that stripping
+    # '/' alone left open.
+    import re
+
+    from noodle import log as _log
+    return re.sub(r"[^A-Za-z0-9._-]", "_", _log.redact(step_name))[:80]
 
 
 # NOOD_0156 — metadata for the most recent capture(): resolution source,
@@ -65,6 +72,18 @@ def _safe_name(step_name: str) -> str:
 # it (last_meta) right after capture() and attaches it to the step result, so
 # the run payload can show WHAT the evidence shot actually proves — a filename
 # alone never does.
+def _redact_meta(meta: dict) -> dict:
+    """NOOD_0177 — value-scrub every string in an evidence dict."""
+    from noodle import log as _log
+    out = {}
+    for k, v in (meta or {}).items():
+        try:
+            out[k] = _log.redact(v) if isinstance(v, str) else v
+        except Exception:
+            out[k] = v
+    return out
+
+
 _last_meta: dict | None = None
 
 
@@ -190,6 +209,13 @@ def capture(page, step_name: str, fresh_match: bool = True) -> str | None:
         except Exception:
             pass
     meta["path"] = path
-    _last_meta = meta
+    # NOOD_0177 — evidence metadata is the last unredacted route into a shared
+    # artifact. `locator` is the resolved step phrase and `text` is the matched
+    # element's own text, so a step like `should see "{env:BB_PASS}"` recorded
+    # the live credential — and this dict reaches BOTH Allure's statusDetails
+    # (writer.add_step) and last_run.json, which is why redacting only the
+    # failure message was not enough. Value-scrub the whole thing here, at the
+    # one point that builds it, so every consumer inherits it.
+    _last_meta = _redact_meta(meta)
     logger.info(f"\n  📸 Evidence saved: {path}")
     return path

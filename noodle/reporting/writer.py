@@ -5,7 +5,18 @@ import time
 import uuid
 from pathlib import Path
 
+from noodle.log import redact as _log_redact
 from noodle.reporting.paths import results_dir
+
+
+def _redact(text) -> str:
+    """NOOD_0177 — value-scrub anything on its way into a shared artifact.
+    Never raises: a redaction failure must not lose a failure message, but it
+    must also never fall back to the unscrubbed original."""
+    try:
+        return _log_redact("" if text is None else str(text))
+    except Exception:
+        return "<redaction failed — message withheld>"
 
 
 class ScenarioResult:
@@ -56,16 +67,26 @@ class ScenarioResult:
     def add_step(self, step, status, attachment_path=None, warnings=None,
                  attachment_name=None, healing=None, evidence_meta=None):
         entry = {
-            "name": f"{step.keyword} {step.name}",
+            # NOOD_0177 — redact the step NAME too. A step written with a
+            # literal credential ("enters 'hunter2' in the password field")
+            # leaks it into the Allure step title on the PASSING path, where no
+            # failure message exists to scrub.
+            "name": _redact(f"{step.keyword} {step.name}"),
             "status": status,
             "start": int(time.time() * 1000),
             "stop": int(time.time() * 1000),
         }
         if status == "failed":
-            error_msg = str(step.exception) if step.exception else "Step failed"
+            # NOOD_0177 — redact BOTH fields. log.redact() masks by secret VALUE,
+            # but it was only wired into the logging filter and diagnostics, so
+            # the console was scrubbed while this — the artifact people serve,
+            # email and publish to the CI Tests tab — was not. assert_value
+            # formats "Expected '<{env:PASSWORD}>' … actual: '<live field value>'",
+            # so an ordinary failing login printed the credential twice.
+            error_msg = _redact(str(step.exception) if step.exception else "Step failed")
             entry["statusDetails"] = {
                 "message": error_msg,
-                "trace": step.error_message or "",
+                "trace": _redact(step.error_message or ""),
             }
         # NOOD_0153 — attachments on ANY status: failure screenshots keep their
         # historic name, evidence/manual shots on passed steps get theirs.
@@ -79,7 +100,8 @@ class ScenarioResult:
         # NOOD_0021 — also kept on a PASSED step: lenient mode never fails the
         # build on these, so this is the only way they're not console-only.
         if warnings:
-            entry.setdefault("statusDetails", {})["warnings"] = warnings
+            entry.setdefault("statusDetails", {})["warnings"] = [
+                _redact(str(w)) for w in warnings]
         # NOOD_0156 — per-step healing events + evidence metadata, so the run
         # payload can surface every substitution behind a green step and mark
         # whether the run counts as verified.

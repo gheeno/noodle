@@ -18,9 +18,23 @@ runner = CliRunner()
 
 # --- Task 5: ignore certificate errors ---------------------------------------
 
-def test_ignore_https_errors_default_on(monkeypatch):
+def test_ignore_https_errors_default_off(monkeypatch):
+    """NOOD_0177 — flipped from ignore-by-default to verify-by-default. The same
+    engine runs against live production with real credentials from secrets.env,
+    and a fail-open default let any on-path proxy MITM the login and still show
+    a green run. Relaxing it is now explicit."""
     monkeypatch.delenv("NOODLE_IGNORE_HTTPS_ERRORS", raising=False)
-    assert hooks.ignore_https_errors(set()) is True
+    assert hooks.ignore_https_errors(set()) is False
+
+
+def test_insecure_certs_tag_opts_in(monkeypatch):
+    monkeypatch.delenv("NOODLE_IGNORE_HTTPS_ERRORS", raising=False)
+    assert hooks.ignore_https_errors({"insecure_certs"}) is True
+
+
+def test_secure_certs_still_wins_over_the_insecure_tag(monkeypatch):
+    monkeypatch.setenv("NOODLE_IGNORE_HTTPS_ERRORS", "true")
+    assert hooks.ignore_https_errors({"secure_certs", "insecure_certs"}) is False
 
 
 def test_ignore_https_errors_env_off(monkeypatch):

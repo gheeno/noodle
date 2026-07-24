@@ -120,14 +120,27 @@ class _NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     NOOD_0093 — `no-cache` still lets Chrome STORE the response (it just
     revalidates), and the Allure SPA's data JSON is reused across regenerated
     reports on the same port. `no-store` forbids storage outright, so a
-    re-served report is always the freshly built one."""
+    re-served report is always the freshly built one.
+
+    NOOD_0177 — and no directory listing. The served root is a reports
+    directory, and the docs used to suggest saving a browser session into it,
+    so `/` handed out an index of everything there — a saved storage_state is a
+    pre-authenticated cookie jar that bypasses MFA. There is no authentication
+    on this server by design (it is a localhost convenience), which makes the
+    listing the whole exposure: without it a caller must already know a
+    filename, and the two that matter are returned by report_urls().
+    """
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
+    def list_directory(self, path):
+        self.send_error(403, "Directory listing is disabled")
+        return None
 
-def _make_server(report_dir: str, host: str = "0.0.0.0", port: int = 8000) -> http.server.ThreadingHTTPServer:
+
+def _make_server(report_dir: str, host: str = "127.0.0.1", port: int = 8000) -> http.server.ThreadingHTTPServer:
     handler = functools.partial(_NoCacheHandler, directory=report_dir)
     return http.server.ThreadingHTTPServer((host, port), handler)
 
@@ -153,7 +166,7 @@ def report_urls(report_dir: str, host: str, port: int) -> list[str]:
 # its stop path lied about what was running.
 
 
-def serve_report(report_dir: str = None, host: str = "0.0.0.0", port: int = 8000,
+def serve_report(report_dir: str = None, host: str = "127.0.0.1", port: int = 8000,
                  on_bound=None):
     """NOOD_0035: `allure open` only binds to localhost, so a teammate can't
     just click a link to the report — they have to download the artifacts

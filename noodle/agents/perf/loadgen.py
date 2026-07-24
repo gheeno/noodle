@@ -11,19 +11,29 @@ assertions as the contract; docs/woks.md § Performance covers the trade-off.
 """
 from __future__ import annotations
 
+import os
 import ssl
 import threading
 import time
 import urllib.request
 from dataclasses import dataclass, field
 
-# One insecure-by-default TLS context, matching the web wok's
-# ignore_https_errors default (dev/sandbox certs) — NOODLE_IGNORE_HTTPS_ERRORS
-# is honoured by the caller building opener kwargs, not here, to keep this
-# module env-free and deterministic under test.
+# NOOD_0177 — this used to be an unconditional CERT_NONE context, with a comment
+# claiming NOODLE_IGNORE_HTTPS_ERRORS was "honoured by the caller". No caller
+# ever passed it, so the perf wok had NO way to verify a certificate at all —
+# three woks, three different TLS answers. Now it reads the same switch the web
+# wok reads, and verifies by default.
 _LAX_TLS = ssl.create_default_context()
 _LAX_TLS.check_hostname = False
 _LAX_TLS.verify_mode = ssl.CERT_NONE
+
+
+def _tls_context():
+    """Verifying context unless NOODLE_IGNORE_HTTPS_ERRORS opts out."""
+    if os.getenv("NOODLE_IGNORE_HTTPS_ERRORS", "").strip().lower() in (
+            "1", "true", "yes", "on"):
+        return _LAX_TLS
+    return ssl.create_default_context()
 
 
 @dataclass
@@ -93,13 +103,29 @@ class LoadResult:
                 f"{self.throughput_rps:.1f} req/s")
 
 
+def _cap(env_var: str, value, default_max: float, label: str) -> None:
+    """Refuse a load parameter above its ceiling. Raise the ceiling per-run with
+    the named env var; set it to 0 to lift the cap entirely."""
+    if value is None:
+        return
+    try:
+        ceiling = float(os.getenv(env_var, "") or default_max)
+    except ValueError:
+        ceiling = default_max
+    if ceiling and float(value) > ceiling:
+        raise ValueError(
+            f"perf test asks for {label}={value}, above the {ceiling:g} ceiling. "
+            f"Raise it with {env_var} if that is really intended — and confirm the "
+            "target is a load-test environment, not production.")
+
+
 def _hit(url: str, method: str, timeout_s: float) -> tuple[float, bool, int]:
     """One request; returns (latency_ms, ok, status). Never raises."""
     req = urllib.request.Request(url, method=method,
                                  headers={"User-Agent": "noodle-perf/0.1"})
     t0 = time.perf_counter()
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s, context=_LAX_TLS) as resp:
+        with urllib.request.urlopen(req, timeout=timeout_s, context=_tls_context()) as resp:
             resp.read()
             status = resp.status
             ok = status < 400
@@ -122,6 +148,17 @@ def run_load(url: str, users: int = 5, duration_s: float | None = None,
     """
     if (duration_s is None) == (total_requests is None):
         raise ValueError("run_load needs exactly one of duration_s / total_requests")
+    # NOOD_0177 — this is a load generator whose target comes from a step
+    # sentence, and wok.infer_tag routes anything mentioning "performance" here,
+    # so "check the checkout page performance" could point a flood at production
+    # with no human in the loop. Ceilings are generous enough for a real CI gate
+    # and low enough that a mis-authored test is not an outage. Same shape as
+    # llm.client._check_cap: env-tunable, loud refusal, no silent clamp.
+    _cap("NOODLE_PERF_MAX_USERS", users, 50, "concurrent users")
+    _cap("NOODLE_PERF_MAX_DURATION_S", duration_s, 300, "duration_s")
+    _cap("NOODLE_PERF_MAX_REQUESTS", total_requests, 100_000, "total_requests")
+    from noodle.target_policy import check_target
+    check_target(url, what="load test")   # NOOD_0177 — never flood metadata//file
     users = max(1, int(users))
     result = LoadResult(url=url, users=users)
     lock = threading.Lock()

@@ -155,6 +155,19 @@ _STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
 _ALLOWED_ROOTS: list[Path] | None = None
 
 
+def _contained(path_str: str, label: str) -> Path:
+    """NOOD_0177 — assert a caller-supplied path sits inside the roots this
+    server was started with, WITHOUT _ws's side effect of loading a .env from
+    it. For paths that are read or served rather than used as a workspace."""
+    path = Path(path_str).resolve()
+    if _ALLOWED_ROOTS is not None and not any(
+            path == root or path.is_relative_to(root) for root in _ALLOWED_ROOTS):
+        raise ValueError(
+            f"{label} {path_str!r} is outside the roots this server was started "
+            "with (--workspace / --workspace-root)")
+    return path
+
+
 def _ws(workspace: str | None) -> str:
     """Resolve a tool call's workspace (NOOD_0057). None -> the --workspace
     the server started with; otherwise the override, checked against
@@ -524,6 +537,13 @@ def serve_report(workspace: str | None = None, report_dir: str | None = None,
     server for the same reports root is reused — the URL stays the same run
     after run. It lives until stop_report_server or `noodle report stop`.
     workspace overrides the server's default workspace for this call."""
+    # NOOD_0177 — report_dir used to skip the _ALLOWED_ROOTS check that
+    # `workspace` and init_workspace's `path` both pass, so serve_report(
+    # report_dir="/Users/you") published a directory listing of the whole home
+    # directory — ~/.ssh, every workspace's secrets.env — to anything on
+    # localhost, defeating --workspace-root entirely.
+    if report_dir is not None:
+        _contained(report_dir, "report_dir")
     return core.serve_report(workspace=_ws(workspace), report_dir=report_dir, port=port)
 
 

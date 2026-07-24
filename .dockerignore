@@ -11,3 +11,23 @@ videos
 baselines
 node_modules
 *.vsix
+
+# NOOD_0177 — the Dockerfile does `COPY . .`, so anything not excluded here is
+# baked into an image layer and readable by anyone who can pull it. These are
+# exactly the paths .gitignore already names as secret-bearing, and both the
+# devcontainer and `az acr build .` build from a developer's live checkout.
+secrets.env
+**/resources/*_secrets.env
+.env
+*.noodle-tmp
+
+# Run output: traces carry Authorization/Set-Cookie headers and response bodies,
+# the network log carries request URLs, a saved session is a pre-authenticated
+# cookie jar that bypasses MFA.
+artifacts/
+reports/
+archives/
+output/
+.noodle/
+tmp/
+diagnostics/

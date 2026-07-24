@@ -13,6 +13,8 @@ import re
 import xml.etree.ElementTree as ET
 import zipfile
 
+from noodle import safe_xml as _safe_xml
+
 _NS = {
     "m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
     "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
@@ -22,7 +24,7 @@ _NS = {
 
 def _sheet_xml_path(z: zipfile.ZipFile, sheet: str | None) -> str:
     """The archive path of the named sheet's XML (first sheet when None)."""
-    wb = ET.fromstring(z.read("xl/workbook.xml"))
+    wb = _safe_xml.fromstring(z.read("xl/workbook.xml"))
     sheets = wb.findall("m:sheets/m:sheet", _NS)
     if not sheets:
         raise AssertionError("Workbook has no sheets")
@@ -34,7 +36,7 @@ def _sheet_xml_path(z: zipfile.ZipFile, sheet: str | None) -> str:
             names = ", ".join(s.get("name", "?") for s in sheets)
             raise AssertionError(f"No sheet named '{sheet}' — workbook has: {names}")
     rid = chosen.get(f"{{{_NS['r']}}}id")
-    rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+    rels = _safe_xml.fromstring(z.read("xl/_rels/workbook.xml.rels"))
     for rel in rels.findall("pr:Relationship", _NS):
         if rel.get("Id") == rid:
             target = rel.get("Target", "")
@@ -49,7 +51,7 @@ def _shared_strings(z: zipfile.ZipFile) -> list[str]:
         return []
     # A shared string may be split across rich-text runs — join every <t>.
     return ["".join(t.text or "" for t in si.findall(".//m:t", _NS))
-            for si in ET.fromstring(raw).findall("m:si", _NS)]
+            for si in _safe_xml.fromstring(raw).findall("m:si", _NS)]
 
 
 def _cell_text(cell: ET.Element, shared: list[str]) -> str:
@@ -79,7 +81,7 @@ def read_cell(path: str, cell_ref: str, sheet: str | None = None) -> str:
     except zipfile.BadZipFile:
         raise AssertionError(f"Not an .xlsx workbook (bad zip): {path}")
     with z:
-        root = ET.fromstring(z.read(_sheet_xml_path(z, sheet)))
+        root = _safe_xml.fromstring(z.read(_sheet_xml_path(z, sheet)))
         target = root.find(f'.//m:c[@r="{cell_ref}"]', _NS)
         if target is None:
             return ""

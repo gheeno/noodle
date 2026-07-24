@@ -20,7 +20,10 @@ from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 from noodle import config, counters
+from noodle import target_policy as _target_policy
 from noodle.reporting import paths as _paths
 
 # --- persistent state --------------------------------------------------------
@@ -314,7 +317,6 @@ def _resolved_env(app_dirs, workspace: str) -> dict:
     (wins), then root .env/secrets.env/environments.yaml, then EACH involved app
     package's resources/*. Mirrors hooks.before_all's setdefault precedence.
     Accepts one app dir or a list (a multi-app dir run touches several)."""
-    import yaml
     from dotenv import dotenv_values
     env = {k.upper(): v for k, v in os.environ.items()}
 
@@ -703,7 +705,6 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     `run_after_author=true` then runs ONCE (headless, retries=0), serves both
     reports, and forces failure when 0 scenarios passed — one bounded
     {author, run} payload, zero extra model round-trips."""
-    import yaml
 
     from noodle.repl import generate, validate
     if (feature_content is None) == (goal is None):
@@ -861,7 +862,20 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         if goal is not None and overwrite:
             for k in stale_env_keys:
                 del env_map[k]
-    env_text = "".join(f"{k}: {v}\n" for k, v in env_map.items())
+    # NOOD_0177 — was "".join(f"{k}: {v}\n"), an f-string masquerading as YAML.
+    # environment_values arrives over MCP with no validation (unlike
+    # secret_values, which _validate_secret_values already guards), and
+    # hooks._apply writes every key it finds straight into os.environ. So a
+    # caller could set LD_PRELOAD / NODE_OPTIONS / PYTHONPATH and have the next
+    # child process — Allure's Node binary, the behave subprocess, the browser —
+    # load their code. A newline in a VALUE also parsed back as an extra key.
+    # safe_dump quotes both sides; the key check refuses the rest.
+    bad_env_keys = [k for k in env_map if not _ENV_KEY_RE.match(str(k))]
+    if bad_env_keys:
+        return {"ok": False, "ready": False, "blocking": [
+            f"invalid environment key(s) {sorted(map(str, bad_env_keys))} — "
+            "keys must match [A-Za-z_][A-Za-z0-9_]*"]}
+    env_text = yaml.safe_dump(dict(env_map), default_flow_style=False, sort_keys=False)
 
     # secrets — write supplied prompt values (NOOD_0130); create only the
     # remaining MISSING required keys as placeholders; never clobber an existing
@@ -890,7 +904,15 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
                 created.append(path)
             tmp = path.with_name(path.name + ".noodle-tmp")
             try:
-                tmp.write_text(text)
+                # NOOD_0177 — os.replace swaps the INODE, so an operator who
+                # hardened <app>_secrets.env to 0600 had it silently reverted to
+                # the umask default on every re-author. Create the temp file
+                # private up front (not chmod after — that leaves a window where
+                # the secret is world-readable) and the mode survives the swap.
+                if config.is_secret_path(path):
+                    config.write_private(tmp, text)
+                else:
+                    tmp.write_text(text)
                 os.replace(tmp, path)
             except OSError:
                 tmp.unlink(missing_ok=True)
@@ -1317,6 +1339,19 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
     credentials never transit the transcript."""
     from noodle.agents.web import probe as _probe
     urls = [normalize_url(u) for u in re.split(r"[,\s]+", url.strip()) if u]
+    # NOOD_0177 — probe_page is MCP-exposed and returns a ±30-char window around
+    # each `expect` hit, so an unrestricted file:// made it a read oracle:
+    # probe_page(url="file:///…/.aws/credentials", expect=["AKIA"]) exfiltrated a
+    # key a slice at a time, and http:// to 169.254.169.254 reached cloud
+    # metadata from CI. Local fixture pages (NOOD_0115) stay available behind an
+    # explicit opt-in rather than by default.
+    allow_file = os.getenv("NOODLE_ALLOW_LOCAL_URLS", "").strip().lower() in (
+        "1", "true", "yes", "on")
+    for u in urls:
+        try:
+            _target_policy.check_target(u, allow_file=allow_file, what="probe")
+        except _target_policy.TargetRefused as e:
+            return {"pages": [], "errors": [{"url": u, "error": str(e)}]}
     if not urls:
         return {"pages": [], "errors": [{"url": url, "error": "no URL given"}]}
     # NOOD_0169 — several URLs in one browser IS an ordered navigation
@@ -1335,6 +1370,18 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
             return {"pages": [], "errors": [{"url": url, "error":
                     "unresolved {env:} in do actions — set in the workspace "
                     "env files first: " + ", ".join(missing)}]}
+        # NOOD_0177 — validate the GRAMMAR on the unsubstituted form first.
+        # parse_do raises ValueError(f'bad do action {a!r} …'), and that error is
+        # returned to the MCP caller verbatim — so parsing after substitution put
+        # a resolved credential into the driving agent's context window. _DO_RE
+        # has no DOTALL, so any multi-line secret (a PEM key, a value with a
+        # trailing newline from secrets.env) failed to match and leaked. Both
+        # this function and mcp/server.py promise "raw credentials never transit
+        # the transcript"; this is what makes that true.
+        try:
+            _probe.parse_do(do)
+        except ValueError as e:
+            return {"pages": [], "errors": [{"url": url, "error": str(e)}]}
         do = [re.sub(r"\{env:([A-Za-z_][A-Za-z0-9_]*)\}",
                      lambda m: env[m.group(1).upper()], a) for a in do]
     return _probe.probe(urls, timeout_ms=timeout_ms, clicks=click, do=do,

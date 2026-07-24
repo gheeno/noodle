@@ -175,7 +175,14 @@ def _app_from_existing_url(url: str, workspace_cfg: dict, workspace: str = ".") 
                 continue
             existing = urlsplit(base_url)
             if existing.hostname == target.hostname and existing.port == target.port:
-                return app
+                # NOOD_0177 — this key comes from a YAML file on disk, and
+                # author_test derives app_dir from whatever it returns. It used
+                # to be returned raw while the caller-supplied app_name went
+                # through _norm_app, so a key like '../../outside' escaped the
+                # workspace — and features_dir was derived from the already
+                # escaped app_dir, making the is_relative_to check pass
+                # vacuously. Same normalization as every other app name.
+                return re.sub(r"[^a-z0-9]+", "_", str(app).lower()).strip("_") or None
     return None
 
 
@@ -187,7 +194,14 @@ _SECRETS_EXAMPLE = """\
 
 
 _PAYLOAD_REF_RE = re.compile(r"""['"]([\w./-]+\.json)['"]|\|\s*([\w./-]+\.json)\s*\|""")
-_FUNCTION_REF_RE = re.compile(r"""calls the function ['"]([^'"]+)['"]""")
+# NOOD_0177 — was ['"]([^'"]+)['"]. A negated class matches NEWLINES, so the
+# capture ran past the end of the step and the whole span was interpolated into
+# _FUNCTION_STUB's `def {func}(...)` and written to resources/functions/*.py —
+# a file call_function later loads with exec_module. A feature file could
+# therefore author arbitrary Python. The spec grammar is only
+# 'path/to/file.py:function' or 'pkg.module:function', so the class is now
+# exactly that alphabet; the identifier check below is the second gate.
+_FUNCTION_REF_RE = re.compile(r"""calls the function ['"]([\w./:-]+)['"]""")
 _PRECONDITION_REF_RE = re.compile(r"@precondition:(\w+)")
 
 _FUNCTION_STUB = '''
@@ -246,7 +260,19 @@ def _scaffold_referenced_resources(app_dir: Path, feature: str) -> list[Path]:
         target, sep, func = m.group(1).rpartition(":")
         if not sep or not target.endswith(".py"):
             continue  # module form (pkg.module:func) — nothing to scaffold
-        path = Path(target)
+        # NOOD_0177 — func is interpolated into generated Python source, so it
+        # must be a bare identifier and nothing else.
+        if not func.isidentifier():
+            raise ValueError(
+                f"refusing to scaffold function {func!r} — a function name must be a "
+                "plain Python identifier (it is written into generated source)")
+        # ...and the file it lands in must stay inside the app package: target
+        # is raw text from the .feature, so '../../..' would escape.
+        path = (app_dir / target).resolve()
+        if not path.is_relative_to(app_dir.resolve()):
+            raise ValueError(
+                f"refusing to scaffold {target!r} — function files must stay inside "
+                f"{app_dir.name}/")
         stub = _FUNCTION_STUB.format(func=func)
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)

@@ -43,9 +43,12 @@ Feature: Assertions — every assertion pattern Noodle supports
 
   @smoke @count
   Scenario: Assert a count of visible elements
-    # "should see N 'X' items" counts all visible elements matching 'X'.
-    # The catalog loads 50 movies; each has an "Add to Cart" button.
-    Then User should see 50 "Add to Cart" items
+    # "should see N 'X' items" counts all visible elements matching 'X' — and
+    # when a POM key matches the phrase, it counts THAT selector instead
+    # (NOOD_0115). So a count needs a key that matches every row: plain
+    # "Add to Cart" resolves to the click key, which is scoped to one row on
+    # purpose, and would count 1. The catalog loads 50 movies.
+    Then User should see 50 "{pom:add to cart buttons}" items
 
   @state @enabled @precondition:reset_state
   Scenario: Assert element is enabled / disabled

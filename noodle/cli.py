@@ -574,6 +574,20 @@ secrets.env
 diagnostics/
 # Run-local engine state (last-run pointer, diag_state, report-server pids).
 .noodle/
+# NOOD_0177 — run output must never be committable. Playwright traces record
+# request AND response headers (Authorization, Set-Cookie) plus DOM snapshots;
+# the network log holds request URLs; screenshots capture authenticated pages;
+# a saved browser session is a pre-authenticated cookie jar that bypasses MFA.
+# The engine's own .gitignore has always covered these — the scaffold did not,
+# so `noodle init` -> run -> `git add .` published them.
+artifacts/
+reports/
+archives/
+output/
+baselines/
+**/report/
+session*.json
+docs/steps_dictionary_suggestions.md
 """
 
 _ENV_STUB_BASE = """\
@@ -592,7 +606,10 @@ NOODLE_TIMEOUT=10000            # per-action timeout, milliseconds (clicks, page
 #NOODLE_FIND_TIMEOUT=25000
 #NOODLE_WAIT_EXTENSION=15000
 #NOODLE_SETTLE_TIMEOUT=15000    # settled-page early exit, ms: once the page is done (network quiet + DOM stable) a find that still hasn't matched stops polling early instead of exhausting the full budget; 0 disables
-NOODLE_IGNORE_HTTPS_ERRORS=true  # dev/sandbox sites: TLS + self-signed/invalid cert errors ignored by default in all browsers; set false (or tag @secure_certs) to surface them
+# NOOD_0177 — TLS certificates are VERIFIED by default. Set this to true ONLY for a
+# dev/sandbox site with a self-signed cert, and never for a run that types real
+# credentials: disabling it lets any on-path proxy read them. Per-scenario: @insecure_certs.
+NOODLE_IGNORE_HTTPS_ERRORS=false
 #NOODLE_AUTO_DISMISS=true       # auto-close overlays that block a click, with an RCA warning; set false to fail instead
 #NOODLE_DEV_FIX_ATTEMPTS=10      # agent test-dev loop: CEILING on cause-backed fix+rerun attempts (first failure: reproduce once with probe --do, never guess-per-lap) before reporting the test as flaky
 #NOODLE_VIEWPORT=1920x1080      # run-wide viewport (or @viewport:WxH tag per scenario)
@@ -2176,6 +2193,19 @@ def report_stop(
         if port is not None and str(port) != prt:
             remaining[prt] = entry
             continue
+        # NOOD_0177 — pid came straight out of .noodle/report_servers.json and
+        # was never int()-checked, so a crafted registry made this signal
+        # anything the user owns. os.kill(-1, SIGTERM) is the sharp case: POSIX
+        # sends it to EVERY process the user can signal, turning a routine
+        # `noodle report stop` into a session-wide kill.
+        try:
+            pid = int(pid)
+        except (TypeError, ValueError):
+            typer.echo(f"  (port {prt}: ignoring non-numeric pid {pid!r})")
+            continue
+        if pid <= 1:
+            typer.echo(f"  (port {prt}: refusing to signal pid {pid})")
+            continue
         try:
             os.kill(pid, signal.SIGTERM)
             typer.echo(f"  🛑 Stopped report server on port {prt} (pid {pid})")
@@ -2385,6 +2415,19 @@ def clean(
     --purge-history for a true full wipe.
     """
     root = _paths.last_run_root(workspace)
+    # NOOD_0177 — containment BEFORE rmtree. artifacts_root() is
+    # Path(os.getenv("NOODLE_ARTIFACTS_DIR", "artifacts")), and pathlib's
+    # absolute-RHS rule makes Path(workspace) / "/Users/you" evaluate to
+    # "/Users/you" — so an absolute NOODLE_ARTIFACTS_DIR (or a pointer file
+    # holding one) turned `noodle clean` into rm -rf of that path. No attacker
+    # needed: a CI variable typo was enough.
+    ws_resolved = Path(workspace).resolve()
+    if not root.resolve().is_relative_to(ws_resolved):
+        typer.secho(
+            f"Refusing to clean {root.resolve()} — it is outside the workspace "
+            f"({ws_resolved}). Check NOODLE_ARTIFACTS_DIR and "
+            f"{_paths._POINTER}.", fg=typer.colors.RED)
+        raise typer.Exit(1)
     if not root.is_dir():
         typer.echo(f"Nothing to clean — {root} doesn't exist.")
         return

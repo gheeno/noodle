@@ -33,4 +33,4 @@ Feature: Resource Files — load JSON payloads and fixtures from disk
     Given uses these payloads:
       | payload                   |
       | payloads/seed_cart.json   |
-    And {var:PAYLOAD} should contain "reel_ryan"
+    And {var:PAYLOAD} should contain "{env:BB_USER}"

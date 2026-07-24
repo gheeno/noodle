@@ -10,6 +10,31 @@ from pathlib import Path
 
 import yaml
 
+# NOOD_0177 — os.chmod appeared nowhere in the package, so every credential and
+# session file landed at 0o666 & ~umask (typically 0644, world-readable). These
+# two helpers are the single place that decides "this file holds a credential".
+# A saved browser session is the sharpest case: it is pre-authenticated and
+# bypasses MFA, which is exactly what the docs recommend it for.
+_SECRET_FILE_HINTS = ("secrets.env", "_secrets.env", "session", "storage_state")
+
+
+def is_secret_path(path) -> bool:
+    name = Path(path).name.lower()
+    return any(h in name for h in _SECRET_FILE_HINTS)
+
+
+def write_private(path, text: str) -> Path:
+    """Write text at 0600, private from creation — never world-readable, not
+    even for the instant between write and chmod."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:      # fdopen owns fd and closes it
+        fh.write(text)
+    os.chmod(str(path), 0o600)          # an existing file keeps its old mode otherwise
+    return path
+
+
 DEFAULTS = {
     "tests_dir": "tests",
     "env_file": ".env",

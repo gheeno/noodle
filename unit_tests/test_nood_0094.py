@@ -27,11 +27,13 @@ def test_dev_fix_attempts_floor_and_garbage(monkeypatch, bad):
 
 # --- workspace template defaults ---------------------------------------------
 
-def test_env_stub_ignores_https_by_default():
-    # Parts 1+2: TLS + cert errors ignored out of the box — the line is set,
-    # not commented, so a fresh workspace surfaces it as an editable default.
+def test_env_stub_verifies_https_by_default():
+    # NOOD_0177 — a fresh workspace must VERIFY certificates. The line is still
+    # set rather than commented, so it stays discoverable as an editable
+    # default, but a new workspace is now secure until someone opts out.
     stub = _env_stub()
-    assert "\nNOODLE_IGNORE_HTTPS_ERRORS=true" in stub
+    assert "\nNOODLE_IGNORE_HTTPS_ERRORS=false" in stub
+    assert "NOODLE_IGNORE_HTTPS_ERRORS=true" not in stub
 
 
 def test_env_stub_documents_dev_fix_attempts():
