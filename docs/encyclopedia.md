@@ -1049,14 +1049,22 @@ it. The extension stopped claiming the `.feature` extension globally; instead
 `noodle init` writes a workspace `.vscode/settings.json`:
 
 ```json
-{ "files.associations": { "**/noodle_tests/**/*.feature": "noodle" } }
+{ "files.associations": { "**/*.feature": "noodle" } }
 ```
 
-That maps only *this* workspace's feature files to the `noodle` language (→
-noodle grammar + LSP); every other `.feature` on the machine stays owned by
-`alexkrechik.cucumberautocomplete`. They no longer fight. If a noodle feature
-file still gets Cucumber's highlighting, the workspace is missing that
-association — run `noodle init` and reload the window.
+That maps *this* workspace's feature files to the `noodle` language (→ noodle
+grammar + LSP). It's folder-scoped — it only applies when this workspace is the
+open folder, so a separate Selenium+Cucumber project (a different folder with
+no such association) keeps `alexkrechik.cucumberautocomplete`. They no longer
+fight. If a noodle feature file gets Cucumber's highlighting (no hover, no
+param tooltips), the workspace is missing that association — run `noodle init`
+(or add the line above by hand) and reload the window.
+
+> NOOD_0175 — the glob is `**/*.feature`, not `**/noodle_tests/**/*.feature`.
+> Features live under `<app>/features/` (`web/busterblock/features`,
+> `api/features`, …) and the default `tests_dir` is `tests` — a `noodle_tests`
+> glob matched nothing, so the LSP never attached. Everything under a noodle
+> workspace is noodle's, so claiming all `.feature` there is correct.
 
 Unknown steps get a yellow squiggle (the LLM may handle them at runtime). Tune it
 in `.vscode/settings.json`:

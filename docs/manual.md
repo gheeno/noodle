@@ -206,12 +206,14 @@ the change, no reinstall.
 > sidesteps that entirely — it replaces the folder directly.
 
 **Cucumber extension installed too?** You no longer need to disable it.
-`noodle init` scaffolds a `.vscode/settings.json` `files.associations` that
-scopes the `noodle` language to *this* workspace's feature files
-(`noodle_tests/**/*.feature`), leaving every other `.feature` to Cucumber —
-they stop fighting over `.feature`. If a noodle feature file still shows
-Cucumber's highlighting, run `noodle init` in the workspace to add that
-association, then reload. Full details:
+`noodle init` scaffolds a `.vscode/settings.json` `files.associations`
+(`{ "**/*.feature": "noodle" }`) that maps this workspace's feature files to
+the `noodle` language. It's folder-scoped, so a separate Cucumber project
+(different folder, no association) keeps its own extension — they stop
+fighting. If a noodle feature file shows Cucumber's highlighting instead —
+no hover, no `{env:}`/`{var:}`/`{pom:}` param tooltips — the workspace is
+missing the association: run `noodle init` (or add the line by hand) and
+reload the window. Full details:
 [docs/encyclopedia.md § 12](encyclopedia.md#12-vs-code-extension).
 
 **`.feature` files still plain black-and-white after a full quit and

@@ -4,6 +4,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a28] — 2026-07-24
+
+**NOOD_0175** — fix: the NOOD_0174 workspace association matched nothing, so the LSP stopped attaching (no hover, no param tooltips).
+
+The scaffolded `files.associations` glob was `**/noodle_tests/**/*.feature`, but workspace features live under `<app>/features/` (`web/busterblock/features`, `api/features`, …) and the default `tests_dir` is `tests` — not `noodle_tests`. The glob matched no real feature file, so nothing resolved to the `noodle` language and `noodle/lsp/server.py` never ran: hover over a step or an `{env:}`/`{var:}`/`{pom:}` token showed no tooltip. (Cucumber in other projects was unaffected, since the global `.feature` claim was correctly removed.)
+
+- Fixed: **the scaffolded glob is now `**/*.feature`** — every `.feature` in a noodle workspace is noodle's own, and the association is folder-scoped (only applies when that workspace is the open folder), so a separate Cucumber project is still untouched. Matches the engine repo's own `.vscode/settings.json` (already `**/*.feature`).
+- Migration: existing workspaces scaffolded on 0.2.0a27 have the wrong glob — re-run `noodle init` to add the corrected association (it's additive; the stale `**/noodle_tests/**` entry is harmless but can be deleted by hand), then **Developer: Reload Window**. Or add `{ "files.associations": { "**/*.feature": "noodle" } }` to `.vscode/settings.json` directly.
+- Tests: `unit_tests/test_nood_0174_feature_association.py` unchanged — it asserts against `_NOODLE_ASSOC`, so it now pins the corrected glob.
+
 ## [0.2.0a27] — 2026-07-24
 
 **NOOD_0174** — stop the VS Code extension colliding with real Cucumber `.feature` handling (Option B).

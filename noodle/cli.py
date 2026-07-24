@@ -1188,15 +1188,20 @@ def _merge_mcp_json(f: Path, container_key: str, entry: dict, force: bool) -> st
 
 # NOOD_0174 — the VS Code extension no longer claims `.feature` globally (that
 # collided with Cucumber extensions over who owns highlighting/LSP). Instead we
-# scope our `noodle` language to *this* workspace's feature files via a
-# `files.associations` glob; every other `.feature` on the machine stays
-# Cucumber's. ponytail: hardcode the default tests_dir glob — a renamed
-# tests_dir is a one-line edit the user can make.
-_NOODLE_ASSOC = "**/noodle_tests/**/*.feature"
+# scope our `noodle` language via a per-workspace `files.associations` glob —
+# it only applies to THIS workspace folder, so a separate Cucumber project (a
+# different folder, no association) is untouched.
+# NOOD_0175 — glob is `**/*.feature`, not `**/noodle_tests/**`: features live
+# under <app>/features/ (web/busterblock/features, api/features, …) and the
+# default tests_dir is "tests", not "noodle_tests" — the narrow glob matched
+# nothing, so the LSP never attached (no hover). Every `.feature` in a noodle
+# workspace is noodle's own, so claiming all of them (still folder-scoped) is
+# correct, same as the engine repo's own .vscode/settings.json.
+_NOODLE_ASSOC = "**/*.feature"
 
 
 def _merge_vscode_association(f: Path) -> str:
-    """Map noodle_tests feature files to the `noodle` language in `.vscode/
+    """Map this workspace's feature files to the `noodle` language in `.vscode/
     settings.json`, preserving every other setting. created|updated|kept."""
     data = {}
     if f.exists():
