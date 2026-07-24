@@ -340,11 +340,9 @@ uv tool update-shell            # adds uv's tool bin dir to PATH — open a NEW 
 playwright install chromium
 
 # VS Code — step-validation squiggles for .feature files (optional, recommended)
-# needs the `code` CLI on PATH: Cmd+Shift+P -> "Shell Command: Install 'code' command in PATH"
-npm install -g @vscode/vsce
-cd vscode-extension && npm install && cd ..
-make install-ext
+noodle install-extension     # links the extension in — no vsce/.vsix/code CLI (deps are vendored)
 # fully quit VS Code (Cmd+Q) and reopen — the extension only loads on a fresh start
+# a Cucumber extension won't clash: `noodle init` (below) scopes noodle to this workspace's files
 
 # start the bundled test app — open a NEW terminal for this one, leave it running:
 #   cd test-apps/busterblock && npm install && npm start
@@ -406,16 +404,9 @@ uv tool update-shell            # adds uv's tool bin dir to PATH — open a NEW 
 playwright install chromium
 
 # VS Code — step-validation squiggles for .feature files (optional, recommended)
-# the `code` CLI is on PATH automatically once VS Code is installed
-npm install -g @vscode/vsce
-cd vscode-extension
-npm install
-cd ..
-cd vscode-extension
-npx @vscode/vsce package --allow-missing-repository --skip-license --out ../noodle.vsix
-cd ..
-code --install-extension noodle.vsix --force
+noodle install-extension     # links the extension in — no vsce/.vsix/code CLI (deps are vendored)
 # fully quit VS Code (close every window) and reopen — the extension only loads on a fresh start
+# a Cucumber extension won't clash: `noodle init` (below) scopes noodle to this workspace's files
 
 # start the bundled test app — open a NEW terminal for this one, leave it running:
 #   cd test-apps\busterblock; npm install; npm start
@@ -511,10 +502,11 @@ at the same place.
 > `sample_feature_tests/web/busterblock/features/login.feature`) and
 > confirm it's actually syntax-highlighted — keywords, tags, and strings
 > in colour, not plain black-and-white text. If it's still uncoloured,
-> follow the "still plain black-and-white" steps in Part 3 (force a clean
-> reinstall — a same-version reinstall is silently skipped without
-> `--force` — and check for a conflicting Cucumber/Gherkin extension)
-> before declaring it done.
+> follow the "still plain black-and-white" steps in Part 3 (re-run
+> `noodle install-extension` — it replaces any stale build — and, if a
+> Cucumber/Gherkin extension is highlighting it instead, run `noodle init`
+> in the workspace to add the `files.associations` that scopes noodle to
+> its own feature files) before declaring it done.
 >
 > Finish by confirming three things and stop there: `noodle --version`
 > prints a version AND resolves to the build you expect (`which -a noodle`

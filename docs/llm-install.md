@@ -162,33 +162,25 @@ pull or branch switch — it is the only step, and it never runs git.
 
 ## 4 — VS Code extension (optional, recommended)
 
-Skip silently if the user's request was CLI/agent-only, or `code` isn't on
-PATH and VS Code isn't wanted. From inside the clone:
+Skip silently if the user's request was CLI/agent-only, or VS Code isn't
+wanted. One command, both OS — the extension's deps are vendored, so no
+`vsce`, no `.vsix`, no `code` CLI:
 
 ```bash
-npm install -g @vscode/vsce
-cd vscode-extension && npm install && cd ..
-make install-ext
+noodle install-extension     # links vscode-extension/ into ~/.vscode/extensions
 ```
 
-No `make` on Windows — run the target's two commands directly:
+It replaces any prior noodle extension first, so an earlier sideload (a
+previous agent attempt included) can't shadow the new build. Cursor/VSCodium:
+add `--extensions-dir ~/.cursor/extensions` (or `~/.vscode-oss/extensions`).
 
-```powershell
-cd vscode-extension
-npx @vscode/vsce package --allow-missing-repository --skip-license --out ../noodle.vsix
-cd ..
-code --install-extension noodle.vsix --force
-```
-
-`--force` matters even on a first install: the extension manifest version
-never changes between releases, so any earlier sideload (a previous agent
-attempt included) makes VS Code silently skip a same-version reinstall.
-
-**Checkpoint:** `code --list-extensions` lists the noodle extension. Then
-have the user fully quit VS Code (Cmd+Q / close every window — a window
-reload is NOT enough) and reopen; a `.feature` file (e.g.
-`sample_feature_tests/web/busterblock/features/login.feature`) must show
-real syntax colour. Still black-and-white → §6.
+**Checkpoint:** `ls ~/.vscode/extensions | grep noodle` shows it. Then have
+the user fully quit VS Code (Cmd+Q / close every window — a window reload is
+NOT enough) and reopen; a `.feature` file **inside a `noodle init`-scaffolded
+workspace** (e.g. `sample_feature_tests/web/busterblock/features/login.feature`)
+must show real syntax colour. A Cucumber extension no longer conflicts —
+`noodle init` scopes noodle to the workspace's feature files. Still
+black-and-white → §6.
 
 ---
 
@@ -225,7 +217,7 @@ install-plus-run.
 | Any just-installed tool "not found" | PATH edit predates this shell | new terminal first; only then re-investigate |
 | `uv pip install` → `error: No virtual environment found` | Option A path without `uv venv` first | `uv venv`, activate, retry — or switch to the §3 Option B install |
 | `CERTIFICATE_VERIFY_FAILED` deep in a build (usually the `llm` extra, corporate network) | TLS-inspecting proxy the OS trusts but Python build tooling doesn't | Base install is unaffected — proceed without `llm`; see README § Troubleshooting for trusting the proxy CA properly. Never disable TLS verification |
-| `.feature` files uncoloured after install + full VS Code restart | Same-version reinstall silently skipped, or another Gherkin extension owns `.feature` | Reinstall with `--force`; disable the Cucumber/other Gherkin extension for the workspace; full quit + reopen |
+| `.feature` files uncoloured after install + full VS Code restart | Stale build, or Cucumber owns `.feature` in a workspace with no association | Re-run `noodle install-extension` (replaces the old build); if Cucumber highlights it, run `noodle init` to add the `files.associations`; full quit + reopen |
 | `noodle` works in the clone but not elsewhere | Option A venv install, not Option B | Run the §3 `uv tool install` (Option B) |
 | `noodle` acts like an old version / fixes visible in source don't run | A non-editable copy in some Python's `site-packages` shadows the editable install | `noodle doctor` — it probes each PATH launcher and FAILs only on *conflicting* builds (identical duplicates are INFO, leave them); then §3 clean slate + reinstall — full cure in [manual.md → Troubleshooting](manual.md#troubleshooting) |
 | Allure report opened via `file://` renders blank | Allure's SPA needs real HTTP | `noodle report serve` / `noodle report open` — never hand over a raw index.html path |

@@ -4,6 +4,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a27] — 2026-07-24
+
+**NOOD_0174** — stop the VS Code extension colliding with real Cucumber `.feature` handling (Option B).
+
+The extension declared `extensions: [".feature"]` for a `noodle` language, claiming the extension globally. With alexkrechik/VSCucumberAutoComplete or cucumber/vscode also installed, VS Code picks one language owner per `.feature` file — so depending on install order, either our highlighting/LSP or Cucumber's silently didn't activate. behave hardcodes `.feature` discovery, so renaming files on disk was never viable; the fix is editor-side scoping instead.
+
+- Changed: **VS Code extension no longer claims `.feature` globally** — dropped `extensions: [".feature"]` (and the `Gherkin` alias) from the `noodle` language contribution. Grammar, snippets and the LSP still key off the `noodle` language id, unchanged.
+- Added: **`noodle init` scaffolds `.vscode/settings.json`** with `"files.associations": { "**/noodle_tests/**/*.feature": "noodle" }`, mapping only *this* workspace's feature files to our language. Every other `.feature` on the machine stays Cucumber's; no more collision either way. Merged, never clobbered (preserves existing settings).
+- Note: existing workspaces pick up the association on the next `noodle init` (`--force` not required — the write is additive). A `.feature` file opened outside a scaffolded workspace no longer auto-loads the noodle language, which is the intended, safe default.
+- Added: **`noodle install-extension`** — links `vscode-extension/` into the editor's extensions dir (default `~/.vscode/extensions`; `--extensions-dir` for Cursor/VSCodium). The extension's `node_modules` are vendored, so it needs no `vsce`, no `.vsix`, and no `code` CLI. It removes any prior noodle install first (a stale sideload was the usual reason highlighting/LSP stopped working), then symlinks so a `git pull` + Reload Window picks up fixes with no reinstall. Replaces the `vsce package` → `.vsix` → `code --install-extension --force` dance as the recommended path (that path still works for a real `.vsix`). Docs updated: README (both OS runbooks), `manual.md` Part 3, `encyclopedia.md` §12, `llm-install.md` §4, `cli-reference.md` — and all now say a Cucumber extension no longer needs disabling.
+- Fixed: **the engine repo's own `.vscode/settings.json`** now carries `"files.associations": { "**/*.feature": "noodle" }`. Dropping the global `.feature` claim would otherwise have left the ~71 in-repo `sample_feature_tests/**` features with no noodle highlighting/LSP when browsed inside the clone (the engine repo isn't a `noodle init` workspace). Every `.feature` in the clone is noodle's own, so a repo-wide association is correct and stays scoped to this folder.
+- Tests: `unit_tests/test_nood_0174_feature_association.py` — association merge preserves other settings / is idempotent / survives unparseable JSON; install helper lands the extension and replaces a prior install.
+
 ## [0.2.0a26] — 2026-07-24
 
 Phase 5 (final) of the NOOD_0171 logging plan, on ticket **NOOD_0173**: the run/scenario/step lifecycle events, the container default, and the docs. Completes the structured-logging + AI-governance work.

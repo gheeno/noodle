@@ -39,7 +39,9 @@ function activate(context) {
   };
 
   const clientOptions = {
-    // activate for .feature files registered as noodle language
+    // Files mapped to the "noodle" language — via the workspace
+    // files.associations glob that `noodle init` scaffolds (NOOD_0174), not a
+    // global .feature claim, so we don't collide with Cucumber extensions.
     documentSelector: [{ scheme: "file", language: "noodle" }],
     synchronize: {
       // re-validate when .env changes (variable completions update)
