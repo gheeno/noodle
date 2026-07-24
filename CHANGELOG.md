@@ -4,6 +4,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a29] — 2026-07-24
+
+**NOOD_0176** — fix: LSP hover/tooltips dead when the extension launched a Python without noodle (highlighting worked, tooltips didn't).
+
+The extension launched `<python> -m noodle.lsp.server`, guessing `python` as `noodle.pythonPath` → workspace `.venv` → bare `python3`. `pygls`/`lsprotocol` are `[lsp]`-extra-only and imported at the top of `noodle/lsp/server.py`, so on an Option-B (`uv tool install`) machine with no workspace `.venv`, the guessed `python3` couldn't import the server — the process crashed and no hover appeared, while the (declarative) TextMate highlighting kept working.
+
+- Changed: **the extension now prefers the `noodle-lsp` console script** (`pyproject [project.scripts]`), resolved to an **absolute** path — its shebang is the exact interpreter that installed noodle, extras included, so hover works with **zero `noodle.pythonPath` config**. It searches, in order: the sibling of a configured `noodle.pythonPath`, the workspace `.venv` bin, the **dev-clone `.venv`** two levels up from the extension's own realpath (so a `noodle install-extension` symlinked from a clone finds that clone's venv even when it's on nobody's GUI PATH), `~/.local/bin` (uv-tool default shim dir), then every `PATH` dir — searching for the real file rather than trusting a bare `noodle-lsp`, because VS Code launched from Finder/Dock often has a stripped `PATH`. Falls back to `<python> -m noodle.lsp.server` when the script isn't found.
+- Note: this is a VS Code **extension** change — `git pull` + `noodle update` refresh the Python side but not the editor. Re-run `noodle install-extension` (or Reload Window if already symlink-installed) to pick it up. After it lands, the `noodle.pythonPath` workaround is no longer needed for a standard install.
+- Changed: **the scaffolded `files.associations` glob is now scoped to the workspace's `tests_dir`** — `**/<tests_dir>/**/*.feature` (default `**/noodle_tests/**/*.feature`) instead of the repo-wide `**/*.feature`. So a monorepo that also holds a Selenium/Playwright project under the same opened folder keeps *those* `.feature` files for Cucumber — noodle only claims its own tests subtree. `noodle init` migrates an existing workspace's old broad `**/*.feature` to the scoped glob. The legacy multi-wok `sample_feature_tests/` layout (features at root `web/`, `api/`) and the engine repo's own hand-committed `.vscode/settings.json` keep `**/*.feature` (all-noodle, no foreign framework to protect).
+- Tests: `unit_tests/test_nood_0176_lsp_launcher.py` — pins the `noodle-lsp` console-script contract the extension depends on. Plus a session-scoped `conftest.py` guard that fails the suite (naming the files) if any test scaffolds into the engine checkout via a cwd-relative command without `monkeypatch.chdir(tmp_path)` — the class of leak that dropped stray `noodle_tests/`, `AGENTS.md`, `.vscode/mcp.json` into `git status`.
+
 ## [0.2.0a28] — 2026-07-24
 
 **NOOD_0175** — fix: the NOOD_0174 workspace association matched nothing, so the LSP stopped attaching (no hover, no param tooltips).

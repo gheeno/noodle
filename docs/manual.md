@@ -207,14 +207,15 @@ the change, no reinstall.
 
 **Cucumber extension installed too?** You no longer need to disable it.
 `noodle init` scaffolds a `.vscode/settings.json` `files.associations`
-(`{ "**/*.feature": "noodle" }`) that maps this workspace's feature files to
-the `noodle` language. It's folder-scoped, so a separate Cucumber project
-(different folder, no association) keeps its own extension — they stop
-fighting. If a noodle feature file shows Cucumber's highlighting instead —
-no hover, no `{env:}`/`{var:}`/`{pom:}` param tooltips — the workspace is
-missing the association: run `noodle init` (or add the line by hand) and
-reload the window. Full details:
-[docs/encyclopedia.md § 12](encyclopedia.md#12-vs-code-extension).
+scoped to the workspace's `tests_dir`
+(`{ "**/noodle_tests/**/*.feature": "noodle" }` by default) that maps this
+workspace's feature files to the `noodle` language. It's folder-scoped *and*
+tests_dir-scoped, so a separate Cucumber project — or a Selenium/Playwright
+project sharing the same monorepo root — keeps its own `.feature` files. If a
+noodle feature file shows Cucumber's highlighting instead — no hover, no
+`{env:}`/`{var:}`/`{pom:}` param tooltips — the workspace is missing the
+association: run `noodle init` (or add the line by hand) and reload the window.
+Full details: [docs/encyclopedia.md § 12](encyclopedia.md#12-vs-code-extension).
 
 **`.feature` files still plain black-and-white after a full quit and
 reopen — no colour at all, not even keywords?** This is different from the
@@ -234,15 +235,22 @@ install itself didn't take, not that it needs another reload:
    because the workspace has no association yet: run `noodle init` (adds
    `.vscode/settings.json` `files.associations`), then reload.
 
-**No squiggles or hover tooltips at all on a fresh machine?** The extension
-starts the language server with the workspace `.venv` Python it auto-detects
-(falling back to `python3`, or `python` on Windows). If noodle is installed
-somewhere else — Option B's `uv tool install`, or a different venv — point
-the extension at that interpreter in `.vscode/settings.json`:
+**No squiggles or hover tooltips at all** (highlighting works — that's the
+grammar; tooltips need the language server)? Since NOOD_0176 the extension
+launches the `noodle-lsp` console script, found by absolute path (sibling of a
+configured `noodle.pythonPath`, the workspace `.venv` bin, `~/.local/bin`, then
+`PATH`), so an Option-B `uv tool install` works with no config. If it still
+fails, the interpreter behind `noodle-lsp` is missing the LSP extra — install
+it (`uv tool install --editable ".[lsp]" --force` from the clone) — or noodle
+lives somewhere odd; point the extension at its interpreter explicitly:
 
 ```json
 { "noodle.pythonPath": "/absolute/path/to/python" }
 ```
+
+> Check **View → Output → "Noodle Language Server"** for the real error — a
+> `ModuleNotFoundError: pygls` means the LSP extra isn't installed on that
+> interpreter; "command not found" means `noodle-lsp` couldn't be located.
 
 **Squiggles look stale after a `git pull` or a `patterns.py` edit?** The
 language server is a long-lived process — it doesn't reload its own code.
