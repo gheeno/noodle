@@ -395,32 +395,32 @@ def probe_page(url: str, click: list[str] | None = None,
     actionable control (hidden trigger zones included): kind, name, selector,
     needs_pom with paste-ready pom_yaml, copy-ready suggested_steps (use
     as-is — never re-derive via search_step), exact headings for assertions.
-    `click`: reveal-control names pressed in order (case/hyphen/
-    space-insensitive; raw selectors pass; REAL clicks — never a
-    state-mutating button), each under "revealed".
-    `do` (NOOD_0144): ONE stateful transaction — "enter <v> in <field>" /
-    "select <opt> from <dropdown>" / "click <name>" in order, run for REAL
-    (save/submit included), each delta under "revealed" — fill → save →
-    new-state in ONE session; {env:KEY} resolves engine-side (never paste
-    a raw secret).
+    `click`: reveal-control names pressed in order (case/space-insensitive;
+    raw selectors pass; REAL clicks — never state-mutating).
+    `do`: ONE stateful transaction — "enter <v> in <field>" /
+    "select <opt> from <dropdown>" / "click <name>" /
+    "switch to <new|original> tab" in order, run for REAL (save/submit
+    included), each delta under "revealed"; {env:KEY} resolves engine-side
+    (never paste a raw secret). A click opening a NEW TAB is followed, probed
+    as its own block with the exact switch steps, and the transaction
+    continues there.
     `open_native_controls`: enumerates <select> options and click-opens
     custom comboboxes (bounded, never state-mutating) → `dropdown_options`.
-    `search`: runs the site search and summarizes the results page incl. the
+    `search`: runs the site search, summarizes the results page incl. the
     "NN results" element + count-floor assertion. `suggest` (NOOD_0141):
     types the term per-character and captures the TYPEAHEAD — exact strings,
-    row selectors, no-op icon flags, copy-ready steps; use when the goal
-    picks a suggestion. `follow` (with suggest): clicks the row matching
-    this text (fuzzy), summarizes the landed page; steps carry EXACT row
-    text. `expect`: texts verified on the final page, a found/not-found
-    verdict each; hits become `should see` steps. `discover` (NOOD_0136):
-    bounded depth-1 auto-reveal when you DON'T know trigger names (never a
-    state-mutating name), each delta under "revealed"; popups, permission
-    prompts, search and requested assertions do NOT imply discover.
-    Iframes/open shadow roots are collected (scoped "frames" blocks carry
-    switch-frame; POM can't reach into a frame). Selectors are proven
+    row selectors, copy-ready steps; use when the goal picks a suggestion.
+    `follow` (with suggest): clicks the row matching this text (fuzzy),
+    summarizes the landed page; steps carry EXACT row text. `expect`: texts
+    verified on the final page, found/not-found each; hits become
+    `should see` steps. `discover` (NOOD_0136): bounded depth-1 auto-reveal
+    when you DON'T know trigger names (never a state-mutating name); popups,
+    permission prompts, search and requested assertions do NOT imply
+    discover. Iframes/open shadow roots are collected (scoped "frames" blocks
+    carry switch-frame; POM can't reach into a frame). Selectors are proven
     unique in scope; `author_ready: false` = fix the named warning first.
-    Canvas-only/Flutter without semantics returns coverage: visual_only, not
-    fake selectors. compact=True (default) = bounded author-ready payload.
+    Canvas-only/Flutter without semantics = coverage: visual_only, not fake
+    selectors. compact=True (default) = bounded author-ready payload.
     `find`: only matches, pre-cap — no spill greps. `url`: several URLs OK
     (space/comma), one browser, acts on the LAST."""
     result = core.probe_page(url, click=click, do=do, search=search,

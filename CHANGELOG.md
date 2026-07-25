@@ -4,6 +4,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a31] — 2026-07-24
+
+**NOOD_0178** — feature: the probe follows new tabs (open → probe → switch back).
+
+`probe()` drove a single `page` object, so a reveal/`--do` click that opened a tab (`target=_blank`, `window.open`) left the probe evaluating the **original** page: the new tab's controls were never collected, and the click was reported with the false "no observable delta" note the NOOD_0156 follow-up added. The runtime has switched tabs since NOOD_0025 (`runner._switch_tab`); the probe now has the same awareness, so one probe session discovers click → new tab → its controls → switch back → continue.
+
+- **Detection is by page-list growth**, never `page.wait_for_event("popup")` after the click. The popup event fires *during* the click and a listener registered afterwards resolves on the *next* one — the exact bug NOOD_0177 fixed in `runner._switch_tab`, and the reason `_new_tab()` compares `context.pages` snapshots taken before and after each click instead.
+- **The tab becomes its own block** under `revealed`, labelled like a frame block and tagged `new_tab` / `tab_url` / `opened_by` / `switch_steps`. `switch_steps` are verbatim runtime vocabulary — `Then a new tab should open`, `When User switches to the new tab` — pinned against the pattern table by unit test, as is the return step `When User switches to the original tab`. The tab gets the same navigation-mode settle, popup sweep and per-scope uniqueness proof the initial load gets; no diff against the opener, because a selector string means nothing across documents.
+- **The transaction continues across tabs.** Later `--do` actions act on the newest page (the "act on the page the flow is ON now" rule NOOD_0168 set for search landings), `_reveal`/`_do`/`_pick` return the active page, and `--expect` runs on the page the transaction ended on. Each url of a multi-url probe starts on the original tab again, so `goto` can never navigate a probe-opened one.
+- **New fourth `--do` verb: `switch to <new|last|previous|original|first|main> tab`** — same target semantics as `runner._switch_tab` (new/last = `pages[-1]`, the rest = `pages[0]`). A switch brings the tab to front (a background tab's timers are throttled; without the focus + mutation window the diff raced a cart badge that landed 1.5 s after the click and reported nothing), then diff-snapshots what changed while away. The regex alternative is a single `\S+` token anchored by `tab`, so it adds no backtracking surface to the `_MAX_DO_LEN`-bounded parse; a bad target raises before any browser launches and the message points at `click <name>` for a tab *within* the page.
+- **Diff sets are now per document.** One shared `seen` set meant a tab's selectors filtered the opener's delta away — exactly the evidence a switch-back exists to capture.
+- Edge cases are warnings, never raises (probe stays advisory): a tab that closes immediately (download shim, self-closing popup), one that never leaves `about:blank` within 3 s, and more than one tab at once (newest probed, count reported).
+- `_PERM_JS` moved from `page.add_init_script` to `context.add_init_script` — a page-level init script never reaches a tab that page opens, so a followed tab had no permission shim to read. Signals are read per page.
+- The compact payload carries the new keys inside the existing block structures, so `payload_budget` trims them like any other list (a two-tab result is size-asserted). The skeleton weaves the tab leg in runtime order: click → assert → switch → tab assertion → switch back.
+- Instruction budget: net zero. The `probe_page` MCP docstring and `noodle probe --help` both document the verb by trimming duplicated wording elsewhere in the same surface (three repeats of `each delta under "revealed"`, `no-op icon flags`, two ticket refs, and a shorter `--do`/`--search`/`--pick`/`--compact` help); the substance lives in `docs/agent-playbook.md` §0.3 per the surfaces-route/docs-carry rule.
+- `unit_tests/test_nood_0178.py` (34 tests, browser-free fakes) pins detection, the grammar round trip, the pattern-table contract, the cross-tab transaction, payload size and the render/skeleton shape. Verified live against a two-page fixture (`target=_blank` link, `window.open` button, self-closing shim, blank tab) and the emitted skeleton then **ran green** through `noodle run` unchanged.
+
+Out of scope, unchanged: the runtime (`_switch_tab` already works; a >2-tab back-stack stays its documented "add when needed"), cross-origin popup content beyond what Playwright exposes, and tabs a page opens by itself on load rather than from a probe-driven click.
+
 ## [0.2.0a30] — 2026-07-24
 
 **NOOD_0177** — fix: security audit remediation — page content could reach a shell, and credentials could reach every shared artifact.

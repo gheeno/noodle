@@ -630,7 +630,17 @@ ten red runs:
    ("Save → login appears") is discovered in the same single probe.
    `{env:KEY}` inside a value resolves engine-side from the workspace env
    chain, so credentials cross the gate without ever appearing in the
-   transcript or the payload. Only when even `--do` can't reach the state
+   transcript or the payload.
+   A click that opens a NEW TAB (`target=_blank`, `window.open`) is followed
+   automatically (NOOD_0178): the tab is probed as its own `new tab:` block
+   carrying the exact steps that reach it at run time
+   (`Then a new tab should open` / `When User switches to the new tab`), and
+   the transaction CONTINUES there — later `--do` actions act on the tab.
+   Come back with the fourth do-verb, `--do "switch to <new|last|previous|
+   original|first|main> tab"`, which repoints the probe and diffs the page it
+   returns to (the cart badge that changed while you were away). One probe
+   covers open → probe → switch back; a tab WITHIN the page is still
+   `click <name>`. Only when even `--do` can't reach the state
    (e.g. an external OAuth redirect, a hardware prompt): budget ONE
    exploratory run (NOOD_0127) — reach the page once, read its
    screenshot/DOM once, and author every post-gate assertion from the real
