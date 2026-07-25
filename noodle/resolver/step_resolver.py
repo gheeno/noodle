@@ -169,7 +169,8 @@ def _suggest(step_text: str) -> str:
 # added there, add it here (test_llm_resolve_rejects guards the common slips).
 VALID_TYPES = frozenset({
     'api_call', 'assert_attribute', 'assert_cell', 'assert_compare',
-    'assert_count', 'assert_hidden', 'assert_number', 'assert_row_count',
+    'assert_count', 'assert_hidden', 'assert_number', 'assert_on_screen',
+    'assert_row_count',
     'assert_semantic',
     'assert_state', 'assert_title', 'assert_url', 'assert_value',
     'assert_value_not',

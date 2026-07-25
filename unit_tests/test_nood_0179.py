@@ -17,7 +17,6 @@ from noodle import config, counters
 from noodle.agents.web import browser_pool
 from noodle.agents.web import probe as probe_mod
 
-
 # --- §0 shared engine resolution ---------------------------------------------
 
 def test_default_engine_is_chromium(monkeypatch):
@@ -671,10 +670,11 @@ def test_a_full_section_render_stays_uncapped():
 # --- §7 acceptance: the flag is named on every surface ------------------------
 
 def test_brief_is_documented_on_every_probe_surface():
+    import inspect
+
     from noodle import cli
     from noodle.mcp import server
     from noodle.repl import core
-    import inspect
     surfaces = {
         "cli": inspect.getsource(cli.probe),
         "mcp": server.probe_page.__doc__ or "",

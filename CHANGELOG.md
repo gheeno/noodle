@@ -4,6 +4,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a33] — 2026-07-25
+
+**NOOD_0180** — fix: a scroll test could not fail. New `is in view` assertion.
+
+The engine could already *drive* every scroll an element-owned scrollbar needs
+— `scrolls to 'X'` (both axes), `scrolls the 'X' panel to the right/bottom`
+(`left`/`right` included), `scrolls the grid right`, `scrolls until 'X' is
+visible`. What was missing was any way to *verify* one had happened.
+
+`should see 'X'` rides Playwright's `is_visible()`, which reports whether an
+element has a box in the layout, not whether the tester can see it. An element
+scrolled outside its container's overflow keeps its box. Measured against
+`codepen.io/jaemskyle/pen/XWJvRL` — a 500px-wide strip holding 1020px of
+sections:
+
+    scrollLeft=0   section six: is_visible=True  intersectionRatio=0.00
+    after scroll   section six: is_visible=True  intersectionRatio=1.00
+
+So the natural test — `scrolls right` then `should see 'six'` — passes without
+ever scrolling, and keeps passing if the scroll breaks.
+
+- `assert_on_screen` — asks IntersectionObserver, the only native API that
+  clips the target against every ancestor's overflow *and* the viewport.
+- Steps: `'X' is in view` / `is on screen` / `is in the viewport` /
+  `is scrolled into view`, plus `is not` / `is no longer` / `should not be`
+  negations. Ordered above the `assert_visible` block; existing
+  `should see` / `sees 'X' on the screen` phrasings are unchanged.
+- Resolves with `heal=False` — the self-heal chain's first move is to scroll
+  the element into view, which would scroll the container under measurement
+  and make every `is not in view` a false failure.
+- Failure message says the element **is** in the DOM, so the reader looks at
+  the scroll, not at the locator.
+- Docs: steps_dictionary gains "Asserting a scroll worked" and the container
+  forms, incl. the POM-cannot-reach-into-an-iframe caveat.
+
 ## [0.2.0a32] — 2026-07-25
 
 **NOOD_0179** — perf: probe wall-clock and payload cost (CLI + MCP parity; chromium primary, engine-selectable).

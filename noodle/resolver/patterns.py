@@ -1018,6 +1018,21 @@ PATTERNS = [
                                                    'assert_number',  lambda m: {'locator': _q(m.group(1)), 'count': float(m.group(2)), 'op': '<'}),
     (r'^(?:the )?number (?:in|shown in|displayed in|of) ["\'](.+?)["\'] (?:should be|is|should equal|equals?) (?:exactly )?(\d+(?:\.\d+)?)$',
                                                    'assert_number',  lambda m: {'locator': _q(m.group(1)), 'count': float(m.group(2)), 'op': '=='}),
+    # --- NOOD_0180: on screen, vs merely in the DOM --------------------------
+    # assert_visible (and every "sees 'X' on the screen" phrasing below) rides
+    # Playwright's is_visible(), which ignores clipping by a scroll container:
+    # the last section of a horizontal strip reads visible at scrollLeft=0
+    # while none of it is showing, so a scroll test asserted with "should see"
+    # is green before the scroll. These own the rendered-truth question and
+    # MUST precede the assert_visible block below.
+    (rf'^(?:the )?["\'](.+?)["\'] {_BOX}? ?(?:is|are|should be|must be) (?:now )?'
+     r'(?:in view|in the viewport|on ?screen|scrolled into view)$',
+                                                   'assert_on_screen', lambda m: {'text': _q(m.group(1)), 'on': True}),
+    (rf'^(?:the )?["\'](.+?)["\'] {_BOX}? ?(?:is not|isn\'?t|are not|aren\'?t|should not be|'
+     r'shouldn\'?t be|must not be|is still not|is no longer) '
+     r'(?:in view|in the viewport|on ?screen|scrolled into view)$',
+                                                   'assert_on_screen', lambda m: {'text': _q(m.group(1)), 'on': False}),
+
     (r'^should see ["\'](.+?)["\']$',              'assert_visible', lambda m: {'text': _q(m.group(1))}),
     (r'^should see (.+)$',                         'assert_visible', lambda m: {'text': m.group(1)}),
     (r'^should not see ["\'](.+?)["\']$',          'assert_hidden',  lambda m: {'text': _q(m.group(1))}),
