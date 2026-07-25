@@ -121,7 +121,14 @@ jobs:
       # shouldn't be able to block unrelated installs on a laptop); add it
       # back explicitly here so the LLM-dependent unit tests still run in CI.
       - script: |
+          # NOOD_0181 — the OCR bridge test needs the tesseract binary (the
+          # `tests` job below already installs it for the real suites).
+          sudo apt-get update && sudo apt-get install -y tesseract-ocr
           pip install -e ".[all,llm]"
+          # NOOD_0181 — the touch-gesture tests need a real browser (see the
+          # note in .github/workflows/tests.yml); they skip without it, so the
+          # gate would go green having proved nothing. Headless shell only.
+          playwright install chromium
           ruff check .
           python -m pytest unit_tests -q
         displayName: 'Lint + unit tests (gate the shard matrix)'

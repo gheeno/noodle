@@ -544,6 +544,16 @@ PATTERNS = [
     (r'^a new (?:tab|window) should open$',        'assert_new_tab', lambda m: {}),
     (r'^switches? to (?:the )?(new|last|previous|original|first|main) (?:tab|window)$',
                                                    'switch_tab',     lambda m: {'target': m.group(1).lower()}),
+    # NOOD_0181 — address a window by name. The positional words above are a
+    # two-page model; with a shop, a support chat and a payment window open at
+    # once, "previous" stops meaning anything. Matches title OR url, because a
+    # popup often opens with an empty or generic title. No overlap with the
+    # forms above (they need the literal new|last|… keywords) or with
+    # `switches to the 'inner' frame` (a different trailing noun).
+    (r'^switches? to (?:the )?(?:tab|window) (?:titled|named|called|with (?:the )?title) ["\'](.+?)["\']$',
+                                                   'switch_tab_named', lambda m: {'name': _q(m.group(1))}),
+    (r'^switches? to (?:the )?["\'](.+?)["\'] (?:tab|window)$',
+                                                   'switch_tab_named', lambda m: {'name': _q(m.group(1))}),
     (r'^closes? (?:the )?(?:new |current )?(?:tab|window)$',
                                                    'close_tab',      lambda m: {}),
 

@@ -4,6 +4,92 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a34] — 2026-07-25
+
+**NOOD_0181** — feature: mobile-web touch gestures, plus four capability gaps
+found reviewing the framework after NOOD_0180.
+
+`@mobile` already built a genuinely touch-capable browser context — Playwright's
+device presets carry `maxTouchPoints: 1`, `pointer: coarse`, a mobile
+user-agent and the device DPR — but the step language could not reach any of
+it. `swipes up` hard-failed with *"tag the scenario @appium"*, i.e. go buy a
+device, for something the emulated browser does natively. Measured:
+
+    @mobile (Pixel 5)   maxTouchPoints=1  coarse=True   MobileUA=True   DPR=2.75
+    viewport-only       maxTouchPoints=0  coarse=False  MobileUA=False  DPR=1
+
+- **Touch gestures on web.** `swipes left/right/up/down` and `long-presses 'X'`
+  now run in any touch context. CDP `Input.dispatchTouchEvent`, not
+  `page.mouse` and not a JS-built `TouchEvent`: mouse events carry
+  `pointerType: 'mouse'` so touch-only handlers (Swiper, Embla, framer-motion)
+  ignore them, and JS-dispatched touch events are untrusted so the browser
+  never scrolls. Same geometry and direction convention as the Appium wok
+  (finger up ⇒ page scrolls down), so a gesture reads identically in both.
+  Chromium-only; raises rather than degrading to a mouse drag, because a
+  gesture that reports success while firing the wrong event type is exactly the
+  test-that-cannot-fail NOOD_0180 was about.
+- **`clicks`/`taps` arrive as touch** in a touch context (`loc.tap()`), so
+  `pointerType` is `'touch'` and `touchstart` fires. Plain click handlers keep
+  working — the browser synthesises a click from the touch.
+- **A narrow viewport now says it isn't mobile.** `sets the viewport to
+  390x844` / `switches to mobile view` only ever changed the width; the context
+  kept no touch, a desktop UA and DPR 1, so a responsive site served its
+  desktop branch and the test quietly proved nothing. Playwright cannot grant
+  touch to a live context, so resizing below 500px in a desktop context warns
+  once and names `@mobile`.
+- **`@device:<preset>`** — the roster was two hardcoded names (iPhone 13,
+  Pixel 5); Playwright ships ~130. `@device:pixel_7`, `@device:iphone-15-pro`
+  (tags can't hold spaces, so `_`/`-` become one). Unknown names fail loudly
+  with suggestions. `@mobile` keeps its historic defaults.
+- **`NOODLE_BROWSER_ARGS`** — the popup taxonomy has told testers since
+  NOOD_0131 to "add a disable flag" for Chrome's sign-in/save-password bubbles,
+  but `launch()` only ever got headless/slow_mo/channel, so there was nowhere
+  to put one. shlex-split, so a flag value containing a space survives.
+- **`drags 'file.png' to the 'upload area'` was a phantom.** Documented since
+  NOOD_0009, but `drag()` resolved `'file.png'` as a DOM element and failed as
+  not-found. A source naming a file on disk is now a real file-drop via
+  `DataTransfer` — for dropzones that only listen for `drop`. (Ones with a
+  hidden `input[type=file]` were already covered by `uploads ... to`.)
+- Routing: `swipes`/`long-presses` no longer tag a generated feature `@appium`
+  — only gestures with no browser equivalent do. `sends the app to the
+  background`, the canonical phrasing, never matched that rule at all; fixed.
+- **Naming a window.** Separate browser windows already worked — `window` is a
+  synonym for `tab` throughout, and Playwright makes no distinction (a
+  `window.open()` popup, a `target="_blank"` link and a new tab are all pages in
+  one browser context). But the switching vocabulary was a *two*-page model:
+  `new`/`last` → newest, everything else → first. With a shop page, a support
+  chat and a payment window open at once, "previous" means nothing. New:
+  `switches to the window titled 'Support chat'` / `switches to the 'Payment'
+  window`, matching title **or** URL (case-insensitive substring) — URL too
+  because a chat popup often opens with an empty title. No match lists every
+  open window with its title and URL; two matches is an error rather than a
+  guess, since taking the first is how a test asserts against the wrong window
+  and passes anyway. Query strings are redacted from those messages (NOOD_0177).
+- **The unit suite now has zero skips.** Two tests were permanently skipped and
+  neither was pulling its weight. The OCR bridge test needs the `tesseract`
+  binary, which no gate installed — so the pixel path behind `@terminal` /
+  `@ocr_fallback` had no coverage at all; both gates now install it. That test
+  also skipped whenever OCR returned nothing recognisable, which meant a real
+  regression in `find_all_text_in_image` read as an environment quirk; it now
+  only skips on Pillow < 10.1, whose default bitmap font genuinely cannot be
+  OCR'd, and asserts otherwise. The opt-in live acceptance test was deleted: its
+  URLs had been scrubbed to `example.com` placeholders that 404, so it could not
+  pass even with `NOODLE_LIVE_ACCEPTANCE=1` — a dead skip reading as a working
+  opt-in. Its fixture prompt is still exercised by the stub tests around it.
+- Both CI gates now run `playwright install chromium` before the unit suite.
+  The playwright package is a core dep but the browser download is separate,
+  so the new touch tests — which prove a CDP touch event actually scrolls the
+  page, something no fake can tell you — would have skipped in CI and let the
+  gate go green having proved nothing. They skip cleanly (not error) when the
+  binary is absent, so a contributor without browsers isn't blocked.
+- Two NOOD_0133 install tests were environment-dependent: they pinned
+  `pip install -e` for the non-uv-tool case, but `reinstall_argv()` is a
+  three-way branch (uv tool → pip → `uv pip --python`) and a uv-created venv
+  ships no pip, so they passed in CI and failed on a dev machine — the check
+  that exists to catch a wrong environment was itself environment-dependent.
+  `_has_pip` is now pinned per case so all three flavors are exercised, and
+  the doctor assertion pins `noodle update` rather than one flavor's spelling.
+
 ## [0.2.0a33] — 2026-07-25
 
 **NOOD_0180** — fix: a scroll test could not fail. New `is in view` assertion.

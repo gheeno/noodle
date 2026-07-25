@@ -222,6 +222,8 @@ VALID_TYPES = frozenset({
     'emulate_media', 'save_pdf',
     # Phase J — multi-user contexts; Phase L — request/soft assertions
     'new_context', 'use_context', 'assert_request_made', 'soft_assert_check',
+    # NOOD_0181 — address a tab/window by title or URL, past the two-page model
+    'switch_tab_named',
     # Phase G4 — app lifecycle; Phase F — mobile gestures
     'app_launch', 'app_assert_running', 'app_stop', 'swipe', 'device_key',
     # NOOD_0032 — native-app gestures (Appium platform tags)

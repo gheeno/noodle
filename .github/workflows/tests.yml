@@ -23,6 +23,17 @@ jobs:
       # `llm` is excluded from `all` (a from-source litellm build shouldn't
       # block unrelated installs on a laptop); add it back so the
       # LLM-dependent unit tests actually run.
+      # NOOD_0181 — the OCR bridge test does a real tesseract recognition pass;
+      # without the binary it skipped, so the @terminal/@ocr_fallback path that
+      # canvas and xterm.js UIs depend on had no gate at all.
+      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
       - run: pip install -e ".[all,llm]"
+      # NOOD_0181 — the touch-gesture tests drive a real browser: CDP touch
+      # events either scroll the page or they don't, and no fake can tell you
+      # which. The playwright PACKAGE is a core dep but the browser download
+      # is separate, so without this the tests skip and the gate proves
+      # nothing. Headless shell only (no --with-deps) — ~20s, not a full
+      # browser suite; those still live in azure-pipelines.yml.
+      - run: playwright install chromium
       - run: ruff check .
       - run: python -m pytest unit_tests -q

@@ -37,8 +37,13 @@ def test_explicit_tag_in_wording_beats_keywords():
 def test_steps_beat_description_keywords():
     perf = 'When User runs a load test on "{env:APP}" with 5 users for 10 seconds'
     assert wok.infer_tag("check the home page", f"Feature: x\n  {perf}\n") == "perf"
+    # NOOD_0181 — swipe is no longer an Appium tell: @mobile gives a touch-
+    # capable browser that performs it. Only gestures with no browser
+    # equivalent still route a feature to the native wok.
     swipe = "When User swipes up"
-    assert wok.infer_tag("", f"Feature: x\n  {swipe}\n") == "appium"
+    assert wok.infer_tag("", f"Feature: x\n  {swipe}\n") == "web"
+    native = "When User hides the keyboard"
+    assert wok.infer_tag("", f"Feature: x\n  {native}\n") == "appium"
     image = 'When User clicks image "save.png"'
     assert wok.infer_tag("", f"Feature: x\n  {image}\n") == "visual"
     rest = "When User performs a GET call at '/objects'"

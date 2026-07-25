@@ -173,8 +173,12 @@ ROUTING_TAGS = frozenset({
 _STEP_RE = re.compile(r'^\s*(?:Given|When|Then|And|But)\s+(.*)$', re.IGNORECASE)
 _TAG_LINE_RE = re.compile(r'^\s*@')
 # Step-text signals that only one wok's vocabulary produces.
+# NOOD_0181 — swipe and long-press are no longer native tells: @mobile gives a
+# touch-capable browser that performs both. Only gestures with NO browser
+# equivalent still route a feature to Appium.
 _MOBILE_STEP_RE = re.compile(
-    r'\bswipes? |\blong[- ]press|\bhides? the keyboard|\bbackgrounds? the app'
+    r'\bhides? the keyboard|\bbackgrounds? the app'
+    r'|\bsends? the app to the background'      # the canonical phrasing, which never matched
     r'|\bpress(?:es)? the (?:back|home) (?:button|key)', re.IGNORECASE)
 _VISUAL_STEP_RE = re.compile(r'\bimage ["\']|\bon screen\b', re.IGNORECASE)
 # Task-wording signals, checked in wok-precedence order.
