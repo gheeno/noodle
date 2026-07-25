@@ -50,13 +50,50 @@ def test_shims_on_path_returns_paths_in_path_order():
         assert Path(hit).name.startswith("noodle")
 
 
-def test_reinstall_cmd_matches_install_flavor(monkeypatch):
+# NOOD_0181 — these used to pin "pip install -e" for the non-uv-tool case, which
+# only holds when pip is importable. reinstall_argv() is a THREE-way branch
+# (uv tool → pip → uv pip --python), and a uv-created project venv ships no pip,
+# so the assertion passed in CI and failed on a dev machine — the install check
+# that exists to catch a wrong environment was itself environment-dependent.
+# _has_pip is now pinned per case so all three branches are actually exercised.
+
+def test_reinstall_cmd_uses_uv_tool_for_a_uv_tool_install(monkeypatch):
     monkeypatch.setattr(install_check, "package_dir",
                         lambda: Path("/home/u/.local/share/uv/tools/noodle/lib/noodle"))
     assert "uv tool" in install_check.reinstall_cmd()
+
+
+def test_reinstall_cmd_uses_pip_when_the_environment_has_pip(monkeypatch):
     monkeypatch.setattr(install_check, "package_dir",
                         lambda: Path("/opt/homebrew/lib/python3.11/site-packages/noodle"))
+    monkeypatch.setattr(install_check, "_has_pip", lambda: True)
     assert "pip install -e" in install_check.reinstall_cmd()
+
+
+def test_reinstall_cmd_targets_this_interpreter_when_there_is_no_pip(monkeypatch):
+    """A uv-created venv has no pip — `python -m pip` would fail with 'No module
+    named pip', so the repair must go through uv AT THIS INTERPRETER rather than
+    uv's default, or it would fix a different environment than the broken one."""
+    import sys
+    monkeypatch.setattr(install_check, "package_dir",
+                        lambda: Path("/opt/homebrew/lib/python3.11/site-packages/noodle"))
+    monkeypatch.setattr(install_check, "_has_pip", lambda: False)
+    cmd = install_check.reinstall_cmd()
+    assert "uv pip install" in cmd and sys.executable in cmd
+    assert "uv tool" not in cmd
+
+
+def test_every_reinstall_flavor_is_an_editable_install_of_the_clone(monkeypatch):
+    """Whatever the flavor, the command must land an EDITABLE install of the
+    full extras from the clone — that is the whole point of NOOD_0133."""
+    for pkg, pip in (("/x/uv/tools/noodle/lib/noodle", False),
+                     ("/x/site-packages/noodle", True),
+                     ("/x/site-packages/noodle", False)):
+        monkeypatch.setattr(install_check, "package_dir", lambda p=pkg: Path(p))
+        monkeypatch.setattr(install_check, "_has_pip", lambda v=pip: v)
+        argv = install_check.reinstall_argv()
+        assert ".[all]" in argv
+        assert "-e" in argv or "--editable" in argv
 
 
 def test_build_line_names_noneditable_copy(monkeypatch):
@@ -74,7 +111,11 @@ def test_noneditable_install_check_fails_with_remediation(monkeypatch):
     checks = {c.id: c for c in doctor.install_checks()}
     ed = checks["install.editable"]
     assert ed.status == "fail" and "git pull" in ed.summary
-    assert "uv tool" in ed.remediation or "pip install -e" in ed.remediation
+    # `noodle update` is the one command CLAUDE.md tells testers to run; the
+    # by-hand form behind it varies by install flavor (see the reinstall_cmd
+    # tests above), so pin the intent, not one flavor's spelling.
+    assert "noodle update" in ed.remediation
+    assert install_check.reinstall_cmd() in ed.remediation
 
 
 def test_warn_if_stale_silent_when_editable(monkeypatch):

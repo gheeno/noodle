@@ -115,6 +115,61 @@ Or per scenario with a tag (`@viewport:1366x768`), or run-wide with
 `NOODLE_VIEWPORT=1920x1080`. An explicit viewport wins over `@mobile`
 device presets.
 
+> ⚠️ **A narrow viewport is not mobile.** Resizing changes the width and
+> nothing else — the context keeps `maxTouchPoints: 0`, `pointer: fine`, a
+> desktop user-agent and DPR 1, so a site that branches on touch or UA still
+> serves its desktop experience and the test proves nothing. Noodle warns when
+> you resize below 500px in a desktop context. Real emulation is a tag (see
+> below), because it must be set when the browser context is created.
+
+### Mobile web emulation — @mobile / @device (NOOD_0181)
+
+Testing a responsive site, a PWA, or a React/Angular/Flutter web build the way
+a phone sees it — no Appium, no device, no emulator:
+
+```gherkin
+@mobile                      # Pixel 5
+@mobile @iphone              # iPhone 13
+@device:pixel_7              # any Playwright device preset
+@device:iphone-15-pro        # tags can't hold spaces: _ and - both become one
+```
+
+The tag applies the preset's viewport, device pixel ratio, mobile user-agent
+**and touch support**, so `matchMedia('(pointer: coarse)')` matches and the
+site takes its mobile branch. In a touch context every `clicks`/`taps` step is
+dispatched as a real touch (`pointerType: 'touch'`, `touchstart`/`touchend`) —
+which is what Swiper, Embla, framer-motion and most carousels actually listen
+for. Plain `click` handlers still fire, because the browser synthesises a click
+from the touch.
+
+Gestures work here too — no platform tag needed:
+
+```gherkin
+When User swipes up
+When User swipes left
+When User long-presses 'Row 1' for 2 seconds
+When User rotates the device to landscape
+```
+
+`swipes up` moves the finger up, so the page scrolls **down** — as on a phone.
+`swipes left`/`right` is what carousels, tab strips and swipe-to-delete rows
+listen for.
+
+`swipes` moves through the middle 60% of the viewport in ten steps — a single
+jump is ignored by anything that tracks movement — and settles for 300ms so
+inertial scrolling finishes before the next step asserts. Combine with `should
+be in view` (NOOD_0180) to prove the swipe actually moved something.
+
+Untagged (desktop) scenarios get a clear error naming `@mobile` rather than
+silently doing a mouse drag. Touch gestures need Chromium; on `@firefox`/
+`@webkit` use the mouse-level steps (`drags 'X' by 0, -300`).
+
+**Limits.** `'ontouchstart' in window` is **false** even in Playwright's device
+presets — a site feature-detecting that way takes its desktop branch no matter
+what you tag. `maxTouchPoints` and `pointer: coarse` are the reliable signals.
+Emulation is also not a device: no real GPU, no platform WebView quirks, no app
+store shell. For those, use the Appium wok below.
+
 ---
 
 ## Clicking
@@ -200,6 +255,13 @@ Scenario: hero shows the mascot
 When User drags 'Card A' onto 'Done column'
 When User drags 'file.png' to the 'upload area'
 ```
+
+A source that names a **file on disk** is a file-drop, not an element drag: the
+bytes go in through a `DataTransfer` (NOOD_0181), which is how you exercise a
+dropzone that only listens for `drop`. Most dropzones also carry a hidden
+`input[type=file]` — `uploads 'fixtures/report.pdf' to the attachment field`
+already covers those and is the first thing to reach for. Anything else
+resolves as an element and drags normally.
 
 ---
 
@@ -337,6 +399,38 @@ When User switches to the new tab
 When User switches to the original tab
 When User closes the current tab
 ```
+
+### Separate windows, not just tabs
+
+**`window` is a synonym for `tab` in every step above** — `a new window should
+open`, `switches to the new window`, `closes the window`. Playwright makes no
+distinction: a `window.open()` popup, a `target="_blank"` link and a new tab all
+become pages in the same browser context, so noodle sees them all however the
+browser chose to draw them. A support-chat popup opened with
+`window.open(url, 'support', 'width=420,height=640')` — a genuine separate OS
+window — is reached exactly like a tab. `rel="noopener"` works too.
+
+### Naming a window (NOOD_0181)
+
+The positional words are a **two-page model**: `new`/`last` mean the newest
+page, and `previous`/`original`/`first`/`main` all mean the first one. With a
+shop page, a support chat and a payment window open at once, "previous" stops
+meaning anything — so address the window directly:
+
+```gherkin
+When User switches to the window titled 'Support chat'
+When User switches to the tab named 'Checkout'
+When User switches to the 'Payment' window
+```
+
+Matches the window's **title or its URL**, case-insensitive substring — URL as
+well because a chat widget often opens with an empty title and sets
+`document.title` only once its socket connects.
+
+A name matching nothing fails with every open window listed (title and URL), so
+the fix is visible from the error. A name matching **two or more** windows is
+also an error, never a guess — silently taking the first match is how a test
+ends up asserting against the wrong window and passing anyway.
 
 ---
 
@@ -1242,7 +1336,7 @@ don't ask a permission bubble to hold text or a JS dialog to be closed as DOM.
 | File chooser | upload picker | `uploads 'file' to ...` |
 | Download | download shelf/prompt | download-assert steps |
 | HTTP auth | browser credential challenge | `@http_credentials` tag (NOOD_0143) + `NOODLE_HTTP_USER`/`NOODLE_HTTP_PASSWORD` in the secrets file — applied to the browser context **before** navigation |
-| Chrome product UI | sign-in/sync, save-password, translate, autofill | **launch-profile config, not a page step** — bundled automation Chromium normally suppresses these; add a disable flag only if a run reproduces one |
+| Chrome product UI | sign-in/sync, save-password, translate, autofill | **launch-profile config, not a page step** — bundled automation Chromium normally suppresses these; if a headed run reproduces one, put the flag in `NOODLE_BROWSER_ARGS` (NOOD_0181), e.g. `NOODLE_BROWSER_ARGS="--disable-features=PasswordManagerOnboarding"`. Quoted values survive (shlex-split) |
 
 Chrome sign-in/password/translate/autofill UI is browser configuration, not
 something these popup steps handle — don't write a step expecting to close it.
@@ -1435,7 +1529,13 @@ When User takes a screenshot 'calculator'
 The back/home device keys are mobile-only (Android keycodes, iOS
 pressButton); on `@windows`/`@mac` they fail with a clear message. On web
 (no platform tag), "presses the back/home button" clicks the element with
-that name; gestures fail with a pointer to the tags.
+that name.
+
+`swipes` and `long-presses` are **not** Appium-only — tag a scenario `@mobile`
+and they run against an emulated-mobile browser (see *Mobile web emulation*
+above), which is the cheaper answer for a responsive site or web build. Only
+`hides the keyboard` and `sends the app to the background` have no browser
+equivalent and still require a platform tag.
 Examples: `sample_feature_tests/mobile/features/` (Android/iOS),
 `sample_feature_tests/desktop/features/windows_calculator.feature` (Windows 11).
 
@@ -1613,7 +1713,7 @@ ready.
 | `switches to the 'inner' frame inside the 'outer' frame` | Nested iframes — a payment iframe inside a vendor iframe |
 | `stores the clipboard as \`CLIP\`` | `read_clipboard` existed but was reachable only from inside `assert_clipboard` |
 | `focuses on the 'order summary' panel` | Scopes OCR/screen reads to any layout container, not just images |
-| `long-presses 'Row 1' for 2 seconds` | Explicit hold duration (Appium) |
+| `long-presses 'Row 1' for 2 seconds` | Explicit hold duration (Appium, or `@mobile` web — NOOD_0181) |
 
 ### Steps that now refuse instead of guessing
 

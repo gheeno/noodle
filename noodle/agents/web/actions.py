@@ -183,7 +183,11 @@ def click(page: Page, locator_text: str):
     _harvest_announcement(page)
     probe = _arm_click_probe(page)
     try:
-        loc.click()
+        # NOOD_0181 — in a touch context (@mobile/@device) a user taps, and the
+        # difference is load-bearing: a mouse click carries pointerType 'mouse',
+        # so touch-only handlers never fire. tap() still produces a synthesised
+        # click event, so plain click handlers keep working either way.
+        loc.tap() if has_touch(page) else loc.click()
     except PlaywrightTimeoutError as e:
         # The click itself lands ("click action done" in the call log) but
         # Playwright then hangs waiting for a navigation to settle — some
@@ -1799,7 +1803,47 @@ def assert_compare(left: str, op: str, right: str):
 # scoped fills and scoped visibility asserts.
 # ---------------------------------------------------------------------------
 
+# NOOD_0181 — dropping a real file onto a dropzone. Playwright cannot drag from
+# the OS, so the bytes go in through a DataTransfer built inside the page. The
+# steps dictionary has advertised `drags 'file.png' to the 'upload area'` since
+# NOOD_0009, but drag() resolved 'file.png' as a DOM element — a phantom step.
+# Most dropzones also carry a hidden input[type=file], which `uploads ... to`
+# already covers; this is for the ones that only listen for a drop event.
+_DROP_FILE_JS = """
+([el, name, type, b64]) => {
+  const bin = atob(b64), arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  const dt = new DataTransfer();
+  dt.items.add(new File([arr], name, {type}));
+  for (const t of ['dragenter', 'dragover', 'drop'])
+    el.dispatchEvent(new DragEvent(t, {bubbles: true, cancelable: true, dataTransfer: dt}));
+}
+"""
+
+
+def _drop_file(page: Page, path, target: str):
+    import base64
+    import mimetypes
+    tgt = find(page, target)
+    if tgt is None:
+        raise AssertionError(_not_found(f"Could not find drop target: '{target}'"))
+    handle = tgt.element_handle()
+    if handle is None:
+        raise AssertionError(f"'{target}' matched, but has no element to drop onto.")
+    page.evaluate(_DROP_FILE_JS, [
+        handle, path.name,
+        mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+        base64.b64encode(path.read_bytes()).decode(),
+    ])
+    logger.info(f"\n  📎 Dropped {path} onto '{target}'")
+
+
 def drag(page: Page, source: str, target: str):
+    from pathlib import Path as _Path
+    # A source that names a file on disk is a file-drop, not an element drag.
+    if (p := _Path(source)).is_file():
+        _drop_file(page, p, target)
+        return
     src = find(page, source)
     if src is None:
         raise AssertionError(_not_found(f"Could not find drag source: '{source}'"))
@@ -1893,6 +1937,106 @@ def drag_edge(page: Page, locator: str, dx: float = 0, dy: float = 0,
     page.mouse.move(x + dx, y + dy, steps=max(1, steps))
     page.mouse.up()
     logger.info(f"\n  ↔  Dragged the {edge} edge of {locator!r} by ({dx:+g}, {dy:+g})")
+
+
+# --- NOOD_0181: touch gestures on an emulated-mobile web page ----------------
+# @mobile builds a genuinely touch-capable context (maxTouchPoints 1,
+# pointer:coarse, mobile UA, device DPR), but the gesture vocabulary used to
+# hard-fail with "tag the scenario @appium" — the capability was already in the
+# runtime and simply unreachable from the step language.
+#
+# CDP Input.dispatchTouchEvent, NOT page.mouse and NOT a JS-built TouchEvent:
+# mouse events carry pointerType 'mouse' so touch-only handlers (Swiper, Embla,
+# framer-motion) ignore them, and JS-dispatched touch events are untrusted so
+# the browser never actually scrolls for them. CDP events are real input — they
+# scroll AND fire touchstart/touchmove/touchend.
+
+def has_touch(page: Page) -> bool:
+    """True when this browser context was built with touch — i.e. @mobile /
+    @device. Resizing the viewport mid-scenario does NOT grant touch."""
+    try:
+        val = page.evaluate("() => navigator.maxTouchPoints")
+    except Exception:
+        return False
+    # isinstance, not truthiness: a unit-test fake whose evaluate() returns a
+    # Mock is truthy, and would silently route every click through tap().
+    return isinstance(val, (bool, int)) and val > 0
+
+
+def _require_touch(page: Page, gesture: str):
+    if not has_touch(page):
+        raise AssertionError(
+            f"'{gesture}' needs a touch-capable browser: tag the scenario "
+            f"@mobile (or @device:pixel_7) for emulated mobile web, or "
+            f"@appium/@android/@ios to drive a real device. Setting the "
+            f"viewport alone only changes the width — it grants no touch."
+        )
+
+
+def _touch_path(page: Page, points: list[tuple[float, float]], hold: float = 0.0):
+    """Press at points[0], hold, move through the rest, release.
+
+    ponytail: chromium-only (CDP). Raises rather than silently degrading to a
+    mouse drag — a gesture that reports success while firing the wrong event
+    type is exactly the "test that cannot fail" NOOD_0180 was about.
+    """
+    try:
+        cdp = page.context.new_cdp_session(page)
+    except Exception as e:
+        raise AssertionError(
+            "Touch gestures need Chromium (they use CDP input). This scenario "
+            f"is running on another browser engine — drop the @firefox/@webkit "
+            f"tag, or use the mouse-level steps (`drags 'X' by 0, -300`). ({e})"
+        )
+    def send(kind, pt):
+        cdp.send("Input.dispatchTouchEvent",
+                 {"type": kind,
+                  "touchPoints": [] if kind == "touchEnd" else [{"x": pt[0], "y": pt[1]}]})
+    send("touchStart", points[0])
+    if hold:
+        page.wait_for_timeout(int(hold * 1000))
+    for pt in points[1:]:
+        send("touchMove", pt)
+    send("touchEnd", points[-1])
+
+
+def swipe_web(page: Page, direction: str):
+    """Swipe across the middle 60% of the viewport — same geometry and same
+    direction convention as the Appium wok (`up` moves the finger up, which
+    scrolls the page down), so a gesture reads identically in both."""
+    _require_touch(page, f"swipes {direction}")
+    vp = page.viewport_size
+    if not vp:
+        raise AssertionError("Can't swipe: the page has no viewport size.")
+    w, h = vp["width"], vp["height"]
+    cx, cy = w // 2, h // 2
+    dx, dy = int(w * 0.3), int(h * 0.3)
+    try:
+        start, end = {
+            "left":  ((cx + dx, cy), (cx - dx, cy)),
+            "right": ((cx - dx, cy), (cx + dx, cy)),
+            "up":    ((cx, cy + dy), (cx, cy - dy)),
+            "down":  ((cx, cy - dy), (cx, cy + dy)),
+        }[direction]
+    except KeyError:
+        raise AssertionError(f"Unknown swipe direction {direction!r} — use left, right, up or down.")
+    # Intermediate points, not one jump: momentum scrollers and carousels track
+    # movement and ignore a single touchmove (the same reason mouse_drag steps).
+    steps = 10
+    path = [start] + [(start[0] + (end[0] - start[0]) * i / steps,
+                       start[1] + (end[1] - start[1]) * i / steps)
+                      for i in range(1, steps + 1)]
+    _touch_path(page, path)
+    page.wait_for_timeout(300)      # let momentum/inertial scrolling settle
+    logger.info(f"\n  👆 Swiped {direction}")
+
+
+def long_press_web(page: Page, locator_text: str, seconds: float = 1.0):
+    """Press and hold an element — context menus, selection handles, reorder."""
+    _require_touch(page, f"long presses '{locator_text}'")
+    x, y = _centre(_box(page, locator_text, "long-press target"))
+    _touch_path(page, [(x, y)], hold=seconds)
+    logger.info(f"\n  👆 Long-pressed {locator_text!r} for {seconds}s")
 
 
 def click_modifier(page: Page, locator_text: str, modifiers: list[str]):

@@ -5,7 +5,6 @@ bounded planner outcomes, one optional model-fallback call, result-readiness
 repair provenance gate. The exact session prompt is the regression fixture;
 nothing here is site-specific."""
 import json
-import os
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
@@ -653,17 +652,8 @@ def test_write_feature_uncontracted_path_unchanged(tmp_path):
     assert res["ok"] is True
 
 
-# --- live acceptance (opt-in) ---------------------------------------------------------
-
-@pytest.mark.skipif(not os.getenv("NOODLE_LIVE_ACCEPTANCE"),
-                    reason="opt-in live retail acceptance — set "
-                           "NOODLE_LIVE_ACCEPTANCE=1")
-def test_live_exact_prompt_single_call_green(tmp_path):
-    core.init_workspace(str(tmp_path))
-    res = core.author_test(prompt=_FIXTURE, run_after_author=True,
-                           workspace=str(tmp_path))
-    author, run = res["author"], res["run"]
-    assert author["ready"] and author["intent_verified"], author
-    assert run["passed"] > 0 and run["failed"] == 0, run
-    assert run.get("verified") is not False, run
-    assert "click here" not in json.dumps(res).lower()
+# NOOD_0181 — the opt-in live acceptance test that lived here was deleted. Its
+# URLs had been scrubbed to example.com placeholders (which 404), so it could
+# not pass with NOODLE_LIVE_ACCEPTANCE=1 either — a permanent skip reading as a
+# working opt-in. _FIXTURE above is still the real regression prompt and is
+# exercised by the stub-based tests throughout this file.

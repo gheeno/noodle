@@ -224,6 +224,50 @@ def _switch_tab(context, target, assert_opened=False):
     _focus(context, pages[-1] if target in ('new', 'last') else pages[0])
 
 
+# NOOD_0181 — addressing a specific window. _switch_tab above is a two-page
+# model (new/last → pages[-1], everything else → pages[0]), which covers the
+# common opener↔popup toggle but cannot name the middle one of three. A support
+# chat, a payment window and the shop page open at once is an ordinary flow, and
+# positional words stop meaning anything there.
+def _window_id(pg) -> tuple[str, str]:
+    """(title, url) for a page, tolerating one that is closed or still loading."""
+    try:
+        return pg.title(), pg.url
+    except Exception:
+        return "", ""
+
+
+def _switch_named(context, name: str):
+    """Focus the open tab/window whose title OR url contains `name`.
+
+    Title first because that is what a tester reads off the window; URL as well
+    because a popup often opens with an empty or generic title (a chat widget
+    that sets document.title only after its socket connects). Ambiguity is an
+    error, never a guess — silently picking the first of two matches is how a
+    test ends up asserting against the wrong window and passing anyway.
+    """
+    # NOOD_0177 — these messages print URLs, and a query string is where an SSO
+    # callback or reset link carries its credential. Reuse the one redactor.
+    from noodle.hooks import _safe_url
+    needle = name.lower()
+    pages = _pages(context)
+    seen = [(pg, *_window_id(pg)) for pg in pages]
+    hits = [(pg, t, u) for pg, t, u in seen
+            if needle in t.lower() or needle in u.lower()]
+    if not hits:
+        raise AssertionError(
+            f"No open tab or window matches '{name}'. Open now: "
+            + "; ".join(f"{t or '(no title)'} <{_safe_url(u)}>" for _, t, u in seen)
+        )
+    if len(hits) > 1:
+        raise AssertionError(
+            f"'{name}' matches {len(hits)} open tabs/windows — narrow it: "
+            + "; ".join(f"{t or '(no title)'} <{_safe_url(u)}>" for _, t, u in hits)
+        )
+    _focus(context, hits[0][0])
+    logger.info(f"\n  🪟 Switched to '{hits[0][1] or hits[0][2]}'")
+
+
 def _close_tab(context):
     if len(_pages(context)) > 1:
         context.page.close()
@@ -565,6 +609,8 @@ def execute_step(step_text: str, context):
         _switch_tab(context, 'new', assert_opened=True)
     elif t == 'switch_tab':
         _switch_tab(context, action['target'])
+    elif t == 'switch_tab_named':
+        _switch_named(context, action['name'])
     elif t == 'close_tab':
         _close_tab(context)
     elif t == 'fill':
@@ -904,6 +950,22 @@ def execute_step(step_text: str, context):
             screen.assert_depicts(page, action['desc'], action.get('locator'))
     elif t == 'set_viewport':
         page.set_viewport_size({'width': action['width'], 'height': action['height']})
+        # NOOD_0181 — resizing to a phone width is NOT mobile emulation: the
+        # context keeps maxTouchPoints 0, pointer:fine, a desktop UA and DPR 1,
+        # so a responsive site serves its desktop branch and the test quietly
+        # proves nothing. Playwright cannot grant touch to a live context, so
+        # say so rather than pretend. Warn once per scenario.
+        if action['width'] <= 500 and not actions.has_touch(page) \
+                and not ctx_get(context, '_narrow_viewport_warned', False):
+            context._narrow_viewport_warned = True
+            logger.warning(
+                f"\n  ⚠️  Viewport is now {action['width']}px wide, but this is a "
+                f"DESKTOP browser context (no touch, desktop user-agent, DPR 1). "
+                f"A site that branches on touch or user-agent will still serve "
+                f"its desktop experience. For real mobile emulation tag the "
+                f"scenario @mobile (or @device:pixel_7) — that must be set when "
+                f"the browser context is created, so it cannot be a step."
+            )
     # NOOD_0152 — orientation swap reads the LIVE viewport and transposes it,
     # so it composes with whatever size a prior step set (named breakpoint,
     # explicit WxH, or the @viewport tag) instead of hardcoding a device.
@@ -1072,11 +1134,18 @@ def execute_step(step_text: str, context):
         app_lifecycle.assert_running(action.get('port'))
     elif t == 'app_stop':
         app_lifecycle.stop()
-    # --- Phase F gestures reaching the web agent (no @appium tag) ------------
-    elif t in ('swipe', 'long_press', 'hide_keyboard', 'background_app'):
+    # --- Touch gestures on the web agent (NOOD_0181) --------------------------
+    # @mobile / @device give a genuinely touch-capable browser context, so these
+    # run here; actions._require_touch raises with the @mobile hint when the
+    # scenario forgot the tag. Only the genuinely native ones still hard-fail.
+    elif t == 'swipe':
+        actions.swipe_web(page, action['direction'])
+    elif t == 'long_press':
+        actions.long_press_web(page, action['locator'], action.get('seconds') or 1.0)
+    elif t in ('hide_keyboard', 'background_app'):
         raise AssertionError(
-            f"'{step_text}' is a mobile/native gesture — tag the scenario "
-            f"@appium, @android, @ios, @windows or @mac"
+            f"'{step_text}' is a native-app gesture with no browser equivalent "
+            f"— tag the scenario @appium, @android, @ios, @windows or @mac"
         )
     elif t == 'device_key':
         # On web, "presses the back button" is a normal click on that control.

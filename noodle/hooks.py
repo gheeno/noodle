@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -367,6 +368,40 @@ def _viewport_from(tags) -> dict | None:
     return {"width": int(m.group(1)), "height": int(m.group(2))}
 
 
+# NOOD_0181 — the steps dictionary's popup taxonomy tells testers to "add a
+# disable flag" when a Chrome product bubble (sign-in, save-password, translate)
+# shows up in a headed run, but there was nowhere to put one: launch() only ever
+# got headless/slow_mo/channel. e.g.
+#   NOODLE_BROWSER_ARGS="--disable-features=PasswordManagerOnboarding --guest"
+# shlex, not .split(), so a flag whose value contains a space survives.
+def _browser_args() -> list[str]:
+    return shlex.split(os.getenv("NOODLE_BROWSER_ARGS", "").strip())
+
+
+# NOOD_0181 — the device roster used to be two hardcoded names; Playwright
+# ships ~130 presets, each carrying the viewport, DPR, user-agent and (the part
+# that matters) hasTouch/isMobile. Gherkin tags cannot contain spaces, so
+# @device:pixel_7 / @device:iphone-15-pro match case- and separator-insensitively.
+def _device_from(tags, devices) -> str | None:
+    """The Playwright device preset for this scenario, or None for desktop.
+    @device:<name> wins; @mobile keeps its historic iPhone 13 / Pixel 5 default."""
+    raw = _tag_value(tags, 'device')
+    if raw:
+        want = raw.replace('_', ' ').replace('-', ' ').strip().lower()
+        for name in devices.keys():
+            if name.lower() == want:
+                return name
+        close = [n for n in devices if want.split()[0] in n.lower()][:8]
+        raise ValueError(
+            f"Unknown device {raw!r} — no Playwright preset matches. "
+            + (f"Did you mean: {', '.join(close)}?" if close else
+               "See `playwright.devices` for the full list.")
+        )
+    if 'mobile' in tags:
+        return "iPhone 13" if 'iphone' in tags else "Pixel 5"
+    return None
+
+
 def _tag_value(tags, prefix: str) -> str | None:
     """The value of a @prefix:value tag, or None."""
     return next((t.split(':', 1)[1] for t in tags if t.startswith(prefix + ':')), None)
@@ -679,12 +714,16 @@ def before_scenario(context, scenario):
         launch_opts = {"headless": headless, "slow_mo": slow_mo}
         if channel:
             launch_opts["channel"] = channel
+        if extra_args := _browser_args():
+            launch_opts["args"] = extra_args
+            logger.info(f"\n  🚩 Extra browser args: {extra_args}")
         context._browser = browser_type.launch(**launch_opts)
 
     ctx_opts = {"ignore_https_errors": ignore_https_errors(tags)}
-    if 'mobile' in tags:
-        device_name = "iPhone 13" if 'iphone' in tags else "Pixel 5"
+    device_name = _device_from(tags, context._pw.devices)
+    if device_name:
         ctx_opts.update(context._pw.devices[device_name])
+        logger.info(f"\n  📱 Emulating {device_name}")
     viewport = _viewport_from(tags)
     if viewport:                            # explicit size wins over device preset
         ctx_opts['viewport'] = viewport

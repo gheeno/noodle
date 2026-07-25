@@ -132,16 +132,22 @@ def test_find_text_in_image_real_engine():
         pytest.skip("tesseract binary not installed")
 
     img = Image.new("RGB", (480, 140), "black")
+    # NOOD_0181 — `size=` needs Pillow >= 10.1; our floor is 10.0, where
+    # load_default() is a tiny bitmap font that genuinely cannot be OCR'd.
+    # That is the ONLY environment allowed to skip: this used to skip whenever
+    # the text came back unrecognised, so a real regression in
+    # find_all_text_in_image read as "environment issue" and the OCR bridge
+    # behind @terminal / @ocr_fallback had no gate at all.
     try:
-        font = ImageFont.load_default(size=48)
+        font, scalable = ImageFont.load_default(size=48), True
     except TypeError:
-        font = ImageFont.load_default()
+        font, scalable = ImageFont.load_default(), False
     ImageDraw.Draw(img).text((20, 40), "ACCESS GRANTED", fill="#00ff00", font=font)
 
     text = ocr.find_all_text_in_image(img).upper()
-    if "ACCESS" not in text:
-        pytest.skip("synthetic font not OCR-legible in this environment")
-    assert "GRANTED" in text
+    if not scalable and "ACCESS" not in text:
+        pytest.skip("Pillow < 10.1 default bitmap font is too small to OCR")
+    assert "ACCESS" in text and "GRANTED" in text
     assert ocr.find_text_in_image(img, "ACCESS") is not None
 
 
