@@ -1336,7 +1336,11 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
     "select <option> from <dropdown>" / "click <name>"), diffing state after
     each action — the whole fill → save → new-state flow in ONE session;
     {env:KEY} in a value resolves engine-side (workspace env chain) so raw
-    credentials never transit the transcript."""
+    credentials never transit the transcript. NOOD_0178 — a click that opens a
+    new tab is followed and probed as its own block (with the runtime's
+    switch steps), the transaction continues there, and
+    "switch to <new|last|previous|original|first|main> tab" is the fourth
+    `do` verb for coming back."""
     from noodle.agents.web import probe as _probe
     urls = [normalize_url(u) for u in re.split(r"[,\s]+", url.strip()) if u]
     # NOOD_0177 — probe_page is MCP-exposed and returns a ±30-char window around

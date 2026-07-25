@@ -752,13 +752,93 @@ def _click_selector(known: list[dict], target: str) -> str:
     return target
 
 
-def _reveal(page, pg: dict, clicks: list[str], timeout_ms: int) -> None:
+# NOOD_0178 — new tabs. Detection is by page-list GROWTH, never
+# page.wait_for_event("popup") after the click: the popup event fires DURING
+# the click and a listener registered afterwards resolves on the NEXT one —
+# the exact lesson runner._switch_tab carries from NOOD_0177. The step strings
+# are verbatim runtime vocabulary (unit-pinned against the pattern table).
+_TAB_BLANK_MS = 3000
+_TAB_SWITCH_STEPS = ("Then a new tab should open",
+                     "When User switches to the new tab")
+_TAB_RETURN_STEP = "When User switches to the original tab"
+# Same target semantics as runner._switch_tab: new/last = pages[-1], the rest
+# = pages[0] (no back-stack past 2 tabs — add when needed, there and here).
+_TAB_NEW = ("new", "last")
+_TAB_HOME = ("previous", "original", "first", "main")
+
+
+def _pages(page) -> list:
+    """Every page in this browser context — [] when it can't be read."""
+    try:
+        return list(page.context.pages)
+    except Exception:
+        return []
+
+
+def _new_tab(page, before: list, warn: list):
+    """The newest page opened since `before` was snapshotted and worth
+    collecting, else None. Advisory like the rest of probe: every edge case
+    (self-closing popup, tab that never leaves about:blank, several tabs at
+    once) is a warning on `warn`, never a raise."""
+    fresh = [p for p in _pages(page) if p not in before]
+    if not fresh:
+        return None
+    tab = fresh[-1]
+    if len(fresh) > 1:
+        warn.append(f"{len(fresh)} new tabs opened at once — probing the "
+                    "newest only")
+    try:
+        if not tab.is_closed():
+            tab.wait_for_load_state("domcontentloaded", timeout=_TAB_BLANK_MS)
+    except Exception:
+        pass
+    try:
+        if tab.is_closed():
+            warn.append("a new tab opened and closed immediately (download "
+                        "shim or self-closing popup) — nothing to collect")
+            return None
+        if tab.url in ("", "about:blank"):
+            warn.append(f"a new tab opened but stayed about:blank within "
+                        f"{_TAB_BLANK_MS} ms — nothing to collect")
+            return None
+    except Exception as e:
+        warn.append(f"a new tab opened but could not be read: {e}")
+        return None
+    return tab
+
+
+def _tab_block(tab, label: str, timeout_ms: int) -> dict:
+    """The new tab as its own summarize()-shaped block: navigation-mode settle,
+    the same popup sweep the initial load gets, then collect. No diff — a
+    different document, so the opener page's selectors mean nothing here."""
+    _settle(tab, timeout_ms)              # navigation mode: URL + body + quiet
+    closed = _dismiss_popups(tab)
+    if closed:
+        _settle(tab, min(timeout_ms, 3000))
+    blk = summarize(tab.evaluate(_COLLECT_JS), url=tab.url, title=tab.title())
+    blk["new_tab"], blk["tab_url"] = True, tab.url
+    blk["opened_by"] = blk["revealed_by"] = label
+    blk["switch_steps"] = list(_TAB_SWITCH_STEPS)
+    if closed:
+        blk["popups_closed"] = closed
+    perms = _perm_signals(tab)             # per page — the shim is context-wide
+    if perms:
+        blk["permission_prompts"] = perms
+    _verify_unique(tab, blk["controls"])
+    return blk
+
+
+def _reveal(page, pg: dict, clicks: list[str], timeout_ms: int):
     """NOOD_0116 — click each named target in order and append what it
     reveals (controls/headings not present before the click) to
     pg["revealed"], each a summarize()-shaped dict. Targets execute for
     REAL — reveal controls only. Advisory like the rest of probe: a target
     that can't be clicked lands in pg["click_warnings"], the initial
-    snapshot stays intact, nothing raises."""
+    snapshot stays intact, nothing raises.
+
+    NOOD_0178 — a reveal that opens a new tab gets that tab collected as its
+    own block and returns it as the active page, so a --do transaction sharing
+    the call continues where the flow actually went."""
     known = list(pg["controls"])
     seen = {c["selector"] for c in known}
     seen_head = set(pg["headings"])
@@ -767,7 +847,7 @@ def _reveal(page, pg: dict, clicks: list[str], timeout_ms: int) -> None:
             sel = _click_selector(known, target)
             ctrl = next((c for c in known if c["selector"] == sel), None)
             loc = page.locator(sel).first
-            armed, u = _arm(page), page.url
+            armed, u, before = _arm(page), page.url, _pages(page)
             # NOOD_0135 — a control the probe already saw as hidden (0-size
             # trigger zone) has no click box: dispatch straight away instead
             # of burning the 3 s actionability wait discovering that.
@@ -780,6 +860,7 @@ def _reveal(page, pg: dict, clicks: list[str], timeout_ms: int) -> None:
                     # hidden hitboxes (0-size trigger zones) have no click box
                     loc.dispatch_event("click")
             settled = _settle(page, timeout_ms, armed=armed, url_before=u)
+            tab = _new_tab(page, before, pg.setdefault("warnings", []))
             raw = page.evaluate(_COLLECT_JS)
             raw["controls"] = [c for c in raw["controls"]
                                if _selector(c) not in seen]
@@ -791,20 +872,37 @@ def _reveal(page, pg: dict, clicks: list[str], timeout_ms: int) -> None:
             known += rev["controls"]
             seen |= {c["selector"] for c in rev["controls"]}
             seen_head |= set(rev["headings"])
-            pg.setdefault("revealed", []).append(rev)
+            # NOOD_0178 — when the click opened a tab, an EMPTY opener-page
+            # delta is noise, not evidence: the reveal happened over there.
+            if tab is None or rev["controls"] or rev["headings"]:
+                pg.setdefault("revealed", []).append(rev)
+            if tab is not None:
+                blk = _tab_block(tab, target, timeout_ms)
+                pg.setdefault("revealed", []).append(blk)
+                # Later --click targets land on the tab now, so resolve and
+                # diff against IT: a selector string means nothing across
+                # documents (same reason _do keeps per-document diff sets).
+                page = tab
+                known = blk["controls"] + known
+                seen = {c["selector"] for c in blk["controls"]}
+                seen_head = set(blk["headings"])
         except Exception as e:
             pg.setdefault("click_warnings", []).append(
                 f'--click "{target}": {e}')
+    return page
 
 
 # NOOD_0144 — the stateful-transaction grammar. Three verbs cover a
-# fill → select → save flow; <value> is non-greedy, so "enter a in b in c"
-# reads value=a, field="b in c".
+# fill → select → save flow (NOOD_0178 adds a fourth for browser tabs);
+# <value> is non-greedy, so "enter a in b in c" reads value=a, field="b in c".
 _MAX_DO_LEN = 400   # NOOD_0177 — a --do item is a short sentence; bounds backtracking
+# NOOD_0178 — the fourth verb. `\S+` (not `.+?`) for the tab target: one token,
+# anchored by "tab", so this alternative adds no backtracking surface.
 _DO_RE = re.compile(
     r"^\s*(?:click\s+(?P<btn>.+?)"
     r"|enter\s+(?P<val>.+?)\s+in\s+(?P<field>.+?)"
-    r"|select\s+(?P<opt>.+?)\s+from\s+(?P<dd>.+?))\s*$", re.I)
+    r"|select\s+(?P<opt>.+?)\s+from\s+(?P<dd>.+?)"
+    r"|switch\s+to\s+(?:the\s+)?(?P<tab>\S+)\s+tab)\s*$", re.I)
 
 
 def parse_do(actions: list[str]) -> list[tuple[str, str, str | None]]:
@@ -820,18 +918,35 @@ def parse_do(actions: list[str]) -> list[tuple[str, str, str | None]]:
         if not m:
             raise ValueError(
                 f'bad do action {a!r} — use "click <name>", '
-                '"enter <value> in <field>" or "select <option> from <dropdown>"')
+                '"enter <value> in <field>", "select <option> from <dropdown>" '
+                'or "switch to <new|original> tab"')
         g = m.groupdict()
         if g["btn"] is not None:
             out.append(("click", g["btn"].strip(), None))
         elif g["val"] is not None:
             out.append(("enter", g["field"].strip(), g["val"].strip()))
-        else:
+        elif g["opt"] is not None:
             out.append(("select", g["dd"].strip(), g["opt"].strip()))
+        else:
+            t = g["tab"].lower()
+            if t not in (*_TAB_NEW, *_TAB_HOME):
+                # A page tab ("switch to the Settings tab") is a click, not a
+                # browser-tab switch — say so, or the caller retries blind.
+                raise ValueError(
+                    f'bad tab target {t!r} in {a!r} — use one of '
+                    + "|".join((*_TAB_NEW, *_TAB_HOME))
+                    + '; a tab WITHIN the page is "click <name>"')
+            out.append(("switch", t, None))
     return out
 
 
-def _do(page, pg: dict, actions: list[tuple], timeout_ms: int) -> None:
+def _do_label(verb: str, target: str) -> str:
+    """The payload label for one action — values are never echoed (NOOD_0144)."""
+    return (f"do: switch to {target} tab" if verb == "switch"
+            else f"do: {verb} {target}")
+
+
+def _do(page, pg: dict, actions: list[tuple], timeout_ms: int):
     """NOOD_0144 — ONE stateful discovery session for a whole transaction:
     execute fill/select/click in the caller's order, settle + diff-snapshot
     after each, so "save → login appears" is discovered in this probe instead
@@ -847,22 +962,80 @@ def _do(page, pg: dict, actions: list[tuple], timeout_ms: int) -> None:
     structured pg["do_failed"] (index, resolved selector, skipped actions);
     pg["do_completed"] counts the actions that DID land. Selects go through
     the runtime's own select implementation (native <select> + custom-
-    dropdown fallback), so probe and run time agree on what is selectable."""
+    dropdown fallback), so probe and run time agree on what is selectable.
+
+    NOOD_0178 — the active page follows the flow ACROSS TABS: a click that
+    opens one continues there (same "act on the page the flow is ON now" rule
+    as a search landing), `switch to <target> tab` moves it deliberately, and
+    the page the transaction ended on is returned for --expect."""
     # NOOD_0168 — newest snapshot first: the transaction acts on the page the
     # flow is ON now, so a landed-page control outranks a same-named twin from
     # the start page; what an action just revealed outranks both (prepend).
     known = [c for b in reversed(_blocks(pg)) for c in b["controls"]]
     seen = {c["selector"] for c in known}
     seen_head = {h for b in _blocks(pg) for h in b["headings"]}
+    # NOOD_0178 — the diff sets are PER DOCUMENT: the same selector string on
+    # two pages is two different controls, so a tab's snapshot must not filter
+    # the opener's delta away (the cart badge that changed while we were on the
+    # other tab is exactly the evidence a switch-back exists to capture).
+    # `known` stays shared on purpose — target resolution is newest-first
+    # across tabs, per the NOOD_0168 rule.
+    docs = {id(page): (seen, seen_head)}
+
+    def _doc_sets(p, controls=(), headings=()):
+        if id(p) not in docs:
+            # First time this document is the active one — seed from the blocks
+            # already collected FOR IT (matched by url), or a --click-opened tab
+            # switching back re-reports the whole initial snapshot as a delta.
+            url = getattr(p, "url", None)
+            mine = [b for b in _blocks(pg) if b.get("url") == url]
+            docs[id(p)] = ({c["selector"] for b in mine for c in b["controls"]},
+                           {h for b in mine for h in b["headings"]})
+        s, h = docs[id(p)]
+        s |= {c["selector"] for c in controls}
+        h |= set(headings)
+        return s, h
+
     pg["do_completed"] = 0
     for i, (verb, target, value) in enumerate(actions):
-        label = f"do: {verb} {target}"
+        label = _do_label(verb, target)
         sel = None
         try:
+            if verb == "switch":
+                pages = _pages(page)
+                if len(pages) < 2:
+                    pg.setdefault("do_warnings", []).append(
+                        f"{label}: only one tab is open — no switch performed")
+                else:
+                    page = pages[-1] if target in _TAB_NEW else pages[0]
+                    seen, seen_head = _doc_sets(page)
+                    # The same focus runner._switch_tab applies at run time: a
+                    # BACKGROUND tab has its timers throttled, so the delta
+                    # that landed while we were away (the cart badge) needs the
+                    # tab in front plus a mutation window before it exists to
+                    # diff — a bare settle raced it and reported nothing.
+                    try:
+                        page.bring_to_front()
+                    except Exception:
+                        pass
+                    _settle(page, min(timeout_ms, 3000), armed=_arm(page))
+                    pg.setdefault("tab_switches", []).append(target)
+                    # The tab we left may have changed while away (a cart
+                    # badge, an order count) — diff it like any other delta.
+                    rev = _diff_snapshot(page, seen, seen_head)
+                    rev["revealed_by"], rev["switched_to"] = label, target
+                    if rev["controls"] or rev["headings"]:
+                        _verify_unique(page, rev["controls"])
+                        known = rev["controls"] + known
+                        seen |= {c["selector"] for c in rev["controls"]}
+                        seen_head |= set(rev["headings"])
+                        pg.setdefault("revealed", []).append(rev)
+                pg["do_completed"] = i + 1
+                continue
             sel = _click_selector(known, target)
             ctrl = next((c for c in known if c["selector"] == sel), None)
             loc = page.locator(sel).first
-            armed, u = _arm(page), page.url
+            armed, u, before = _arm(page), page.url, _pages(page)
             if verb == "enter":
                 loc.fill(value)
             elif verb == "select":
@@ -885,6 +1058,7 @@ def _do(page, pg: dict, actions: list[tuple], timeout_ms: int) -> None:
                               mutating=(verb == "click" and (
                                   _is_mutating_control(ctrl) if ctrl
                                   else _is_mutating(target))))
+            tab = _new_tab(page, before, pg.setdefault("warnings", []))
             raw = page.evaluate(_COLLECT_JS)
             raw["controls"] = [c for c in raw["controls"]
                                if _selector(c) not in seen]
@@ -898,7 +1072,7 @@ def _do(page, pg: dict, actions: list[tuple], timeout_ms: int) -> None:
                 seen |= {c["selector"] for c in rev["controls"]}
                 seen_head |= set(rev["headings"])
                 pg.setdefault("revealed", []).append(rev)
-            elif verb == "click":
+            elif verb == "click" and tab is None:
                 # NOOD_0156 follow-up — a CLICK that changed nothing must
                 # still leave a record: silence made "the click did nothing"
                 # and "the click worked, UI rendered late" indistinguishable,
@@ -909,15 +1083,27 @@ def _do(page, pg: dict, actions: list[tuple], timeout_ms: int) -> None:
                                "the settle window — the click landed but "
                                "produced no observable delta")
                 pg.setdefault("revealed", []).append(rev)
+            if tab is not None:
+                # NOOD_0178 — the delta is in the tab, not here: collect it and
+                # continue the transaction there. Without this the opener page
+                # was still being evaluated and the click reported the (false)
+                # "no observable delta" note above.
+                blk = _tab_block(tab, label, timeout_ms)
+                known = blk["controls"] + known
+                pg.setdefault("revealed", []).append(blk)
+                page = tab
+                seen, seen_head = _doc_sets(tab, blk["controls"],
+                                            blk["headings"])
             pg["do_completed"] = i + 1
         except Exception as e:
             pg.setdefault("do_warnings", []).append(f"{label}: {e}")
             pg["do_failed"] = {
                 "index": i, "action": label, "selector": sel or target,
                 "error": str(e),
-                "skipped": [f"do: {v} {t}" for v, t, _ in actions[i + 1:]],
+                "skipped": [_do_label(v, t) for v, t, _ in actions[i + 1:]],
             }
-            return
+            return page
+    return page
 
 
 # Same editable-first spirit as the engine's one-step search: prefer a real
@@ -1289,7 +1475,7 @@ def _search(page, pg: dict, term: str, timeout_ms: int) -> None:
 
 
 def _pick(page, pg: dict, term: str, target: str, timeout_ms: int,
-          mutate: str | None = None) -> None:
+          mutate: str | None = None):
     """NOOD_0156 — click the ONE result goal.bind_result binds for a generic
     "pick a matching result" request and snapshot the landed page. Read-only
     navigation (a result link), never a mutating control — the landed-page
@@ -1304,7 +1490,7 @@ def _pick(page, pg: dict, term: str, target: str, timeout_ms: int,
     sr = pg.get("search")
     if not sr:
         pg["pick_warning"] = "--pick: the search produced no results block"
-        return
+        return page
     if sr.get("result_items_warning") and target in (None, "*"):
         # NOOD_0169 — a generic pick needs STRUCTURAL result evidence; when
         # the summary is positive but no item extracted, the legacy flat-
@@ -1316,23 +1502,31 @@ def _pick(page, pg: dict, term: str, target: str, timeout_ms: int,
             "stable result item could be extracted "
             f"({w['category']}) — no structural evidence to bind a "
             "generic pick to")
-        return
+        return page
     from noodle.repl.goal import bind_result  # pure; lazy to avoid a cycle
     cand, why = bind_result(sr.get("controls") or [], term, target,
                             items=sr.get("result_items"))
     if cand is None:
         sr["pick_warning"] = why
-        return
+        return page
     try:
         loc = page.locator(cand["selector"]).first
-        armed, u = _arm(page), page.url
+        armed, u, before = _arm(page), page.url, _pages(page)
         loc.click(timeout=5000)
         _settle(page, timeout_ms, armed=armed, url_before=u)
-        seen = {c["selector"] for c in pg["controls"]} \
-            | {c["selector"] for c in sr["controls"]}
-        seen_head = set(pg["headings"]) | set(sr["headings"])
-        blk = _diff_snapshot(page, seen, seen_head)
-        _verify_unique(page, blk["controls"])
+        # NOOD_0178 — a target=_blank result card lands in a NEW tab: the
+        # landed-page evidence (and any requested mutation) belongs to that
+        # tab, not to the results page the probe would otherwise re-diff.
+        tab = _new_tab(page, before, sr.setdefault("warnings", []))
+        if tab is not None:
+            blk = _tab_block(tab, f'result "{cand["name"]}"', timeout_ms)
+            page = tab
+        else:
+            seen = {c["selector"] for c in pg["controls"]} \
+                | {c["selector"] for c in sr["controls"]}
+            seen_head = set(pg["headings"]) | set(sr["headings"])
+            blk = _diff_snapshot(page, seen, seen_head)
+            _verify_unique(page, blk["controls"])
         blk["picked_caption"] = cand["name"]
         blk["picked_selector"] = cand["selector"]
         sr["picked"] = blk
@@ -1340,6 +1534,7 @@ def _pick(page, pg: dict, term: str, target: str, timeout_ms: int,
             _prove_mutation(page, blk, mutate, timeout_ms)
     except Exception as e:
         sr["pick_warning"] = f'--pick "{cand["name"]}": {e}'
+    return page
 
 
 _PREREQ_TRIALS = 3
@@ -2108,6 +2303,25 @@ def _signal_lines(pg: dict, indent: str = "  ") -> list[str]:
     return out
 
 
+def _tab_steps(pg: dict) -> list[str]:
+    """NOOD_0178 — the tab leg of the skeleton, in the order the runtime needs:
+    the click that opened the tab, the assert + switch pair, one proven
+    assertion from the tab, and the switch back when the probe returned. Pure —
+    unit-pinned against the pattern table like the rest of the skeleton."""
+    steps = []
+    for blk in pg.get("revealed", []):
+        if not blk.get("new_tab"):
+            continue
+        opener = blk["opened_by"].removeprefix("do: click ").removeprefix("do: ")
+        steps.append(f'When User clicks "{opener}"')
+        steps += blk["switch_steps"]
+        if blk["headings"]:
+            steps.append(f'Then the user sees "{blk["headings"][0]}"')
+    if steps and any(t in _TAB_HOME for t in pg.get("tab_switches", [])):
+        steps.append(_TAB_RETURN_STEP)
+    return steps
+
+
 def _skeleton_steps(pg: dict) -> list[str]:
     """NOOD_0137 — a paste-ready scenario opening assembled from what the
     probe itself proved: navigation, the permission/popup closes it observed,
@@ -2120,6 +2334,7 @@ def _skeleton_steps(pg: dict) -> list[str]:
             steps.append(f"When {_PERM_STEP[perm]}")
     if pg.get("popups_closed"):
         steps.append("And closes the popup if it appears within 10 seconds")
+    steps += _tab_steps(pg)
     sg = pg.get("suggest")
     if sg and sg["suggestions"]:
         steps += sg["steps"]
@@ -2201,10 +2416,18 @@ def probe(urls: list[str], timeout_ms: int = 15000,
             try:
                 page = browser.new_page()
                 try:                       # NOOD_0137 — permission-API shim
-                    page.add_init_script(_PERM_JS)
+                    # NOOD_0178 — on the CONTEXT, not the page: a page-level
+                    # init script never reaches a tab that page opens, so a
+                    # probe-followed tab had no shim to read.
+                    page.context.add_init_script(_PERM_JS)
                 except Exception:
                     pass
+                home = page
                 for url_i, url in enumerate(urls):
+                    # NOOD_0178 — each url starts on the original tab: a
+                    # previous transaction may have left the flow on a
+                    # probe-opened one, and goto would navigate THAT.
+                    page = home
                     # NOOD_0156 — act_on="last": earlier URLs of an ordered
                     # navigation contract are setup-only (cookies/session),
                     # never searched or clicked around in.
@@ -2244,10 +2467,13 @@ def probe(urls: list[str], timeout_ms: int = 15000,
                             pg["permission_prompts"] = perms
                         _verify_unique(page, pg["controls"])
                         _collect_frames(page, pg, timeout_ms)
+                        # NOOD_0178 — every clicking phase returns the page the
+                        # flow is on now (a click may have opened a tab), and
+                        # the later phases act on it.
                         if clicks and acting:
-                            _reveal(page, pg, clicks, timeout_ms)
+                            page = _reveal(page, pg, clicks, timeout_ms)
                         if do_actions and acting and not search:
-                            _do(page, pg, do_actions, timeout_ms)
+                            page = _do(page, pg, do_actions, timeout_ms)
                         if discover and acting:
                             _discover(page, pg, timeout_ms)
                         if open_native_controls and acting:
@@ -2268,15 +2494,15 @@ def probe(urls: list[str], timeout_ms: int = 15000,
                         if search and acting:
                             _search(page, pg, search, timeout_ms)
                             if pick:
-                                _pick(page, pg, search, pick, timeout_ms,
-                                      mutate=mutate)
+                                page = _pick(page, pg, search, pick,
+                                             timeout_ms, mutate=mutate)
                             if do_actions:
                                 # NOOD_0168 — a do-transaction sharing the
                                 # call with a search targets the page the
                                 # search/pick LANDED on, not the start page
                                 # (the reviewed session's "click Add to
                                 # cart" fired on the homepage instead).
-                                _do(page, pg, do_actions, timeout_ms)
+                                page = _do(page, pg, do_actions, timeout_ms)
                         elif pick and acting:
                             pg["pick_warning"] = (
                                 "--pick ignored: it requires --search")
@@ -2620,6 +2846,9 @@ def _do_lines(pg: dict, indent: str = "  ") -> list[str]:
     from both human and compact output, so every later action ran against an
     invalid state and the agent only ever saw the final expectation misses."""
     out = [f"{indent}⚠ {w}" for w in pg.get("do_warnings", [])]
+    if pg.get("tab_switches"):     # NOOD_0178 — evidence even with no delta
+        out.append(f"{indent}tab switches performed: "
+                   + ", ".join(pg["tab_switches"]))
     df = pg.get("do_failed")
     if df:
         out.append(f'{indent}  transaction halted at action {df["index"] + 1} '
@@ -2767,10 +2996,23 @@ def render(result: dict, compact: bool = False, section: str = "all",
             rev_controls = (_compact_controls(rev["controls"])
                             if compact else rev["controls"])
             rev_shown, rev_hidden = _cap(rev_controls, rev_cap)
-            how = "discovered by clicking" if rev.get("discovered") \
-                else "revealed after clicking"
-            out.append(f'  {how} "{rev["revealed_by"]}" '
-                       f'({len(rev["controls"])} new controls; * = needs POM entry):')
+            if rev.get("new_tab"):
+                # NOOD_0178 — labelled like a frame block: its own scope, and
+                # its steps only run after the switch, so those come first.
+                out.append(f'  new tab: {rev["tab_url"]} (opened by: '
+                           f'"{rev["opened_by"]}"; {len(rev["controls"])} '
+                           'controls; * = needs POM entry):')
+                out += [f"    {s}" for s in rev["switch_steps"]]
+            elif rev.get("switched_to"):
+                out.append(f'  seen after switching back to the '
+                           f'{rev["switched_to"]} tab ({len(rev["controls"])} '
+                           'new controls; * = needs POM entry):')
+            else:
+                how = "discovered by clicking" if rev.get("discovered") \
+                    else "revealed after clicking"
+                out.append(f'  {how} "{rev["revealed_by"]}" '
+                           f'({len(rev["controls"])} new controls; '
+                           '* = needs POM entry):')
             out += _control_lines(rev_shown, indent="    ")
             if rev_hidden:
                 out.append(f"    … (+{rev_hidden} more — raise --max-controls)")
@@ -2986,6 +3228,10 @@ def _compact_page(pg: dict, max_controls: int) -> dict:
                 # NOOD_0136 — scope/honesty contract keys
                 "warnings", "coverage", "framework_hints", "discovered",
                 "settled", "frame", "switch_step", "discovery",
+                # NOOD_0178 — the new-tab contract: what opened it, where it
+                # went, and the exact steps that reach it at run time.
+                "new_tab", "tab_url", "opened_by", "switch_steps",
+                "switched_to", "tab_switches",
                 # NOOD_0137 — run-time signals: popup/permission observations
                 "popups_closed", "permission_prompts"):
         if pg.get(key):
