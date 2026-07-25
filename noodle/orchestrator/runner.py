@@ -592,6 +592,8 @@ def execute_step(step_text: str, context):
         actions.assert_visible(page, action['text'])
     elif t == 'assert_hidden':
         actions.assert_hidden(page, action['text'])
+    elif t == 'assert_on_screen':
+        actions.assert_on_screen(page, action['text'], action.get('on', True))
     elif t == 'assert_url':
         actions.assert_url(page, action['fragment'], action.get('mode', 'contains'))
     elif t == 'wait_load':

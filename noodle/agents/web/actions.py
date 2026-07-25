@@ -611,6 +611,43 @@ def _assert_visible_ocr_or_fail(page: Page, text: str):
     raise AssertionError(f"Expected to see '{text}' on page — not found.\nURL: {page.url}")
 
 
+# NOOD_0180 — visible fraction of an element, clipped by EVERY ancestor's
+# overflow as well as the viewport. IntersectionObserver is the only native
+# API that reports this; getBoundingClientRect and Playwright's is_visible()
+# both ignore scroll-container clipping.
+_ON_SCREEN_JS = """el => new Promise(res => {
+    const io = new IntersectionObserver(([e]) => { io.disconnect(); res(e.intersectionRatio); });
+    io.observe(el);
+})"""
+
+
+def assert_on_screen(page: Page, text: str, on: bool = True):
+    """NOOD_0180 — 'can the tester actually SEE it', which assert_visible
+    cannot answer. Playwright's is_visible() is true for an element clipped
+    out of a scroll container's overflow: in a horizontal strip 500px wide
+    holding 1020px of sections, the last section reads is_visible()==True at
+    scrollLeft=0 while nothing of it is on screen. So a scroll test written
+    as 'scrolls right / should see X' passes WITHOUT the scroll — a false
+    green. This asserts the rendered truth instead."""
+    # heal=False is load-bearing, not caution: the self-heal chain's first
+    # move is "scroll the element into view and retry", which would scroll the
+    # very container this step is measuring and turn every "is not in view"
+    # into a false failure. Measuring must not mutate.
+    loc = find(page, text, heal=False, allow_dom_scan=False)
+    if loc is None:
+        raise AssertionError(_not_found(f"Could not find element: '{text}'"))
+    # ponytail: any sliver counts as on screen. If a test needs "fully on
+    # screen", compare ratio against a threshold here.
+    ratio = loc.first.evaluate(_ON_SCREEN_JS)
+    if (ratio > 0) != on:
+        raise AssertionError(
+            f"Expected '{text}' to be {'ON' if on else 'OFF'} screen, but "
+            f"{ratio:.0%} of it is showing. It IS in the DOM — an element scrolled "
+            f"outside its container's overflow stays 'visible' to the DOM while the "
+            f"user sees nothing of it.\nURL: {page.url}")
+    logger.info(f"\n  ✓ {text!r} is {'on' if on else 'off'} screen ({ratio:.0%} showing)")
+
+
 def assert_hidden(page: Page, text: str):
     import os as _os
     loc = page.get_by_text(text, exact=False)

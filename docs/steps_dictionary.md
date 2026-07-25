@@ -285,6 +285,44 @@ When User scrolls to the top of the page
 `scrolls down/up` nudge one half-viewport; the `bottom/top of the page` forms
 (NOOD_0143) jump to the document edge — what lazy-load footers need.
 
+Element-owned scrollbars (a sidebar, a code pane, a horizontal card strip) are
+not the page's:
+
+```gherkin
+When User scrolls the 'css pane' panel to the bottom
+When User scrolls the 'card strip' container to the right
+When User scrolls the 'Movie catalog' table to the top
+```
+
+`bottom`/`top`/`up`/`down`/`left`/`right` all apply, so **horizontal** container
+scrolling is a first-class direction, not a page-only nudge. `scrolls to 'X'`
+needs no container name at all — it scrolls whichever ancestor actually
+overflows, in **both** axes. Note a POM entry cannot name an element inside an
+iframe (POM selectors are page-global); after `switches to the 'result' frame`,
+use `scrolls to 'X'`.
+
+### Asserting a scroll worked — `in view`, not `should see`
+
+```gherkin
+Then 'section six' is not in view
+When User scrolls to 'section six'
+Then 'section six' is in view
+```
+
+**`should see` cannot verify a scroll.** It rides Playwright's `is_visible()`,
+which answers "does this element have a box in the layout" — an element
+clipped outside its scroll container's overflow still has one. In a 500px-wide
+strip holding 1020px of sections, the last section reads `is_visible() == True`
+at `scrollLeft=0`, so `scrolls right` + `should see 'six'` is **green before
+the scroll ever runs**.
+
+`is in view` (NOOD_0180) asks IntersectionObserver instead — the one native API
+that clips the target against every ancestor's overflow *and* the viewport.
+Accepted forms: `is in view` / `is on screen` / `is in the viewport` /
+`is scrolled into view`, each with `is not` / `is no longer` / `should not be`
+negations. Assert the **off**-screen state first, or a scroll that silently did
+nothing passes. The step never scrolls the thing it measures.
+
 ---
 
 ## Browser History & Tabs
