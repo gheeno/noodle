@@ -16,12 +16,13 @@ from noodle.agents.web import pom as pom_module
 from noodle.log import logger
 from noodle.reporting import paths as _paths
 
-_VALID_BROWSERS = {"chromium", "firefox", "webkit", "safari", "edge"}
-
 # NOOD_0052 — Safari rides Playwright's WebKit engine (same as `webkit`, the
 # friendlier name); Edge is Chromium launched through the locally-installed
 # Edge browser channel — Microsoft Edge must be installed on the machine.
-_ENGINE_ALIASES = {"safari": ("webkit", None), "edge": ("chromium", "msedge")}
+# NOOD_0179 — the table itself now lives in noodle.config so the probe resolves
+# engines through the same one; these names stay as the module's public spelling.
+_VALID_BROWSERS = config_module.VALID_BROWSERS
+_ENGINE_ALIASES = config_module.ENGINE_ALIASES
 
 # --- Custom hook registry ---
 # Valid events mirror behave's lifecycle names.

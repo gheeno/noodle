@@ -1312,7 +1312,7 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
                open_native_controls: bool = False,
                max_reveal_depth: int = 1,
                discover: bool = False, act_on: str | None = None,
-               workspace: str = ".") -> dict:
+               brief: bool = False, workspace: str = ".") -> dict:
     """NOOD_0113 — proactive DOM probe: open the page(s) headless and return
     actionable controls + POM suggestions + vocabulary-shaped steps, so an
     agent writes the feature right on the first pass instead of discovering
@@ -1340,7 +1340,9 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
     new tab is followed and probed as its own block (with the runtime's
     switch steps), the transaction continues there, and
     "switch to <new|last|previous|original|first|main> tab" is the fourth
-    `do` verb for coming back."""
+    `do` verb for coming back. `brief` (NOOD_0179) returns the COMPACT payload
+    with the step sentences sent once as `step_templates` + per-kind
+    `step_names` instead of one full sentence per control row."""
     from noodle.agents.web import probe as _probe
     urls = [normalize_url(u) for u in re.split(r"[,\s]+", url.strip()) if u]
     # NOOD_0177 — probe_page is MCP-exposed and returns a ±30-char window around
@@ -1388,12 +1390,15 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
             return {"pages": [], "errors": [{"url": url, "error": str(e)}]}
         do = [re.sub(r"\{env:([A-Za-z_][A-Za-z0-9_]*)\}",
                      lambda m: env[m.group(1).upper()], a) for a in do]
-    return _probe.probe(urls, timeout_ms=timeout_ms, clicks=click, do=do,
-                        search=search, suggest=suggest, pick=pick,
-                        mutate=mutate, follow=follow, expect=expect,
-                        open_native_controls=open_native_controls,
-                        max_reveal_depth=max_reveal_depth, discover=discover,
-                        act_on=act_on)
+    result = _probe.probe(urls, timeout_ms=timeout_ms, clicks=click, do=do,
+                          search=search, suggest=suggest, pick=pick,
+                          mutate=mutate, follow=follow, expect=expect,
+                          open_native_controls=open_native_controls,
+                          max_reveal_depth=max_reveal_depth, discover=discover,
+                          act_on=act_on)
+    # NOOD_0179 — brief is a payload shape, so it implies compact: a raw result
+    # has no step_templates to carry.
+    return _probe.compact_payload(result, brief=True) if brief else result
 
 
 def probe_app(platform: str | None = None, *, compact: bool = False) -> dict:

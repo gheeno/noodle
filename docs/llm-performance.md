@@ -137,7 +137,16 @@ generation:
   needs — needs-POM controls, POM YAML, suggested steps, headings — a
   fraction of the full dump; `--section pom|controls|steps|headings` and
   `--max-controls N` fetch one narrow slice instead of grepping a 24 KB
-  blob in context. Testing a search flow? `--search "term"` probes the
+  blob in context. `--brief` (MCP `brief=True`, NOOD_0179) sends the three
+  step sentences ONCE as `step_templates` plus per-kind `step_names`, instead
+  of re-sending `clicks "<name>"` on every row: same names, selectors and POM
+  YAML, and rows whose wording is load-bearing (needs-POM, machine-named,
+  attribute-caption-only) keep their exact step either way — never re-derive
+  those from the template. The saving is the template overhead only (~9 bytes
+  a click row, ~30 a field row); the control names ARE the payload, so brief
+  trims the step list ~15-20%, not the page. Reach for the cap ladder, not
+  brief, when a payload is genuinely too big.
+  Testing a search flow? `--search "term"` probes the
   RESULTS page in the same call: its "NN results" summary element (with a
   ready POM entry) and the summary-count assertion to prefer over counting
   rendered cards — rendered counts are lazy-load- and headless-dependent.

@@ -25,12 +25,14 @@ import asyncio
 import difflib
 import functools
 import json
+import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin, urlsplit
 
 from noodle import payload_budget
+from noodle.agents.web import browser_pool
 from noodle.agents.web.dom_scan import _selector_for, _split_classes
 
 
@@ -383,6 +385,32 @@ def _step_for(kind: str, name: str) -> str:
     return f'clicks "{name}"'
 
 
+# NOOD_0179 — every suggested step is one of these three sentences with a name
+# substituted, so a 40-step list re-sends the sentence 40 times. Brief mode
+# sends each template ONCE and the names alone.
+STEP_TEMPLATES = {
+    "click": 'clicks "<name>"',
+    "field": 'enters "<value>" in the "<name>" field',
+    "dropdown": 'selects "<option>" from "<name>"',
+}
+
+
+def _template_key(kind: str | None) -> str:
+    return kind if kind in ("field", "dropdown") else "click"
+
+
+def _keeps_exact_step(c: dict) -> bool:
+    """Rows whose phrasing is load-bearing keep their verbatim step.
+
+    A machine-named or POM-needing control resolves by the exact wording the
+    probe proved; re-deriving it from a template is how "use the suggested step
+    as-is" turns into a run-time locator miss (the playbook rule exists because
+    that happened).
+    """
+    return bool(c.get("needs_pom") or c.get("machine_name")
+                or c.get("caption_attr_only"))
+
+
 # NOOD_0145 — input types whose `value` is the rendered caption (accessible
 # name), not user-editable data. Everything else keeps its value out of `text`.
 _CAPTION_VALUE_TYPES = ("button", "submit", "reset", "image")
@@ -615,6 +643,75 @@ def _arm(page):
         return page.evaluate(_ARM_JS)
     except Exception:
         return None
+
+
+def _timings_on() -> bool:
+    """NOOD_0179 — NOODLE_PROBE_TIMINGS=1 adds settle-path debug keys. Off by
+    default: the payload budget is the scarce resource, not the debug detail."""
+    return os.getenv("NOODLE_PROBE_TIMINGS", "").strip().lower() in ("1", "true", "yes")
+
+
+def _settle_initial(page, timeout_ms: int) -> str:
+    """NOOD_0179 — the settle after goto, observer-driven instead of a fixed
+    network-idle ceiling. Returns the path taken (debug only).
+
+    Navigation mode paid `wait_for_load_state("networkidle", timeout=3000)` on
+    EVERY initial load. Analytics-chatty pages — most retail sites — never go
+    network-idle at all, so that was a flat 3 s per URL spent proving nothing.
+    A page whose DOM has stopped changing is settled regardless of what its
+    beacons are still doing, so watch the DOM and keep only a short network
+    belt for the pages that fetch without mutating.
+
+    Standards only (MutationObserver, wait_for_function) — identical behaviour
+    on chromium/firefox/webkit, no CDP, no engine branches. Never raises; any
+    scripting failure falls back to the legacy navigation settle verbatim.
+    """
+    if os.getenv("NOODLE_PROBE_SETTLE", "").strip().lower() == "legacy":
+        return _settle(page, timeout_ms)
+    # (a) the Angular transitional-blank-body case, unchanged — a body with no
+    # children means the framework hasn't rendered yet, whatever the network says.
+    try:
+        page.wait_for_function(
+            "document.body && document.body.childElementCount > 0",
+            timeout=timeout_ms)
+    except Exception:
+        pass
+    if _arm(page) is None:
+        return _settle(page, timeout_ms)        # can't script it — legacy
+    path = "quiet"
+    try:
+        try:
+            # (c) no mutation inside the ceiling ⇒ the page is static and
+            # already settled. This is the common case that used to cost 3 s.
+            page.wait_for_function(
+                "() => window.__noodleMut && window.__noodleMut.n > 0",
+                timeout=min(timeout_ms, 700))
+            path = "mutation"
+        except Exception:
+            path = "quiet"
+        if path == "mutation":
+            # (d) something is rendering — wait for it to stop, bounded.
+            try:
+                page.wait_for_function(
+                    "() => Date.now() - window.__noodleMut.last >= 250",
+                    timeout=timeout_ms)
+            except Exception:
+                path = "timeout"
+        try:
+            page.evaluate(
+                "() => window.__noodleMo && window.__noodleMo.disconnect()")
+        except Exception:
+            pass
+    except Exception:
+        return _settle(page, timeout_ms)
+    # (e) the belt: a page that fetches without touching the DOM (data loaded
+    # into a framework store, rendered on the next tick) shows no mutation yet
+    # isn't ready. 1 s, not 3 — and only as a backstop.
+    try:
+        page.wait_for_load_state("networkidle", timeout=1000)
+    except Exception:
+        pass
+    return path
 
 
 def _settle(page, timeout_ms: int, armed=None,
@@ -2023,20 +2120,89 @@ def _auto_open(page, blk: dict, seen: set, seen_head: set, timeout_ms: int,
 _UNIQUE_CAP = 60
 
 
+# NOOD_0179 — Playwright-only selector syntax. `querySelectorAll` cannot parse
+# these, so they keep the per-selector locator round trip.
+_UNBATCHABLE = ("text=", ":nth-match(", ">>")
+
+
+def _batchable(selector: str) -> bool:
+    """True only for plain CSS a browser's querySelectorAll can run itself.
+
+    Deliberately conservative: a selector wrongly called batchable would be
+    counted by the wrong engine and silently mismark uniqueness, which is the
+    exact failure NOOD_0136 added this check to prevent.
+    """
+    if not isinstance(selector, str) or not selector.strip():
+        return False
+    return not any(tok in selector for tok in _UNBATCHABLE)
+
+
+# One evaluate for every plain-CSS selector. Counts are summed across the
+# document AND every open shadow root, because plain querySelectorAll does not
+# pierce shadow roots while Playwright's locator does — summing is what keeps
+# the batched count identical to the locator count it replaces.
+_UNIQUE_COUNT_JS = """
+(selectors) => {          // __noodleCount — infrastructure, not a snapshot
+  const roots = [];
+  const gather = (root) => {
+    roots.push(root);
+    for (const host of root.querySelectorAll('*'))
+      if (host.shadowRoot) gather(host.shadowRoot);
+  };
+  gather(document);
+  return selectors.map(sel => {
+    try {
+      let n = 0;
+      for (const r of roots) n += r.querySelectorAll(sel).length;
+      return n;
+    } catch (e) { return null; }   // invalid selector — caller leaves it unmarked
+  });
+}
+"""
+
+
+def _mark_unique(c: dict, n) -> None:
+    """The marking contract, one place: n==1 unique, n>1 carries the count,
+    anything else (0, None, non-int) leaves the control unmarked."""
+    if isinstance(n, int) and n:
+        c["unique"] = n == 1
+        if n > 1:
+            c["matches"] = n
+
+
 def _verify_unique(target, controls: list[dict]) -> None:
     """Mark each control unique True/False (+match count) via the SAME
     resolution surface find() uses (Playwright locator — pierces open shadow
     roots). target is the page or the frame the control lives in. Bounded by
-    _UNIQUE_CAP; an unverifiable selector is left unmarked, never guessed."""
-    for c in controls[:_UNIQUE_CAP]:
+    _UNIQUE_CAP; an unverifiable selector is left unmarked, never guessed.
+
+    NOOD_0179 — the plain-CSS majority is counted in ONE evaluate instead of
+    one `locator(sel).count()` round trip each. A facet-heavy results page hits
+    the 60-selector cap, and 60 sequential round trips per block — repeated for
+    every revealed block and every frame — was the probe's second-largest
+    wall-clock cost after the browser launch.
+    """
+    capped = controls[:_UNIQUE_CAP]
+    legacy = capped                             # every selector, unless a batch lands
+    if os.getenv("NOODLE_UNIQUE_LEGACY", "").strip() != "1":
+        batch = [c for c in capped if _batchable(c.get("selector"))]
+        if batch:
+            try:
+                counts = target.evaluate(_UNIQUE_COUNT_JS,
+                                         [c["selector"] for c in batch])
+            except Exception:
+                counts = None                   # blew up — degrade to the loop
+            if isinstance(counts, list) and len(counts) == len(batch):
+                for c, n in zip(batch, counts):
+                    _mark_unique(c, n)
+                legacy = [c for c in capped
+                          if not _batchable(c.get("selector"))]
+    for c in legacy:
         try:
             n = target.locator(c["selector"]).count()
         except Exception:
             continue
-        if isinstance(n, int) and n:
-            c["unique"] = n == 1
-            if n > 1:
-                c["matches"] = n
+        _mark_unique(c, n)
 
 
 def _apply_page_signals(pg: dict, raw: dict) -> None:
@@ -2373,7 +2539,7 @@ def probe(urls: list[str], timeout_ms: int = 15000,
           follow: str | None = None, expect: list[str] | None = None,
           open_native_controls: bool = False,
           max_reveal_depth: int = 1, discover: bool = False,
-          act_on: str = "each") -> dict:
+          act_on: str = "each", browser_name: str | None = None) -> dict:
     """Open each URL headless (one browser for all) and return
     {"pages": [summarize(...)], "errors": [{url, error}]}. Never raises —
     an unreachable page lands in errors, like ground.py's advisory skip.
@@ -2406,118 +2572,127 @@ def probe(urls: list[str], timeout_ms: int = 15000,
     except ValueError as e:
         return {"pages": [], "errors": [{"url": ", ".join(urls),
                                          "error": str(e)}]}
-    try:
-        from playwright.sync_api import sync_playwright
-
-        from noodle import counters
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            counters.bump("browser_launch")
-            try:
-                page = browser.new_page()
-                try:                       # NOOD_0137 — permission-API shim
-                    # NOOD_0178 — on the CONTEXT, not the page: a page-level
-                    # init script never reaches a tab that page opens, so a
-                    # probe-followed tab had no shim to read.
-                    page.context.add_init_script(_PERM_JS)
-                except Exception:
-                    pass
-                home = page
-                for url_i, url in enumerate(urls):
-                    # NOOD_0178 — each url starts on the original tab: a
-                    # previous transaction may have left the flow on a
-                    # probe-opened one, and goto would navigate THAT.
-                    page = home
-                    # NOOD_0156 — act_on="last": earlier URLs of an ordered
-                    # navigation contract are setup-only (cookies/session),
-                    # never searched or clicked around in.
-                    acting = act_on != "last" or url_i == len(urls) - 1
-                    try:
-                        resp = page.goto(url, timeout=timeout_ms,
-                                         wait_until="domcontentloaded")
-                        _settle(page, timeout_ms)
-                        # NOOD_0137 — sweep popups exactly like the run-time
-                        # engine, so the snapshot below is the real page and
-                        # the observation feeds the signals + skeleton.
-                        popups_closed = _dismiss_popups(page)
-                        if popups_closed:
-                            _settle(page, min(timeout_ms, 3000))
-                        perms = _perm_signals(page)
-                        # ponytail: W3b — add a single scroll-to-bottom pass here
-                        # only if below-the-fold lazy tiles keep going missing;
-                        # W3a surfaces the ones already in the DOM, most pages
-                        # need no scroll and it adds wall-time to every probe.
-                        raw = page.evaluate(_COLLECT_JS)
-                        if raw.get("semantics_placeholder"):
-                            raw = _activate_flutter_semantics(page, raw,
-                                                              timeout_ms)
-                        # no logger here — it writes to stdout and would
-                        # corrupt `noodle probe --json` output
-                        pg = summarize(raw, url=page.url, title=page.title())
-                        _apply_page_signals(pg, raw)
-                        # NOOD_0169 — navigation health: setup URLs of an
-                        # ordered contract are preserved even when broken
-                        # (the user asked for them), but the goal evidence
-                        # pass warns on them and blocks a broken FINAL page.
-                        if resp is not None:
-                            pg["http_status"] = resp.status
-                        if popups_closed:
-                            pg["popups_closed"] = popups_closed
-                        if perms:
-                            pg["permission_prompts"] = perms
-                        _verify_unique(page, pg["controls"])
-                        _collect_frames(page, pg, timeout_ms)
-                        # NOOD_0178 — every clicking phase returns the page the
-                        # flow is on now (a click may have opened a tab), and
-                        # the later phases act on it.
-                        if clicks and acting:
-                            page = _reveal(page, pg, clicks, timeout_ms)
-                        if do_actions and acting and not search:
+    # NOOD_0179 — the browser comes from the shared pool (one launch per engine
+    # for the life of an MCP server / repl session) and every line below runs on
+    # the pool's worker thread, because Playwright sync objects are thread-affine.
+    # A fresh CONTEXT per call keeps the isolation the old launch-per-call gave.
+    def _body(browser):
+        context = browser.new_context()
+        try:
+            page = context.new_page()
+            try:                       # NOOD_0137 — permission-API shim
+                # NOOD_0178 — on the CONTEXT, not the page: a page-level
+                # init script never reaches a tab that page opens, so a
+                # probe-followed tab had no shim to read.
+                page.context.add_init_script(_PERM_JS)
+            except Exception:
+                pass
+            home = page
+            for url_i, url in enumerate(urls):
+                # NOOD_0178 — each url starts on the original tab: a
+                # previous transaction may have left the flow on a
+                # probe-opened one, and goto would navigate THAT.
+                page = home
+                # NOOD_0156 — act_on="last": earlier URLs of an ordered
+                # navigation contract are setup-only (cookies/session),
+                # never searched or clicked around in.
+                acting = act_on != "last" or url_i == len(urls) - 1
+                try:
+                    resp = page.goto(url, timeout=timeout_ms,
+                                     wait_until="domcontentloaded")
+                    settle_path = _settle_initial(page, timeout_ms)
+                    # NOOD_0137 — sweep popups exactly like the run-time
+                    # engine, so the snapshot below is the real page and
+                    # the observation feeds the signals + skeleton.
+                    popups_closed = _dismiss_popups(page)
+                    if popups_closed:
+                        settle_path = _settle_initial(
+                            page, min(timeout_ms, 3000))
+                    perms = _perm_signals(page)
+                    # ponytail: W3b — add a single scroll-to-bottom pass here
+                    # only if below-the-fold lazy tiles keep going missing;
+                    # W3a surfaces the ones already in the DOM, most pages
+                    # need no scroll and it adds wall-time to every probe.
+                    raw = page.evaluate(_COLLECT_JS)
+                    if raw.get("semantics_placeholder"):
+                        raw = _activate_flutter_semantics(page, raw,
+                                                          timeout_ms)
+                    # no logger here — it writes to stdout and would
+                    # corrupt `noodle probe --json` output
+                    pg = summarize(raw, url=page.url, title=page.title())
+                    _apply_page_signals(pg, raw)
+                    if _timings_on():   # NOOD_0179 — debug only, never default
+                        pg["settled_initial"] = settle_path
+                    # NOOD_0169 — navigation health: setup URLs of an
+                    # ordered contract are preserved even when broken
+                    # (the user asked for them), but the goal evidence
+                    # pass warns on them and blocks a broken FINAL page.
+                    if resp is not None:
+                        pg["http_status"] = resp.status
+                    if popups_closed:
+                        pg["popups_closed"] = popups_closed
+                    if perms:
+                        pg["permission_prompts"] = perms
+                    _verify_unique(page, pg["controls"])
+                    _collect_frames(page, pg, timeout_ms)
+                    # NOOD_0178 — every clicking phase returns the page the
+                    # flow is on now (a click may have opened a tab), and
+                    # the later phases act on it.
+                    if clicks and acting:
+                        page = _reveal(page, pg, clicks, timeout_ms)
+                    if do_actions and acting and not search:
+                        page = _do(page, pg, do_actions, timeout_ms)
+                    if discover and acting:
+                        _discover(page, pg, timeout_ms)
+                    if open_native_controls and acting:
+                        seen = {c["selector"] for b in _blocks(pg)
+                                for c in b["controls"]}
+                        seen_head = {h for b in _blocks(pg)
+                                     for h in b["headings"]}
+                        budget = [_AUTO_OPEN_CAP]
+                        for b in list(_blocks(pg)):
+                            _auto_open(page, b, seen, seen_head, timeout_ms,
+                                       max_reveal_depth, budget)
+                    if suggest and acting:
+                        _suggest(page, pg, suggest, timeout_ms,
+                                 follow=follow)
+                    elif follow and acting:
+                        pg["suggest_warning"] = (
+                            "--follow ignored: it requires --suggest")
+                    if search and acting:
+                        _search(page, pg, search, timeout_ms)
+                        if pick:
+                            page = _pick(page, pg, search, pick,
+                                         timeout_ms, mutate=mutate)
+                        if do_actions:
+                            # NOOD_0168 — a do-transaction sharing the
+                            # call with a search targets the page the
+                            # search/pick LANDED on, not the start page
+                            # (the reviewed session's "click Add to
+                            # cart" fired on the homepage instead).
                             page = _do(page, pg, do_actions, timeout_ms)
-                        if discover and acting:
-                            _discover(page, pg, timeout_ms)
-                        if open_native_controls and acting:
-                            seen = {c["selector"] for b in _blocks(pg)
-                                    for c in b["controls"]}
-                            seen_head = {h for b in _blocks(pg)
-                                         for h in b["headings"]}
-                            budget = [_AUTO_OPEN_CAP]
-                            for b in list(_blocks(pg)):
-                                _auto_open(page, b, seen, seen_head, timeout_ms,
-                                           max_reveal_depth, budget)
-                        if suggest and acting:
-                            _suggest(page, pg, suggest, timeout_ms,
-                                     follow=follow)
-                        elif follow and acting:
-                            pg["suggest_warning"] = (
-                                "--follow ignored: it requires --suggest")
-                        if search and acting:
-                            _search(page, pg, search, timeout_ms)
-                            if pick:
-                                page = _pick(page, pg, search, pick,
-                                             timeout_ms, mutate=mutate)
-                            if do_actions:
-                                # NOOD_0168 — a do-transaction sharing the
-                                # call with a search targets the page the
-                                # search/pick LANDED on, not the start page
-                                # (the reviewed session's "click Add to
-                                # cart" fired on the homepage instead).
-                                page = _do(page, pg, do_actions, timeout_ms)
-                        elif pick and acting:
-                            pg["pick_warning"] = (
-                                "--pick ignored: it requires --search")
-                        if expect and acting:
-                            reason = _skip_expect_reason(pg)
-                            if reason:
-                                pg["expect_warning"] = reason
-                            else:
-                                _expect(page, pg, expect)
-                        pg["author_ready"] = _author_ready(pg)
-                        pages.append(pg)
-                    except Exception as e:
-                        errors.append({"url": url, "error": str(e)})
-            finally:
-                browser.close()
+                    elif pick and acting:
+                        pg["pick_warning"] = (
+                            "--pick ignored: it requires --search")
+                    if expect and acting:
+                        reason = _skip_expect_reason(pg)
+                        if reason:
+                            pg["expect_warning"] = reason
+                        else:
+                            _expect(page, pg, expect)
+                    pg["author_ready"] = _author_ready(pg)
+                    pages.append(pg)
+                except Exception as e:
+                    errors.append({"url": url, "error": str(e)})
+        finally:
+            # the CONTEXT, never the pooled browser — closing the browser
+            # here would defeat the reuse the pool exists for.
+            context.close()
+
+    try:
+        _, engine_warning = browser_pool.with_browser(_body, browser_name)
+        if engine_warning:
+            errors.append({"url": ", ".join(urls), "error": engine_warning})
     except Exception as e:
         errors.append({"url": ", ".join(urls), "error": str(e)})
     return {"pages": pages, "errors": errors}
@@ -2707,7 +2882,7 @@ def _rank_ready(controls: list[dict]) -> list[dict]:
 
 
 def _step_lines(controls: list[dict], indent: str = "  ",
-                cap: int | None = None) -> list[str]:
+                cap: int | None = None, brief: bool = False) -> list[str]:
     """NOOD_0131 — compact mode: copy-ready steps for the controls that need
     NO POM entry (visible, readable name). The needs-POM list filters those
     out, and hiding their steps made the baseline re-probe `steps`/`revealed`
@@ -2718,6 +2893,30 @@ def _step_lines(controls: list[dict], indent: str = "  ",
     shown, hidden = _cap(ready, cap)
     if not shown:
         return []
+    if brief:
+        # NOOD_0179 — one template line, then its names. Same information,
+        # without re-sending the sentence once per control.
+        out = [f"{indent}copy-ready steps — put each name into its template "
+               "(use as-is, do not re-derive them via dictionary searches):"]
+        by_kind: dict[str, list] = {}
+        for c in shown:
+            if _keeps_exact_step(c):
+                continue
+            by_kind.setdefault(_template_key(c.get("kind")), []).append(c)
+        for key, group in by_kind.items():
+            out.append(f"{indent}  {STEP_TEMPLATES[key]}")
+            out.append(f"{indent}    names: "
+                       + "; ".join(f'"{c["name"]}"' for c in group))
+            for c in group:
+                if c.get("options"):
+                    out.append(f'{indent}    "{c["name"]}" options: '
+                               + ", ".join(f'"{o}"' for o in c["options"]))
+        for c in shown:      # machine-named rows keep the proven wording
+            if _keeps_exact_step(c):
+                out.append(f'{indent}  {c["step"]}')
+        if hidden:
+            out.append(f"{indent}  … (+{hidden} more — raise --max-controls)")
+        return out
     out = [f"{indent}copy-ready steps (no POM entry needed — use as-is, do "
            "not re-derive them via dictionary searches):"]
     for c in shown:
@@ -2730,7 +2929,8 @@ def _step_lines(controls: list[dict], indent: str = "  ",
     return out
 
 
-def _control_lines(controls: list[dict], indent: str = "  ") -> list[str]:
+def _control_lines(controls: list[dict], indent: str = "  ",
+                   brief: bool = False) -> list[str]:
     out = []
     for c in controls:
         mark = "*" if c["needs_pom"] else " "
@@ -2752,8 +2952,13 @@ def _control_lines(controls: list[dict], indent: str = "  ") -> list[str]:
         # NOOD_0145 — say which control actually submits, so an author never
         # picks a login-named lookalike over the real submit button.
         sub = " (submit)" if c.get("submit") else ""
+        # NOOD_0179 — brief: the step is derivable from kind + name via the
+        # templates printed once above, so only the load-bearing wording rides
+        # along per row.
+        step = (f'  →  {c["step"]}'
+                if not brief or _keeps_exact_step(c) else "")
         out.append(f'{indent}{mark} [{c["kind"]}] {c["name"]}{sub} — '
-                   f'{c["selector"]}{hidden}  →  {c["step"]}{warn}')
+                   f'{c["selector"]}{hidden}{step}{warn}')
         # NOOD_0128 — options surfaced by --open-native, so the author copies a
         # real option value into the select step instead of guessing.
         if c.get("options"):
@@ -2901,7 +3106,7 @@ def _suggest_lines(sg: dict, indent: str = "  ") -> list[str]:
 
 
 def render(result: dict, compact: bool = False, section: str = "all",
-           max_controls: int | None = None) -> str:
+           max_controls: int | None = None, brief: bool = False) -> str:
     """Human/agent-readable text for the CLI.
 
     NOOD_0117 knobs, all token-savers for agent callers:
@@ -2911,14 +3116,20 @@ def render(result: dict, compact: bool = False, section: str = "all",
       section       — controls|pom|steps|headings|all: emit exactly one slice
                       instead of the whole dump (grep-in-context killer).
       max_controls  — cap each control list, noting how many were hidden.
+      brief         — NOOD_0179: print the step templates once instead of a
+                      full sentence per control row (compact only).
     """
-    if section != "all":
-        return _render_section(result, section, max_controls)
-    out = []
     # W1 — compact mode caps each list by default; explicit --max-controls wins,
     # full (non-compact) render stays uncapped (it is opt-in verbose).
     cap = max_controls if max_controls is not None else (
         DEFAULT_COMPACT_CAP if compact else None)
+    # NOOD_0179 — the cap is computed BEFORE the section branch: `--compact
+    # --section steps` used to return here with max_controls=None and emit the
+    # whole uncapped inventory, silently ignoring the flag documented as
+    # "compact caps at 25" (one such call returned ~600 lines).
+    if section != "all":
+        return _render_section(result, section, cap)
+    out = []
     for pg in result.get("pages", []):
         out.append(f"Probe: {pg['url']} — {pg.get('title') or '(no title)'}")
         # NOOD_0136 — honesty header: never bury a visual-only verdict or a
@@ -2976,12 +3187,12 @@ def render(result: dict, compact: bool = False, section: str = "all",
                  f"{len(pg['controls'])} total — --section controls for all"
                  if compact else "* = needs POM entry")
         out.append(f"  controls ({len(controls)}; {label}):")
-        out += _control_lines(shown)
+        out += _control_lines(shown, brief=brief and compact)
         if hidden:
             out.append(f"    … (+{hidden} more — raise --max-controls)")
         if compact and not diet:
             out += _tile_lines(pg["controls"], cap=page_cap)
-            out += _step_lines(pg["controls"], cap=page_cap)
+            out += _step_lines(pg["controls"], cap=page_cap, brief=brief)
         elif diet:
             out.append("    initial-page tiles/steps dieted (task flags "
                        "active) — pass --max-controls or re-probe without "
@@ -3175,13 +3386,28 @@ def _render_section(result: dict, section: str,
     return "\n".join(out)
 
 
-def _compact_page(pg: dict, max_controls: int) -> dict:
+def _compact_page(pg: dict, max_controls: int, brief: bool = False) -> dict:
     """One page of compact_payload()."""
     need, hidden = _cap(_compact_controls(pg["controls"]), max_controls)
-    steps, steps_hidden = _cap(
-        [c["step"] for c in _rank_ready(pg["controls"])
-         if not _is_consent_noise(c)],
-        max_controls)
+    ranked = [c for c in _rank_ready(pg["controls"])
+              if not _is_consent_noise(c)]
+    step_names: dict[str, list] = {}
+    if brief:
+        # NOOD_0179 — exact steps only where the wording is load-bearing;
+        # everything else travels as a name under its template key.
+        steps, steps_hidden = _cap(
+            [c["step"] for c in ranked if _keeps_exact_step(c)], max_controls)
+        by_kind: dict[str, list] = {}
+        for c in ranked:
+            if not _keeps_exact_step(c):
+                by_kind.setdefault(_template_key(c.get("kind")),
+                                   []).append(c["name"])
+        for key, names in by_kind.items():
+            shown, hid = _cap(names, max_controls)
+            step_names[key] = shown
+            steps_hidden += hid
+    else:
+        steps, steps_hidden = _cap([c["step"] for c in ranked], max_controls)
     headings = pg["headings"]
     if pg.get("term"):        # search block — Fix B: no result-echo headings
         headings = [h for h in headings if not _is_search_echo(h, pg["term"])]
@@ -3189,6 +3415,8 @@ def _compact_page(pg: dict, max_controls: int) -> dict:
            "total_controls": len(pg["controls"]),
            "needs_pom": need, "suggested_steps": steps,
            "headings": headings, "pom_yaml": _compact_pom(pg, max_controls)}
+    if step_names:
+        out["step_names"] = step_names
     tiles = [c for c in pg["controls"] if _tile_caption(c)]  # W3a
     if tiles:
         # NOOD_0137 — the one uncapped list left; families collapse like the
@@ -3252,14 +3480,15 @@ def _compact_page(pg: dict, max_controls: int) -> dict:
         # per-block `truncated` note points at compact=False for the full dump.
         out["revealed"] = [
             _compact_page(r, min(max_controls, DISCOVER_COMPACT_CAP)
-                          if r.get("discovered") else max_controls)
+                          if r.get("discovered") else max_controls, brief)
             for r in pg["revealed"]]
     if pg.get("frames"):
-        out["frames"] = [_compact_page(f, max_controls) for f in pg["frames"]]
+        out["frames"] = [_compact_page(f, max_controls, brief)
+                         for f in pg["frames"]]
     if pg.get("search"):
-        out["search"] = _compact_page(pg["search"], max_controls)
+        out["search"] = _compact_page(pg["search"], max_controls, brief)
     if pg.get("picked"):   # NOOD_0156 — inside a search block's recursion
-        out["picked"] = _compact_page(pg["picked"], max_controls)
+        out["picked"] = _compact_page(pg["picked"], max_controls, brief)
     return out
 
 
@@ -3288,7 +3517,8 @@ COMPACT_BUDGET_BYTES = payload_budget.DEFAULT_BUDGET_BYTES
 _COMPACT_CAP_LADDER = (40, 25, 15, 8, 4)
 
 
-def compact_payload(result: dict, max_controls: int = 40) -> dict:
+def compact_payload(result: dict, max_controls: int = 40,
+                    brief: bool = False) -> dict:
     """NOOD_0117 — the MCP-default probe payload: everything an author needs
     (needs-POM controls, paste-ready POM YAML, suggested steps, exact heading
     texts, search/reveal blocks) minus the full selector dump and next-pages
@@ -3299,9 +3529,12 @@ def compact_payload(result: dict, max_controls: int = 40) -> dict:
     probe cannot blow a caller's context. Trimming is honest — the surviving
     payload carries `budget_trimmed` naming the cap it settled on."""
     def _build(cap: int) -> dict:
-        return {"pages": [_compact_page(pg, cap)
-                          for pg in result.get("pages", [])],
-                "errors": result.get("errors", [])}
+        out = {"pages": [_compact_page(pg, cap, brief)
+                         for pg in result.get("pages", [])],
+               "errors": result.get("errors", [])}
+        if brief:   # NOOD_0179 — the three sentences, once per payload
+            out["step_templates"] = dict(STEP_TEMPLATES)
+        return out
 
     ladder = [c for c in _COMPACT_CAP_LADDER if c < max_controls]
     for cap in (max_controls, *ladder):

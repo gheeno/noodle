@@ -67,6 +67,8 @@ class _Page:
             return {}
         if "__noodleMo" in js or "__noodleMut" in js:
             return True
+        if "__noodleCount" in js:       # NOOD_0179 uniqueness batch
+            return None
         return self._raws.pop(0)
 
     def title(self):
