@@ -385,7 +385,7 @@ def probe_page(url: str, click: list[str] | None = None,
                do: list[str] | None = None,
                search: str | None = None, suggest: str | None = None,
                follow: str | None = None, expect: list[str] | None = None,
-               compact: bool = True,
+               compact: bool = True, brief: bool = False,
                open_native_controls: bool = False,
                max_reveal_depth: int = 1, discover: bool = False,
                find: str | None = None,
@@ -420,7 +420,9 @@ def probe_page(url: str, click: list[str] | None = None,
     carry switch-frame; POM can't reach into a frame). Selectors are proven
     unique in scope; `author_ready: false` = fix the named warning first.
     Canvas-only/Flutter without semantics = coverage: visual_only, not fake
-    selectors. compact=True (default) = bounded author-ready payload.
+    selectors. compact=True (default) = bounded author-ready payload; `brief`
+    sends the step sentences once as `step_templates` + `step_names` (rows
+    needing a POM entry keep their exact step).
     `find`: only matches, pre-cap — no spill greps. `url`: several URLs OK
     (space/comma), one browser, acts on the LAST."""
     result = core.probe_page(url, click=click, do=do, search=search,
@@ -435,7 +437,7 @@ def probe_page(url: str, click: list[str] | None = None,
         return {"find": find, "matches": find_controls(result, find)}
     if compact:
         from noodle.agents.web.probe import compact_payload
-        return compact_payload(result)
+        return compact_payload(result, brief=brief)
     return result
 
 

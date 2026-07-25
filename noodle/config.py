@@ -35,6 +35,31 @@ def write_private(path, text: str) -> Path:
     return path
 
 
+# NOOD_0179 — ONE alias table. The run engine (hooks.py) and the probe both
+# turn a user-facing browser name into the Playwright attribute + channel pair;
+# two copies drift, and a probe that hardcoded chromium ignored the choice
+# entirely. `safari` and `edge` are not Playwright engines — they are webkit
+# and a chromium channel.
+ENGINE_ALIASES = {"safari": ("webkit", None), "edge": ("chromium", "msedge")}
+VALID_BROWSERS = {"chromium", "firefox", "webkit", "safari", "edge"}
+
+
+def resolve_engine(name: str | None = None) -> tuple[str, str | None, str | None]:
+    """(engine, channel, warning) for a browser name — NOODLE_BROWSER when None.
+
+    Never raises: the probe is advisory, and a typo'd engine there must degrade
+    to chromium with a note rather than kill a discovery run (the run engine
+    keeps its hard validation — a mistyped browser in CI should fail loudly).
+    """
+    picked = (name or os.getenv("NOODLE_BROWSER") or "chromium").strip().lower()
+    if picked not in VALID_BROWSERS:
+        return "chromium", None, (
+            f"unknown browser '{picked}' — using chromium "
+            f"(valid: {', '.join(sorted(VALID_BROWSERS))})")
+    engine, channel = ENGINE_ALIASES.get(picked, (picked, None))
+    return engine, channel, None
+
+
 DEFAULTS = {
     "tests_dir": "tests",
     "env_file": ".env",

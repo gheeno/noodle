@@ -46,6 +46,8 @@ def _page(raws):
     def _evaluate(js, *a, **k):
         if "__noodleMo" in js:               # NOOD_0136 settle observer —
             return True                      # not a snapshot, keep order clean
+        if "__noodleCount" in js:            # NOOD_0179 uniqueness batch —
+            return None                      # likewise infrastructure
         order.append("evaluate")
         return raws.pop(0)
 

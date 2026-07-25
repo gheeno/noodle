@@ -63,6 +63,14 @@ Ceiling accounting (moved verbatim from the retired test asserts):
   characters and lines padded to the terminal width — so the caps are near
   the floor for a command with this many flags, and the next real cut is a
   flag leaving, not a sentence.
+- NOOD_0179: hot docstrings 6144 → 6400 and `noodle probe --help` 6144 → 6400
+  (+256 each). Both sat at 3 and 62 bytes of headroom, so the `brief` flag
+  could not be named on either surface without one. A doc section cannot
+  carry it: the §7 rule is that substance moves to docs, but a PARAMETER'S
+  EXISTENCE is routing — an agent that never learns `brief` is a flag cannot
+  read the doc that explains it. The rationale (what brief keeps, what it
+  drops, when to use it) did move: docs/llm-performance.md §4. What each
+  surface buys is one clause naming the flag.
 """
 from __future__ import annotations
 
@@ -78,8 +86,8 @@ CEILINGS: dict[str, int] = {
     "claude-skill-card (.claude/skills/noodle/SKILL.md)": 5888,
     "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 5888,
     "copilot-digest (.github/copilot-instructions.md)": 7168,
-    "hot-tool-docstrings (probe/author/run_and_report/run)": 6144,
-    "cli-help (noodle probe --help)": 6144,
+    "hot-tool-docstrings (probe/author/run_and_report/run)": 6400,
+    "cli-help (noodle probe --help)": 6400,
     "cli-help (noodle run --help)": 5120,
 }
 

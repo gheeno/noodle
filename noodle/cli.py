@@ -77,7 +77,7 @@ def _main(
 ):
     pass
 
-_VALID_BROWSERS = {"chromium", "firefox", "webkit", "safari", "edge"}
+_VALID_BROWSERS = config.VALID_BROWSERS   # NOOD_0179 — one table, in noodle.config
 
 # NOOD_0055 — invoke behave through this interpreter, not a bare "behave" from
 # PATH: GUI-launched MCP hosts (Claude Desktop etc.) spawn noodle with a minimal
@@ -1839,6 +1839,7 @@ def probe(
     max_reveal_depth: int = typer.Option(1, "--max-reveal-depth", help="With --open-native, levels of combobox-in-combobox to follow"),
     discover: bool = typer.Option(False, "--discover", help="Trigger NAMES unknown? Clicks bounded disclosure candidates, deltas under revealed. Only for an unnamed control gating needed UI"),
     find: str = typer.Option(None, "--find", help="Only controls/result-items matching this text, pre-cap — replaces payload greps"),
+    brief: bool = typer.Option(False, "--brief", help="Step templates once, not one sentence per control"),
 ):
     """Proactive DOM probe: every actionable control (visible AND hidden) with
     a ready selector, POM YAML for the ones that need it, a suggested step
@@ -1873,12 +1874,13 @@ def probe(
         # cost a reviewed session a spilled temp file and a jq pass to re-derive
         # keys compact hands over whole. --full opts back into the dump.
         from noodle.agents.web.probe import compact_payload
-        payload = result if full else compact_payload(result, max_controls or 40)
+        payload = (result if full
+                   else compact_payload(result, max_controls or 40, brief=brief))
         _json_out(payload)
     else:
         from noodle.agents.web.probe import render
         typer.echo(render(result, compact=compact, section=section,
-                          max_controls=max_controls))
+                          max_controls=max_controls, brief=brief))
     if not result["pages"]:
         raise typer.Exit(1)
 

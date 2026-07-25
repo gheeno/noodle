@@ -589,7 +589,11 @@ ten red runs:
    won't flood you), drops consent-widget noise, and groups image-tile
    alt/title captions into their own author-ready slice; pass
    `--max-controls N` to widen the cap, `--section pom|controls|steps|
-   headings` for one slice. Need ONE control the cap hid (a card's
+   headings` for one slice — the compact cap applies to a section too
+   (NOOD_0179; it used to be silently ignored there). `--brief` (MCP
+   `brief=True`) prints the step templates once instead of a sentence per
+   row; rows needing a POM entry keep their exact step — use those as-is.
+   Need ONE control the cap hid (a card's
    "Add to cart", a buried field)? `--find "<text>"` (MCP
    `probe_page(find=...)`, NOOD_0169) returns every control, result item,
    and card action matching the text — pre-cap, case/space-insensitive —
