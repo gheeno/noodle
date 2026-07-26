@@ -331,6 +331,40 @@ Then a file should be downloaded
 Then a file 'export.csv' should be downloaded
 ```
 
+Several files into one `<input multiple>` (NOOD_0186) — one step, one
+`set_input_files` call. Repeated single uploads REPLACE each other on a
+multiple-input, so "upload a, then upload b" ends with only b attached:
+
+```gherkin
+When User uploads 'a.png' and 'b.png' to the 'Photos' input
+When User uploads 'a.png', 'b.png' and 'c.png' into the gallery uploader
+```
+
+The OS file picker itself never opens under automation — Playwright sets the
+files directly on the input. A step that tries to click inside the native
+picker (`selects 'photo.png' in the file picker`) is refused at resolution
+with this pointer, rather than timing out hunting the DOM.
+
+### Calendar pickers (NOOD_0186)
+
+`enters today's date in the 'Start date' field` **types** into the field.
+These **drive the widget**: open the popup, navigate months, click the day
+cell — for pickers whose input is readonly (react-datepicker, flatpickr, MUI,
+jQuery UI, ARIA-grid calendars):
+
+```gherkin
+When User picks 'March 15, 2026' from the 'Departure' calendar
+When User picks '2026-03-15' in the 'Start' date picker
+When User selects tomorrow from the 'Check-in' calendar
+When User selects today from the 'Appointment' date picker
+```
+
+Dates parse as `2026-03-15`, `March 15, 2026`, `15 March 2026` or
+`03/15/2026`. A native `<input type="date">` short-circuits to a plain ISO
+fill (its popup is browser chrome, not DOM). Disabled days and
+adjacent-month fillers are never clicked — a min/max-clamped picker that
+can't reach the target month fails with that explanation.
+
 ---
 
 ## Hovering & Scrolling
@@ -343,6 +377,24 @@ When User scrolls to 'Footer'
 When User scrolls to the bottom of the page
 When User scrolls to the top of the page
 ```
+
+### Hover menus (NOOD_0186)
+
+The most common multi-step idiom on marketing sites, as one step: hover the
+trigger, wait for the revealed entry, click it. Falls back to *clicking* the
+trigger when hovering reveals nothing (click-to-open menus — also what a
+`@mobile` touch context needs):
+
+```gherkin
+When User opens the 'Products' menu and clicks 'Shoes'
+When User hovers over the 'Account' menu and selects 'Settings'
+When User clicks 'Shoes' in the 'Products' menu
+When User selects 'Docs' from the 'Resources' dropdown menu
+```
+
+The final click runs through the normal locator engine, so POM entries and
+self-healing apply to the menu item. For a nested submenu, chain two steps
+(`opens the 'Products' menu and clicks 'Mens'`, then `clicks 'Shoes'`).
 
 `scrolls down/up` nudge one half-viewport; the `bottom/top of the page` forms
 (NOOD_0143) jump to the document edge — what lazy-load footers need.
@@ -1516,6 +1568,51 @@ Then the 'invoice-print' screen should match the pixel baseline
 
 `save as pdf` is Chromium-only.
 
+`prints the page` (NOOD_0186) maps to the same PDF export — the intent
+automation *can* cover. The browser's native print dialog is OS chrome:
+it never opens under automation, so steps that try to open, assert on, or
+click inside it (`the print dialog should appear`, `clicks 'Save' in the
+print dialog`) are refused at resolution with this pointer:
+
+```gherkin
+When User prints the page
+When User prints the page as 'artifacts/reports/invoice.pdf'
+```
+
+---
+
+## HTML5 Media — video & audio (NOOD_0186)
+
+Playback control and state assertions for `<video>`/`<audio>`. The bare form
+(`the video`) targets the page's only — or first visible — media element; the
+quoted form resolves through the normal locator engine and walks into the
+media tag when the match is a player wrapper (`<div class="player"><video>`):
+
+```gherkin
+When User plays the video
+When User plays the 'promo' video
+When User pauses the video
+When User mutes the video
+When User unmutes the 'background' audio
+When User seeks the video to 1:30
+When User seeks to 90 seconds
+When User sets the volume to 50%
+Then the video should be playing
+Then the 'promo' video is paused
+Then the video should not be playing
+Then the video should have ended
+Then the video should have played at least 5 seconds
+Then the video should be 30 seconds long
+```
+
+`video`, `audio`, `player`, `clip`, `movie`, `song`, `track`, `podcast` and
+`recording` are interchangeable nouns. State asserts poll up to
+`NOODLE_TIMEOUT` (a click on play legitimately needs a moment to buffer);
+`should have played at least N seconds` polls too — it's a wait on playback
+progress. Duration asserts allow ±1s (container metadata rounds). An
+unmuted `plays` blocked by autoplay policy fails with the browser's own
+error and the fix (`mutes the video` first, or click the play control).
+
 ---
 
 ## Multi-User Browser Contexts (Phase J)
@@ -1823,6 +1920,14 @@ through to `assert_compare` and string-compare the literal words *"the
 email"* — a red nobody could diagnose. It now fails at resolution with the
 workaround (`calls the function 'mailbox:latest' …`). Refusing honestly beats
 pretending.
+
+Native OS dialogs joined the list (NOOD_0186): the print dialog and the OS
+file picker render outside the page — no DOM, no OCR bridge, no Playwright
+handle. `the print dialog should appear`, `clicks 'Print' in the print
+preview`, `selects 'photo.png' in the file picker` and `cancels the file
+chooser` all fail at resolution, each naming the step that covers the
+intent (`prints the page as '…'` / `emulates print media` / `uploads '…'
+to the '…' input`).
 
 ---
 

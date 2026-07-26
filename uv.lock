@@ -1484,7 +1484,7 @@ wheels = [
 
 [[package]]
 name = "noodle"
-version = "0.2.0a15"
+version = "1.0.0a2"
 source = { editable = "." }
 dependencies = [
     { name = "behave" },

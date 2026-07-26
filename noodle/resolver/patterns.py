@@ -76,6 +76,29 @@ def _no_mail_adapter(noun: str):
     )
 
 
+def _no_native_dialog(kind: str):
+    """NOOD_0186 — the OS print dialog and the OS file picker render outside
+    the page: no DOM, no OCR bridge, no Playwright handle. A step that clicks
+    'inside' them can only ever time out hunting the DOM, so it fails HERE,
+    at resolution, with the step that covers the underlying intent (same
+    ethos as the email/SMS refusals)."""
+    if kind == 'print':
+        raise AssertionError(
+            "The browser's print dialog is OS chrome — it never opens under "
+            "automation and can't be asserted on. Cover the intent instead:\n"
+            "  When User prints the page as 'invoice.pdf'   (page.pdf export)\n"
+            "  When User emulates print media               (assert the "
+            "@media print styles)"
+        )
+    raise AssertionError(
+        "The OS file picker never opens under automation — Playwright sets "
+        "files directly on the input. Cover the intent instead:\n"
+        "  When User uploads 'a.png' to the 'Photos' input\n"
+        "  When User uploads 'a.png' and 'b.png' to the 'Photos' input\n"
+        "Downloads are captured automatically: `a file should be downloaded`."
+    )
+
+
 def _no_text_into_permission_prompt(name: str):
     """NOOD_0122 — browser permission prompts (location/notifications/camera/
     microphone) have no text field; only JavaScript prompts accept typed input.
@@ -203,6 +226,17 @@ _FIRST_TO_THIRD = {
     'accept': 'accepts',
     'dismiss': 'dismisses',
     # NOOD_0062 — past tense → 3rd-person present ("the user clicked ...")
+    # NOOD_0186 — media, calendar, hover-menu, print verbs
+    'play': 'plays',
+    'mute': 'mutes',
+    'unmute': 'unmutes',
+    'seek': 'seeks',
+    'resume': 'resumes',
+    'skip': 'skips',
+    'jump': 'jumps',
+    'start': 'starts',
+    'print': 'prints',
+    'played': 'plays',
     'clicked': 'clicks',
     'entered': 'enters',
     'typed': 'types',
@@ -343,6 +377,12 @@ def _otp_secret(quoted: str | None, bare: str | None) -> str | None:
 _BOX = (r'(?:panel|card|section|container|pane|widget|box|element|'
         r'region|area|block|column|sidebar|header|footer|modal|dialog)')
 
+# NOOD_0186 — nouns that mean "an HTML5 media element". No capturing groups:
+# spliced into patterns that number their own groups. "player" covers the
+# wrapper widgets testers actually name ("pauses the 'promo' player").
+_MEDIA = (r'(?:video|audio|media(?: player)?|player|clip|movie|song|track|'
+          r'podcast|recording)')
+
 # NOOD_0152 — named responsive breakpoints. The runtime (set_viewport) already
 # existed; only the name→WxH table was missing, so this is pattern-only.
 # Widths follow the common device tiers Playwright/Chrome DevTools present.
@@ -452,6 +492,74 @@ PATTERNS = [
     # "suggestion bar" text and rots.
     (r'^(?:the |a |an )?(?:search )?suggestions?(?: (?:bar|box|list|dropdown|panel))?(?: should)? (?:appears?|shows? up|is (?:visible|shown|displayed)|are (?:visible|shown|displayed))(?: below the search (?:bar|box|field))?$',
                                                    'assert_suggestion', lambda m: {'term': None, 'text': None}),
+
+    # --- NOOD_0186: the five audited web-coverage gaps ------------------------
+    # HTML5 media, multi-file upload, calendar pickers, hover-menu composites,
+    # native-dialog refusals. The whole block sits ABOVE navigate/upload/
+    # select/click/fill and the assertion families: "opens the 'X' menu and
+    # clicks 'Y'" would otherwise be swallowed by the navigate `opens? "..."`
+    # catch-all, "selects '…' from the 'X' calendar" by the dropdown select,
+    # "uploads 'a' and 'b' to …" by the single upload, and every media assert
+    # by assert_state / assert_compare / assert_semantic.
+    #
+    # Hover menus — hover the trigger, wait for the revealed item, click it
+    # (falls back to clicking the trigger for click-to-open menus).
+    (r'^opens? (?:the )?["\'](.+?)["\'] (?:menu|dropdown|nav(?:igation)?(?: menu)?|submenu) and (?:clicks?|selects?|chooses?|picks?) (?:on )?["\'](.+?)["\']$',
+                                                   'menu_select',    lambda m: {'trigger': _q(m.group(1)), 'item': _q(m.group(2))}),
+    (r'^hovers? (?:over|on) (?:the )?["\'](.+?)["\'](?: (?:menu|nav(?:igation)?))? and (?:clicks?|selects?|chooses?|picks?) (?:on )?["\'](.+?)["\']$',
+                                                   'menu_select',    lambda m: {'trigger': _q(m.group(1)), 'item': _q(m.group(2))}),
+    (r'^(?:clicks?|selects?) (?:on )?["\'](.+?)["\'] (?:in|from|under) (?:the )?["\'](.+?)["\'] (?:menu|nav(?:igation)?(?: menu)?|dropdown menu|submenu)$',
+                                                   'menu_select',    lambda m: {'item': _q(m.group(1)), 'trigger': _q(m.group(2))}),
+    # Calendar pickers — click-driven popup calendars (react-datepicker,
+    # flatpickr, MUI, jQuery UI, ARIA grids). fill_date TYPES a date; this
+    # DRIVES the widget: open, navigate months, click the day cell.
+    (r'^(?:selects?|clicks?) (today|tomorrow|yesterday)(?:\'s date)? (?:from|in|on) (?:the )?["\']?(.+?)["\']? (?:calendar|date ?picker)$',
+                                                   'pick_date',      lambda m: {'locator': _q(m.group(2)), 'offset_days': {'today': 0, 'tomorrow': 1, 'yesterday': -1}[m.group(1)]}),
+    (r'^(?:selects?|clicks?) ["\'](.+?)["\'] (?:from|in|on) (?:the )?["\']?(.+?)["\']? (?:calendar|date ?picker)$',
+                                                   'pick_date',      lambda m: {'date': _q(m.group(1)), 'locator': _q(m.group(2))}),
+    # Multi-file upload — one set_input_files call with the whole list;
+    # repeated single uploads REPLACE each other on an <input multiple>.
+    (r'^uploads? ((?:["\'][^"\']+["\'])(?:\s*(?:,|and)\s*["\'][^"\']+["\'])+) (?:to|into) (?:the )?(.+)$',
+                                                   'upload_multi',   lambda m: {'paths': re.findall(r'["\']([^"\']+)["\']', m.group(1)), 'locator': _q(m.group(2))}),
+    # HTML5 media — play/pause/mute/seek/volume + state/time/duration asserts.
+    (rf'^(?:plays?|starts?|resumes?)(?: playing)? (?:the |a |an )?(?:["\'](.+?)["\'] )?{_MEDIA}$',
+                                                   'media_play',     lambda m: {'locator': _q(m.group(1)) if m.group(1) else None}),
+    (rf'^pauses? (?:the )?(?:["\'](.+?)["\'] )?{_MEDIA}$',
+                                                   'media_pause',    lambda m: {'locator': _q(m.group(1)) if m.group(1) else None}),
+    (rf'^(mutes?|unmutes?) (?:the )?(?:["\'](.+?)["\'] )?{_MEDIA}$',
+                                                   'media_mute',     lambda m: {'locator': _q(m.group(2)) if m.group(2) else None, 'muted': not m.group(1).lower().startswith('un')}),
+    (rf'^(?:seeks?|skips?|jumps?)(?: (?:the )?(?:["\'](.+?)["\'] )?{_MEDIA})?(?: (?:forward|ahead))? to (\d+):(\d{{2}})$',
+                                                   'media_seek',     lambda m: {'locator': _q(m.group(1)) if m.group(1) else None, 'seconds': int(m.group(2)) * 60 + int(m.group(3))}),
+    (rf'^(?:seeks?|skips?|jumps?)(?: (?:the )?(?:["\'](.+?)["\'] )?{_MEDIA})?(?: (?:forward|ahead))? to (\d+(?:\.\d+)?) ?(?:seconds?|s)$',
+                                                   'media_seek',     lambda m: {'locator': _q(m.group(1)) if m.group(1) else None, 'seconds': float(m.group(2))}),
+    (rf'^sets? the (?:["\'](.+?)["\'] )?(?:{_MEDIA} )?volume to (\d+(?:\.\d+)?) ?%?$',
+                                                   'media_volume',   lambda m: {'locator': _q(m.group(1)) if m.group(1) else None, 'percent': float(m.group(2))}),
+    # Negated state first — the positive branch would eat "is not playing"
+    # one word at a time (same ordering rule as _NOT_APPEARS).
+    (rf'^(?:the )?(?:["\'](.+?)["\'] )?{_MEDIA} (?:should not be|is not|isn\'?t|is no longer) (playing|paused|muted|unmuted|ended|finished|stopped)$',
+                                                   'assert_media_state', lambda m: {'locator': _q(m.group(1)) if m.group(1) else None, 'state': m.group(2), 'negate': True}),
+    (rf'^(?:the )?(?:["\'](.+?)["\'] )?{_MEDIA} (?:should (?:be|have)|is|has) (playing|paused|muted|unmuted|ended|finished|stopped)$',
+                                                   'assert_media_state', lambda m: {'locator': _q(m.group(1)) if m.group(1) else None, 'state': m.group(2), 'negate': False}),
+    (rf'^(?:the )?(?:["\'](.+?)["\'] )?{_MEDIA} should have played (?:at least )?(\d+(?:\.\d+)?) ?seconds?$',
+                                                   'assert_media_time', lambda m: {'locator': _q(m.group(1)) if m.group(1) else None, 'seconds': float(m.group(2)), 'op': '>='}),
+    (rf'^(?:the )?(?:["\'](.+?)["\'] )?{_MEDIA} should be (\d+(?:\.\d+)?) ?seconds? long$',
+                                                   'assert_media_duration', lambda m: {'locator': _q(m.group(1)) if m.group(1) else None, 'seconds': float(m.group(2))}),
+    (rf'^(?:the )?(?:["\'](.+?)["\'] )?{_MEDIA} duration should be (\d+(?:\.\d+)?) ?seconds?$',
+                                                   'assert_media_duration', lambda m: {'locator': _q(m.group(1)) if m.group(1) else None, 'seconds': float(m.group(2))}),
+    # Printing — "prints the page" maps to the intent automation CAN cover
+    # (page.pdf export); the native print dialog itself is refused below.
+    (r'^prints? the page(?: (?:to|as) ["\'](.+?)["\'])?$',
+                                                   'save_pdf',       lambda m: {'path': _q(m.group(1)) if m.group(1) else 'printed-page.pdf'}),
+    (r'^the print (?:dialog|preview|window) should (?:open|appear|be (?:visible|shown|displayed))$',
+                                                   '_reject',        lambda m: _no_native_dialog('print')),
+    (r'^(?:clicks?|presses?|selects?) .+? (?:in|from|on) the print (?:dialog|preview|window)$',
+                                                   '_reject',        lambda m: _no_native_dialog('print')),
+    (r'^(?:closes?|dismiss(?:es)?|cancels?|accepts?) the print (?:dialog|preview|window)$',
+                                                   '_reject',        lambda m: _no_native_dialog('print')),
+    (r'^(?:clicks?|presses?|selects?) .+? (?:in|from|on) the (?:(?:os |system |native )?file (?:picker|chooser|browser|explorer)|(?:open|save) file dialog)$',
+                                                   '_reject',        lambda m: _no_native_dialog('file')),
+    (r'^(?:closes?|dismiss(?:es)?|cancels?|accepts?) the (?:(?:os |system |native )?file (?:picker|chooser|browser|explorer)|(?:open|save) file dialog)$',
+                                                   '_reject',        lambda m: _no_native_dialog('file')),
 
     # --- Phase D: network mocking, API setup/teardown, test data -------------
     # Mock a network response (Playwright route.fulfill).

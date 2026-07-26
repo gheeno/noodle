@@ -3062,3 +3062,423 @@ def save_session(context, path: str):
     except OSError:
         pass
     logger.info(f"\n  🔐 Session saved: {dest} (reuse with NOODLE_STORAGE_STATE={dest})")
+
+
+# ---------------------------------------------------------------------------
+# NOOD_0186 — the five audited web-coverage gaps: HTML5 media, multi-file
+# upload, click-driven calendar pickers, hover-menu composites, and honest
+# refusals for native (OS-chrome) dialogs.
+# ---------------------------------------------------------------------------
+
+_MEDIA_SEL = "video, audio"
+
+
+def _media_element(page: Page, locator_text: str | None):
+    """Resolve the <video>/<audio> element a media step targets.
+
+    Named form ("the 'promo' video"): resolve through the normal locator
+    engine, then walk INTO the match if it's a wrapper around the media tag
+    (players ship as <div class="player"><video>…). Bare form ("the video"):
+    the page's only — or first visible — media element."""
+    if locator_text:
+        loc = find(page, locator_text)
+        if loc is not None:
+            try:
+                tag = loc.evaluate("e => e.tagName.toLowerCase()")
+            except Exception:
+                tag = None
+            if tag in ("video", "audio"):
+                return loc
+            inner = loc.locator(_MEDIA_SEL)
+            if inner.count():
+                return inner.first
+        raise AssertionError(_not_found(
+            f"Could not find a <video>/<audio> element for: '{locator_text}'"))
+    media = page.locator(_MEDIA_SEL)
+    n = media.count()
+    if n == 0:
+        raise AssertionError(_not_found(
+            "No <video> or <audio> element on the page"))
+    for i in range(n):
+        if media.nth(i).is_visible():
+            return media.nth(i)
+    return media.first
+
+
+def media_play(page: Page, locator_text: str | None = None):
+    """Start playback. play() returns a promise; evaluate awaits it, so an
+    autoplay-policy rejection surfaces HERE with its real name instead of
+    silently never starting."""
+    loc = _media_element(page, locator_text)
+    err = loc.evaluate(
+        "el => el.play().then(() => null).catch(e => e.name + ': ' + e.message)")
+    if err:
+        hint = ""
+        if "NotAllowedError" in err:
+            hint = (" — the browser blocked unmuted autoplay; mute the media "
+                    "first ('mutes the video') or click its play control")
+        raise AssertionError(f"Could not start playback: {err}{hint}")
+    logger.info(f"\n  ▶️  Playing {locator_text or 'media'}")
+
+
+def media_pause(page: Page, locator_text: str | None = None):
+    loc = _media_element(page, locator_text)
+    loc.evaluate("el => el.pause()")
+    logger.info(f"\n  ⏸  Paused {locator_text or 'media'}")
+
+
+def media_mute(page: Page, locator_text: str | None = None, muted: bool = True):
+    loc = _media_element(page, locator_text)
+    loc.evaluate("(el, m) => { el.muted = m }", muted)
+    logger.info(f"\n  🔇 {'Muted' if muted else 'Unmuted'} {locator_text or 'media'}")
+
+
+def media_seek(page: Page, seconds: float, locator_text: str | None = None):
+    """Jump to an absolute position. Waits for metadata first — assigning
+    currentTime before duration is known silently clamps to 0."""
+    loc = _media_element(page, locator_text)
+    timeout = int(os.getenv("NOODLE_TIMEOUT", "10000"))
+
+    def metadata_loaded():
+        if loc.evaluate("el => el.readyState") < 1:
+            raise AssertionError("media metadata not loaded yet")
+    _poll_until(page, metadata_loaded, timeout, "the media metadata is loaded")
+    duration = loc.evaluate("el => el.duration")
+    if duration and duration == duration and seconds > duration:  # NaN-safe
+        raise AssertionError(
+            f"Cannot seek to {seconds:g}s — the media is only {duration:g}s long")
+    loc.evaluate("(el, t) => { el.currentTime = t }", seconds)
+    logger.info(f"\n  ⏩ Seeked {locator_text or 'media'} to {seconds:g}s")
+
+
+def media_volume(page: Page, percent: float, locator_text: str | None = None):
+    if not 0 <= percent <= 100:
+        raise AssertionError(f"Volume must be 0–100% (got {percent:g})")
+    loc = _media_element(page, locator_text)
+    loc.evaluate("(el, v) => { el.volume = v }", percent / 100)
+    logger.info(f"\n  🔊 Volume of {locator_text or 'media'} set to {percent:g}%")
+
+
+_MEDIA_STATE_CHECKS = {
+    # state -> (JS predicate, human description)
+    "playing":  ("el => !el.paused && !el.ended", "playing"),
+    "paused":   ("el => el.paused", "paused"),
+    "muted":    ("el => el.muted", "muted"),
+    "unmuted":  ("el => !el.muted", "unmuted"),
+    "ended":    ("el => el.ended", "ended"),
+}
+
+
+def assert_media_state(page: Page, state: str, locator_text: str | None = None,
+                       negate: bool = False):
+    """Assert playing/paused/muted/unmuted/ended — polled, because 'should be
+    playing' right after a click legitimately needs a moment to buffer."""
+    state = {"finished": "ended", "stopped": "paused"}.get(state, state)
+    js, desc = _MEDIA_STATE_CHECKS[state]
+    loc = _media_element(page, locator_text)
+    want = not negate
+    timeout = int(os.getenv("NOODLE_TIMEOUT", "10000"))
+
+    def check():
+        got = bool(loc.evaluate(js))
+        if got != want:
+            snap = loc.evaluate(
+                "el => `paused=${el.paused} muted=${el.muted} ended=${el.ended}"
+                " t=${el.currentTime.toFixed(1)}s`")
+            raise AssertionError(
+                f"Expected {locator_text or 'the media'} to be "
+                f"{'not ' if negate else ''}{desc} — actual state: {snap}")
+    _poll_until(page, check, timeout,
+                f"{locator_text or 'the media'} is {'not ' if negate else ''}{desc}")
+    logger.info(f"\n  ✅ {locator_text or 'Media'} is {'not ' if negate else ''}{desc}")
+
+
+def assert_media_time(page: Page, seconds: float, op: str = ">=",
+                      locator_text: str | None = None):
+    """Assert on currentTime. '>=' polls (waiting for playback to progress is
+    the whole point of 'should have played at least N seconds')."""
+    loc = _media_element(page, locator_text)
+    timeout = int(os.getenv("NOODLE_TIMEOUT", "10000"))
+    ops = {">=": lambda a, b: a >= b, "<=": lambda a, b: a <= b,
+           "==": lambda a, b: abs(a - b) <= 1.0}
+
+    def check():
+        t = loc.evaluate("el => el.currentTime")
+        if not ops[op](t, seconds):
+            raise AssertionError(
+                f"Expected {locator_text or 'the media'} playback position "
+                f"{op} {seconds:g}s — it is at {t:.1f}s")
+    if op == ">=":
+        _poll_until(page, check, timeout,
+                    f"{locator_text or 'the media'} has played {seconds:g}s")
+    else:
+        check()
+    logger.info(f"\n  ✅ Playback position {op} {seconds:g}s")
+
+
+def assert_media_duration(page: Page, seconds: float,
+                          locator_text: str | None = None):
+    """Assert total length (±1s — container metadata rounds)."""
+    loc = _media_element(page, locator_text)
+    timeout = int(os.getenv("NOODLE_TIMEOUT", "10000"))
+
+    def check():
+        d = loc.evaluate("el => el.duration")
+        if d != d or d is None:  # NaN — metadata not loaded yet
+            raise AssertionError("media duration not available yet (no metadata)")
+        if abs(d - seconds) > 1.0:
+            raise AssertionError(
+                f"Expected {locator_text or 'the media'} to be {seconds:g}s "
+                f"long — it is {d:.1f}s")
+    _poll_until(page, check, timeout, "the media duration is known")
+    logger.info(f"\n  ✅ Duration is {seconds:g}s (±1s)")
+
+
+def upload_multi(page: Page, locator_text: str, paths: list):
+    """Attach SEVERAL files to one <input type=file multiple> in a single
+    set_input_files call — n repeated single uploads REPLACE each other on a
+    multiple-input, so 'uploads a and b' used to end with only b attached."""
+    resolved = []
+    for path in paths:
+        p = Path(path)
+        if not p.is_file():
+            raise AssertionError(f"Upload file not found: {p.resolve()}")
+        resolved.append(str(p))
+    loc = find(page, locator_text)
+    if loc is None:
+        fallback = page.locator("input[type=file]")
+        loc = fallback.first if fallback.count() else None
+    if loc is None:
+        raise AssertionError(_not_found(
+            f"Could not find a file input for: '{locator_text}'"))
+    try:
+        loc.set_input_files(resolved)
+    except Exception:
+        hidden = page.locator("input[type=file]")
+        if hidden.count() == 0:
+            raise
+        hidden.first.set_input_files(resolved)
+    logger.info(f"\n  📎 Uploaded {len(resolved)} files to '{locator_text}': {resolved}")
+
+
+# --- calendar pickers -------------------------------------------------------
+
+_DATE_FORMATS = (
+    "%Y-%m-%d", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y",
+    "%d %B %Y", "%d %b %Y", "%m/%d/%Y", "%d.%m.%Y",
+)
+
+_CAL_SURFACE = (
+    "[role=dialog], [role=grid], .calendar, .datepicker, .flatpickr-calendar, "
+    ".react-datepicker, .MuiDateCalendar-root, .MuiPickersPopper-root, "
+    ".daterangepicker, .ui-datepicker, [class*=calendar i], [class*=datepicker i]"
+)
+
+_CAL_NEXT = (
+    "[aria-label*=next i], [title*=next i], .flatpickr-next-month, "
+    ".react-datepicker__navigation--next, .ui-datepicker-next, "
+    "[data-action=next], button:has-text('›'), button:has-text('>')"
+)
+_CAL_PREV = (
+    "[aria-label*=prev i], [title*=prev i], .flatpickr-prev-month, "
+    ".react-datepicker__navigation--previous, .ui-datepicker-prev, "
+    "[data-action=previous], button:has-text('‹'), button:has-text('<')"
+)
+
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july",
+           "august", "september", "october", "november", "december")
+
+
+def _parse_target_date(date_text: str):
+    from datetime import datetime
+    cleaned = date_text.strip()
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(cleaned, fmt).date()
+        except ValueError:
+            continue
+    raise AssertionError(
+        f"Could not parse the date '{date_text}'. Accepted formats include "
+        "'2026-03-15', 'March 15, 2026', '15 March 2026' and '03/15/2026'.")
+
+
+def _calendar_surface(page: Page):
+    """The visible calendar container, or None."""
+    surfaces = page.locator(_CAL_SURFACE)
+    for i in range(min(surfaces.count(), 10)):
+        cand = surfaces.nth(i)
+        try:
+            if cand.is_visible():
+                return cand
+        except Exception:
+            continue
+    return None
+
+
+def _calendar_month_shown(cal) -> tuple | None:
+    """(year, month) the calendar currently displays, read from its visible
+    header text — the only cross-widget signal there is."""
+    import re as _re
+    try:
+        text = cal.inner_text(timeout=1000).lower()
+    except Exception:
+        return None
+    m = _re.search(rf"({'|'.join(_MONTHS)})\w*[,.]?\s+(\d{{4}})", text)
+    if not m:
+        return None
+    return int(m.group(2)), _MONTHS.index(m.group(1)) + 1
+
+
+def pick_date(page: Page, locator_text: str, date_text: str | None = None,
+              offset_days: int | None = None):
+    """Pick a date from a CLICK-driven calendar widget (react-datepicker,
+    flatpickr, MUI, jQuery UI, ARIA-grid pickers). fill_date types into the
+    field; this drives the popup — open, navigate months, click the day.
+
+    A native <input type=date> short-circuits to a plain ISO fill: it has no
+    DOM calendar to drive (the popup is browser chrome)."""
+    from datetime import date as _date
+    from datetime import timedelta
+    if date_text is not None:
+        target = _parse_target_date(date_text)
+    else:
+        target = _date.today() + timedelta(days=offset_days or 0)
+
+    trigger = find(page, locator_text)
+    if trigger is None:
+        raise AssertionError(_not_found(
+            f"Could not find the date field/trigger: '{locator_text}'"))
+    try:
+        if trigger.evaluate("e => e.tagName === 'INPUT' && e.type === 'date'"):
+            trigger.fill(target.strftime("%Y-%m-%d"))
+            logger.info(f"\n  📅 Filled native date input '{locator_text}' "
+                        f"with {target.isoformat()}")
+            return
+    except Exception:
+        pass
+
+    cal = _calendar_surface(page)
+    if cal is None:
+        trigger.click()
+        deadline = time.monotonic() + 5
+        while cal is None and time.monotonic() < deadline:
+            page.wait_for_timeout(150)
+            cal = _calendar_surface(page)
+    if cal is None:
+        raise AssertionError(
+            f"Clicked '{locator_text}' but no calendar appeared (looked for "
+            f"{_CAL_SURFACE}). If it's a plain text field, use "
+            f"\"enters today's date in the '{locator_text}' field\" instead.")
+
+    # Navigate to the target month — bounded, and honest when a nav arrow is
+    # missing or the header never changes (min/max-clamped pickers).
+    for _ in range(36):
+        shown = _calendar_month_shown(cal)
+        if shown is None or shown == (target.year, target.month):
+            break
+        forward = shown < (target.year, target.month)
+        arrow = cal.locator(_CAL_NEXT if forward else _CAL_PREV)
+        if not arrow.count():
+            arrow = page.locator(_CAL_NEXT if forward else _CAL_PREV)
+        if not arrow.count():
+            raise AssertionError(
+                f"Calendar shows {shown[0]}-{shown[1]:02d} but the target is "
+                f"{target.year}-{target.month:02d}, and no next/previous "
+                "month control was found.")
+        before = shown
+        arrow.first.click()
+        page.wait_for_timeout(150)
+        if _calendar_month_shown(cal) == before:
+            raise AssertionError(
+                f"The calendar would not move past {before[0]}-{before[1]:02d} "
+                f"toward {target.year}-{target.month:02d} — likely a "
+                "min/max-date limit on the picker.")
+    else:
+        raise AssertionError(
+            f"Gave up after 36 month-steps trying to reach "
+            f"{target.year}-{target.month:02d} in the calendar.")
+
+    # Day cell: aria-label first (exact dates — the accessible way every major
+    # widget labels days), then a bare day-number cell that isn't disabled or
+    # an adjacent-month filler.
+    label_variants = [
+        target.strftime("%B %-d, %Y") if os.name != "nt" else target.strftime("%B %d, %Y").replace(" 0", " "),
+        target.strftime("%B %d, %Y"),
+        target.strftime("%d %B %Y"),
+        target.strftime("%Y-%m-%d"),
+    ]
+    for label in label_variants:
+        day = cal.locator(f'[aria-label*="{label}"]')
+        if day.count():
+            day.first.click()
+            logger.info(f"\n  📅 Picked {target.isoformat()} from the "
+                        f"'{locator_text}' calendar (aria-label '{label}')")
+            return
+    day_re = re.compile(rf"^\s*{target.day}\s*$")
+    cells = cal.locator("td, [role=gridcell], button").filter(has_text=day_re)
+    for i in range(cells.count()):
+        cell = cells.nth(i)
+        try:
+            if not cell.is_visible():
+                continue
+            bad = cell.evaluate(
+                "e => e.getAttribute('aria-disabled') === 'true' || "
+                "/outside|other-?month|disabled|prev|next/i.test(e.className)")
+            if bad:
+                continue
+        except Exception:
+            continue
+        cell.click()
+        logger.info(f"\n  📅 Picked {target.isoformat()} from the "
+                    f"'{locator_text}' calendar (day cell)")
+        return
+    raise AssertionError(
+        f"The calendar reached {target.year}-{target.month:02d} but no "
+        f"clickable day cell for {target.day} was found (disabled dates and "
+        "adjacent-month fillers are skipped).")
+
+
+# --- hover menus ------------------------------------------------------------
+
+def _quickly_visible(page: Page, text: str, ms: int) -> bool:
+    """Bounded visibility probe (get_by_text + menu roles) — deliberately NOT
+    find(): find() polls for minutes, and here 'not visible yet' is an
+    expected, informative outcome we need within a couple of seconds."""
+    deadline = time.monotonic() + ms / 1000
+    while True:
+        for cand in (page.get_by_role("menuitem", name=text),
+                     page.get_by_text(text, exact=True),
+                     page.get_by_text(text)):
+            try:
+                for i in range(min(cand.count(), 5)):
+                    if cand.nth(i).is_visible():
+                        return True
+            except Exception:
+                continue
+        if time.monotonic() >= deadline:
+            return False
+        page.wait_for_timeout(120)
+
+
+def menu_select(page: Page, trigger: str, item: str):
+    """Hover-menu composite: hover the trigger, wait for the revealed item,
+    click it — falling back to CLICKING the trigger for click-to-open menus
+    (which is also what a touch context needs). The final click goes through
+    actions.click so POM entries and self-healing still apply, and the mouse
+    has not moved since the hover, so a pure-CSS :hover menu stays open."""
+    trig = find(page, trigger)
+    if trig is None:
+        raise AssertionError(_not_found(
+            f"Could not find the menu trigger: '{trigger}'"))
+    trig.hover()
+    if not _quickly_visible(page, item, 2000):
+        logger.info(f"\n  ℹ️  Hovering '{trigger}' did not reveal '{item}' — "
+                    "clicking the trigger instead (click-to-open menu)")
+        trig.click()
+        if not _quickly_visible(page, item, 3000):
+            raise AssertionError(
+                f"Opened the '{trigger}' menu (hover, then click) but "
+                f"'{item}' never became visible. If the item is inside a "
+                f"nested submenu, hover the intermediate entry first.")
+    click(page, item)
+    logger.info(f"\n  🧭 Menu: '{trigger}' → '{item}'")
