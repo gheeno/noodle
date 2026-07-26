@@ -1,6 +1,8 @@
 """NOOD_0095 — `noodle report stop` also stops ad-hoc report servers: agents
 sometimes host the Allure/RCA tree with a raw `python -m http.server` instead
 of `noodle report serve`, so the pidfile registry never hears about them."""
+import json
+import os
 import shutil
 import signal
 import subprocess
@@ -111,6 +113,33 @@ def test_report_stop_port_filter_spares_other_adhoc_servers(report_root, capsys)
     finally:
         proc.kill()
         proc.wait()
+
+
+@needs_lsof
+def test_report_stop_finds_serve_started_in_another_workspace(report_root, tmp_path_factory):
+    """NOOD_0185 — `noodle report stop` run outside the serving workspace said
+    "nothing to stop" while the report stayed up: the scan only recognized
+    `http.server --directory`, never the engine's own detached
+    `noodle report serve <dir>` (whose cwd is the launching dir, not the
+    report tree)."""
+    ws = tmp_path_factory.mktemp("ws")
+    subprocess.run([sys.executable, "-m", "noodle.cli", "report", "serve",
+                    str(report_root), "-w", str(ws), "--background"],
+                   check=True, capture_output=True, text=True, timeout=90)
+    reg = json.loads((ws / ".noodle" / "report_servers.json").read_text())
+    port, pid = next(iter(reg.items()))
+    pid = cli._pid_of(pid)
+    try:
+        assert cli._adhoc_report_servers().get(port) == pid
+        cli.report_stop(port=None, workspace=str(tmp_path_factory.mktemp("elsewhere")))
+        for _ in range(50):
+            if not cli._pid_alive(pid):
+                break
+            time.sleep(0.1)
+        assert not cli._pid_alive(pid)
+    finally:
+        if cli._pid_alive(pid):
+            os.kill(pid, signal.SIGKILL)
 
 
 def test_report_stop_nothing_running(tmp_path, capsys, monkeypatch):

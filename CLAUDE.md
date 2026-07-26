@@ -48,8 +48,10 @@ comparison is what tells a tester their install predates their checkout —
 it only works if the number actually moves.
 
 **Every branch that changes engine code (`noodle/`, `pyproject.toml`)
-bumps the version and adds a `CHANGELOG.md` section for it.** Pre-1.0, the
-bump is the alpha counter: `0.2.0a9` → `0.2.0a10`. Docs-only or
+bumps the version and adds a `CHANGELOG.md` section for it.** In the 1.0
+alpha series the bump is that counter: `1.0.0a1` → `1.0.0a2` (PEP 440
+spelling — `1.0.0-alpha.02` normalizes to it, and a non-normalized string
+makes `--version` report a permanent mismatch). Docs-only or
 workspace-only branches don't need one. The CHANGELOG section header must
 match the pyproject version exactly — a unit test asserts it.
 

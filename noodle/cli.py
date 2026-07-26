@@ -1589,6 +1589,77 @@ def cost(
                f"model {est['model']}")
 
 
+@app.command("feature-regression")
+def feature_regression(
+    score_file: str = typer.Option(None, "--score", help="Filled results JSON — prints the per-TC breakdown + averages + PASS/REGRESSED verdict (exit 1 on REGRESSED) and writes verdict.json next to it"),
+    init_ws: bool = typer.Option(False, "--init", help="Scaffold a fresh benchmark workspace under ./regression_runs/<stamp>_<build>/ — a NEW folder every run, so builds stay comparable side by side"),
+):
+    """Core-product regression benchmark (NOOD_0185): prove prompt → .feature
+    generation is still fast, cheap and accurate after engine changes. Not a
+    unit test — the driving agent (Claude, Copilot, a human) executes it, on
+    any OS, whenever asked; never runs on its own.
+
+    No args → the runbook: setup (`noodle update` + `--init`), the fixed
+    benchmark test cases, the per-test-case measurement protocol (time, host
+    AIC, corrections, engine cost — each TC reported separately), the
+    combined-report step, and the results.json schema. --init → the fresh
+    per-build workspace (never reused; features, Allure + RCA reports,
+    results.json and verdict.json all live inside that one folder). --score
+    results.json → the verdict. Triage prose: `noodle docs
+    feature-regression`."""
+    from noodle import regression
+    if init_ws:
+        # One folder per benchmark run, named by time + engine build, so
+        # regression_runs/ reads as a history: this build vs the last one.
+        from noodle import install_check
+        vr = install_check.version_report()
+        # The folder is stamped with the CHECKOUT's version below, so a stale
+        # install would file its results under code it never ran. Runbook step 1
+        # (`noodle update`) is the fix — refuse to mislabel a build.
+        if vr.get("mismatch"):
+            typer.echo(f"Install records {vr['installed']} but this checkout is "
+                       f"{vr['source']} — run `noodle update` first, else the "
+                       "benchmark measures the old build under the new name.")
+            raise typer.Exit(1)
+        build = vr.get("source") or vr.get("installed") or "unknown"
+        sha = (install_check.git_sha() or "nogit")[:7]
+        base = f"{datetime.now():%Y%m%d-%H%M%S}_{build}_{sha}"
+        ws, n = Path("regression_runs") / base, 1
+        while True:
+            try:
+                ws.mkdir(parents=True)   # mkdir IS the claim — atomic, so two
+                break                    # same-second runs can't share a folder
+            except FileExistsError:
+                n += 1
+                ws = Path("regression_runs") / f"{base}_{n}"
+        init(path=str(ws))
+        typer.echo(f"\n  🧪 benchmark workspace: {ws} — new folder every run; "
+                   "features, reports, results.json and verdict.json all stay here")
+        return
+    if score_file is None:
+        typer.echo(regression.runbook())
+        return
+    verdict = regression.score(json.loads(Path(score_file).read_text()))
+    saved = Path(score_file).with_name("verdict.json")
+    saved.write_text(json.dumps(verdict, indent=2))
+    verdict["saved"] = str(saved)
+    # NOOD_0185 follow-up — the three ACs (time, cost, accuracy) must be
+    # reviewable in a browser next to Allure/RCA, not only as raw JSON: drop
+    # verdict.html into the last run's served reports dir (the report server
+    # hosts whatever sits there, so it appears at /verdict.html).
+    html = regression.render_html(verdict)
+    saved.with_name("verdict.html").write_text(html)
+    try:
+        reports = _paths.last_run_root(str(Path(score_file).resolve().parent)) / "reports"
+        if reports.is_dir():
+            (reports / "verdict.html").write_text(html)
+            verdict["served"] = str(reports / "verdict.html")
+    except Exception:
+        pass  # results file outside a workspace — the local verdict.html stands
+    _json_out(verdict)
+    raise typer.Exit(0 if verdict["verdict"] == "PASS" else 1)
+
+
 @app.command("rca-report")
 def rca_report(
     workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
@@ -2221,17 +2292,24 @@ def _adhoc_report_servers() -> dict:
             cwd_of[cur] = line[1:]
 
     def _served_dirs(p: int):
+        base = Path(cwd_of[p]) if p in cwd_of else Path(".")
         if p in cwd_of:
-            yield Path(cwd_of[p])
+            yield base
         # NOOD_0101 — -ww: with COLUMNS set (pytest sets it; so do some CI
         # shells), ps truncates piped output to that width, cutting off the
-        # --directory path this scan exists to find.
+        # served path this scan exists to find.
+        # NOOD_0185 — any directory on the command line, whoever spawned it:
+        # `http.server --directory X` AND `noodle report serve X` (whose cwd is
+        # wherever the run was launched, not the report tree — that's why
+        # `report stop` outside the serving workspace found nothing to stop).
         args = subprocess.run(["ps", "-ww", "-p", str(p), "-o", "command="],
                               capture_output=True, text=True).stdout.split()
-        if "http.server" in " ".join(args):
-            for i, a in enumerate(args):
-                if a in ("--directory", "-d") and i + 1 < len(args):
-                    yield Path(args[i + 1])
+        for a in args:
+            if a.startswith("-"):
+                continue
+            d = Path(a) if Path(a).is_absolute() else base / a
+            if d.is_dir():
+                yield d
 
     return {prt: p for prt, p in by_port.items()
             if any(_looks_like_report_dir(d) for d in _served_dirs(p))}
@@ -2242,11 +2320,11 @@ def report_stop(
     port: int = typer.Option(None, "--port", "-p", help="Only stop the server on this port (default: all)"),
     workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
 ):
-    """Stop hosted report servers (Allure + RCA) — ones started by `noodle
-    report serve` from any terminal (via the workspace's
-    .noodle/report_servers.json registry), and ad-hoc ones an agent started
-    with a raw `python -m http.server` on a report dir. Registry entries
-    whose process is already gone are pruned silently."""
+    """Stop hosted report servers (Allure + RCA) — ones this workspace's
+    .noodle/report_servers.json registry knows about, plus any other listening
+    process serving a report tree, whatever workspace it was started from and
+    whether it was `noodle report serve` or a raw `python -m http.server`.
+    Registry entries whose process is already gone are pruned silently."""
     import signal
     data = _report_pids(workspace)
     adhoc = {prt: pid for prt, pid in _adhoc_report_servers().items()

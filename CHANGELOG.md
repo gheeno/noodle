@@ -1,8 +1,85 @@
 # Changelog
 
-Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [SemVer](https://semver.org/) — pre-1.0, so minor bumps may break things.
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [SemVer](https://semver.org/). The 1.0.0 alpha series counts up (`1.0.0a1` → `1.0.0a2`, PEP 440 spelling of `1.0.0-alpha.01`); the `0.2.0aN` line below it is pre-1.0 history.
 
 ## [Unreleased]
+
+## [1.0.0a1] — 2026-07-26
+
+**First 1.0 alpha — the web wok is the released capability.**
+
+Version numbering moves from the pre-1.0 `0.2.0aN` line to the 1.0.0 alpha
+series. What earns it is the web wok (`@web`, `@api`, `@terminal`,
+`@mobile`-as-device-emulation): accessibility-first locators with POM fallback
+and self-healing, goal/prompt authoring, Allure + RCA on every run, tracing,
+network capture, parallel runs, MFA, REST budgets, touch gestures — a suite
+with zero skips, 2677 unit tests green, and a live end-to-end benchmark
+(`noodle feature-regression`, below) that measures the whole product per
+release rather than per function.
+
+Alpha, not GA, and deliberately: the other three woks are less proven —
+mobile (Appium) and desktop (visual agent) need real devices and hosts to
+exercise, performance is young. Nothing about their behaviour changes here.
+Pin `1.0.0a*` expecting the web wok to hold and the rest to move.
+
+**NOOD_0185** — feature: `noodle feature-regression` — core-product regression benchmark.
+
+Unit tests prove functions; nothing proved the product. New on-demand
+benchmark: two fixed "super easy" test cases against Wikipedia (live but
+automation-friendly — typeahead suggest via goal spec, click-nav +
+plain-text verifies via numbered prompt; the original Canadian Tire pair
+stays in the doc as a live drill, its search API bot-gates automated
+browsers) → one `noodle author … --run` each → both on ONE served
+Allure + RCA report, measured per test case on time, host AIC, corrections,
+and engine-side LLM cost — never combined, plus the cross-case average.
+
+- `noodle feature-regression` prints the whole runbook (setup, prompts,
+  measurement protocol, results schema) — self-sufficient on any OS/host
+  (Claude, Copilot, plain terminal), no MCP or skill file needed; doubles
+  as a no-new-capability demo.
+- `noodle feature-regression --score results.json` → per-TC breakdown +
+  averages + `PASS`/`REGRESSED` verdict (exit 1), one reason line per
+  breach. Budget: ≤600 s, ≤15 AIC, ≤2 corrections per TC; ≤10 AIC average;
+  runs must be green AND verified. Each ceiling env-overridable
+  (`NOODLE_REG_MAX_*`).
+- Prompts + budget + pure `score()` live in `noodle/regression.py`;
+  prose (measurement semantics, HIL review, bisecting a regression to a
+  commit) in docs/feature-regression.md, reachable via
+  `noodle docs feature-regression`.
+- `--score` also renders the scorecard as `verdict.html` — next to
+  results.json and into the run's served reports dir, so the three ACs
+  (time, cost, accuracy per test case + averages) are reviewable at
+  `/verdict.html` beside the Allure and RCA reports.
+- **Prompt grammar: typeahead suggestion click** — `click the suggestion
+  <option>` after a `search for <term>` step now expands to the engine's
+  suggest action (type, pick from the dropdown, never submit). The
+  benchmark's AC — generate from prompts the way real users ask — exposed
+  that the marquee typeahead flow was unreachable by prompt.
+- Budget tightened to the stated acceptance numbers: ≤120 s and ≤10 AIC per
+  test case (was 600 s / 15).
+- The scorecard now calculates **test development time** — `elapsed_s −
+  run_s` (the run's own `seconds` comes back in the author call's JSON) —
+  and the time budget applies to development, not to the generated test's
+  execution: a slow site cannot fail a fast authoring. verdict.html shows
+  development and run side by side, per TC and as averages.
+- **Engine fix the benchmark caught on its first run:** prompt-mode
+  `verify <text>` emitted an `any_of` check, which compiles to a
+  link/title/alt-scoped "result titles" count locator — structurally unable
+  to match plain page text (a `<label>`, a tagline), and quoted prompt text
+  leaked its quotes into the selector regex. Plain verifies now emit `see`
+  (compiled to `the user sees "<text>"`, same as goal mode), wrapping quotes
+  stripped (noodle/repl/prompt_expander.py).
+- `--init` refuses to scaffold when the install lags the checkout (the
+  `noodle --version` mismatch): the folder name carries the checkout's version
+  and sha, so a stale install would file its results under code that never ran.
+  Runbook step 1 (`noodle update`) is named in the error.
+- **`noodle report stop` no longer needs `-w`** — the benchmark serves reports
+  from a per-build workspace, and a plain `noodle report stop` elsewhere said
+  "nothing to stop" while the server stayed up. The lsof fallback only
+  recognized `python -m http.server --directory <dir>`; it now treats any
+  directory on a listening process's command line as a candidate — including
+  the engine's own detached `noodle report serve <dir>`, whose cwd is the
+  launching dir, not the report tree. The `-w` registry path is unchanged.
 
 ## [0.2.0a37] — 2026-07-26
 

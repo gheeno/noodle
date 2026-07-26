@@ -580,7 +580,17 @@ def test_ensure_fresh_reports_leaves_current_alone(tmp_path, monkeypatch):
 
 # --- noodle report stop -------------------------------------------------------------
 
-def test_report_stop_kills_registered_server(tmp_path, monkeypatch):
+@pytest.fixture
+def no_adhoc(monkeypatch):
+    """These cover the registry path only. NOOD_0185 widened the lsof scan to
+    every report server on the machine (not just `http.server --directory`), so
+    a real one — a leaked test server, the developer's own — would otherwise
+    bleed into the killed list."""
+    from noodle import cli as _cli
+    monkeypatch.setattr(_cli, "_adhoc_report_servers", dict)
+
+
+def test_report_stop_kills_registered_server(tmp_path, monkeypatch, no_adhoc):
     from noodle import cli as _cli
     _cli._write_report_pids(str(tmp_path), {"8000": 11111, "8001": 22222})
     killed = []
@@ -591,7 +601,7 @@ def test_report_stop_kills_registered_server(tmp_path, monkeypatch):
     assert _cli._report_pids(str(tmp_path)) == {}
 
 
-def test_report_stop_single_port_leaves_others(tmp_path, monkeypatch):
+def test_report_stop_single_port_leaves_others(tmp_path, monkeypatch, no_adhoc):
     from noodle import cli as _cli
     _cli._write_report_pids(str(tmp_path), {"8000": 11111, "8001": 22222})
     killed = []
@@ -601,7 +611,7 @@ def test_report_stop_single_port_leaves_others(tmp_path, monkeypatch):
     assert _cli._report_pids(str(tmp_path)) == {"8001": 22222}
 
 
-def test_report_stop_prunes_dead_pids(tmp_path, monkeypatch):
+def test_report_stop_prunes_dead_pids(tmp_path, monkeypatch, no_adhoc):
     from noodle import cli as _cli
     _cli._write_report_pids(str(tmp_path), {"8000": 99999})
 
@@ -615,7 +625,7 @@ def test_report_stop_prunes_dead_pids(tmp_path, monkeypatch):
     assert _cli._report_pids(str(tmp_path)) == {}
 
 
-def test_report_stop_nothing_recorded(tmp_path):
+def test_report_stop_nothing_recorded(tmp_path, no_adhoc):
     result = runner.invoke(app, ["report", "stop", "-w", str(tmp_path)])
     assert "nothing to stop" in result.output.lower()
 
