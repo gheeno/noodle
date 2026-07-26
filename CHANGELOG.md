@@ -4,6 +4,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a2] — 2026-07-26
+
+**NOOD_0186** — feature: the five audited web-coverage gaps closed — HTML5
+media, multi-file upload, calendar pickers, hover menus, native-dialog
+honesty.
+
+A full audit of the web wok's step patterns against "what can a real website
+throw at a tester" found five remaining holes; this closes all of them:
+
+- **HTML5 media** (the one visible gap): `plays/pauses/mutes/unmutes the
+  video`, `seeks the video to 1:30`, `sets the volume to 50%`, plus polled
+  asserts — `the video should be playing / paused / muted / ended`,
+  `should have played at least 5 seconds`, `should be 30 seconds long`
+  (±1s). Named form (`the 'promo' video`) resolves through the locator
+  engine and walks into the media tag inside player wrappers; the bare form
+  takes the page's only/first visible `<video>`/`<audio>`. An
+  autoplay-policy block surfaces the browser's own error plus the fix.
+- **Multi-file upload**: `uploads 'a.png' and 'b.png' to the 'Photos'
+  input` — one `set_input_files` call with the whole list, because repeated
+  single uploads REPLACE each other on an `<input multiple>`.
+- **Calendar pickers**: `picks 'March 15, 2026' from the 'Departure'
+  calendar` / `selects tomorrow from the 'Check-in' calendar` — drives
+  click-driven popup calendars (react-datepicker, flatpickr, MUI, jQuery
+  UI, ARIA grids): open, navigate months (bounded, honest about min/max
+  clamps), click the day cell (skipping disabled/adjacent-month fillers).
+  Native `<input type=date>` short-circuits to an ISO fill.
+- **Hover menus**: `opens the 'Products' menu and clicks 'Shoes'` — hover
+  the trigger, wait for the revealed item, click it via the normal engine
+  (POM + self-heal apply); falls back to clicking the trigger for
+  click-to-open menus.
+- **Native OS dialogs refuse honestly** (same ethos as the email/SMS
+  refusals): the print dialog and the OS file picker render outside the
+  page, so steps that open/assert/click them fail at resolution naming the
+  covering step. `prints the page [as '…']` maps to the intent automation
+  CAN cover — `page.pdf` export.
+
+New action types are mirrored in the LLM-fallback `VALID_TYPES`; the steps
+dictionary documents every new phrasing (and the corpus test pins them).
+
+Two fixes from running the NOOD_0185 feature-regression benchmark on this
+build (TC1 cost 3 corrections; both were pre-existing, this closes them):
+
+- **Typeahead capture debounce race**: per-keystroke suggestion XHRs land
+  out of order, so the probe could capture a stale prefix's list (typing
+  "Vacuum cleane" captured the suggestions for "Va") and goal authoring
+  blocked on evidence that was never really absent. The probe now polls
+  (bounded) until a captured row shares a content word with the full term.
+- **`noodle author --overwrite`**: the engine-side `overwrite` field was
+  reachable only from a spec file or MCP — prompt mode had no way past
+  "exists — pass overwrite=true", though blocked authoring deliberately
+  leaves its files behind (fix-in-place). The flag now exists on the CLI
+  and ORs with the spec key.
+
 ## [1.0.0a1] — 2026-07-26
 
 **First 1.0 alpha — the web wok is the released capability.**

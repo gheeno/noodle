@@ -1420,6 +1420,7 @@ def author(
     workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
     run: bool = typer.Option(False, "--run", help="NOOD_0137 — atomic author+run: after a ready author, run once (headless, retries=0), serve both reports, and fail when 0 scenarios passed. Blocked authoring launches no browser."),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing .feature at the target path. A blocked authoring attempt leaves its files behind (fix-in-place contract) — without this flag the retry refuses. Spec key `overwrite` works too; prompt mode has only this flag."),
 ):
     """NOOD_0128 — write a whole test package in one transaction (app package +
     environments.yaml + POM + feature + missing secret placeholders), validated,
@@ -1455,7 +1456,7 @@ def author(
     if prompt is not None:
         # NOOD_0169 — prompt mode: expansion + derivation happen engine-side
         result = core.author_test(prompt=prompt, run_after_author=run,
-                                  workspace=workspace)
+                                  overwrite=overwrite, workspace=workspace)
     else:
         raw = sys.stdin.read() if spec == "-" else Path(spec).read_text()
         try:
@@ -1480,7 +1481,7 @@ def author(
             required_secret_keys=data.get("required_secret_keys"),
             secret_values=data.get("secret_values"),   # NOOD_0130 — write-only, never echoed
             goal=data.get("goal"), run_after_author=run,
-            overwrite=bool(data.get("overwrite", False)),
+            overwrite=overwrite or bool(data.get("overwrite", False)),
             # NOOD_0156 — explicit expert override for the manual-fallback gate;
             # autonomous agents must never set it.
             allow_unverified_intent=bool(data.get("allow_unverified_intent", False)),

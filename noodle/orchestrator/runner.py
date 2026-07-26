@@ -640,6 +640,32 @@ def execute_step(step_text: str, context):
         actions.assert_dialog_text(context._vars, action['text'])
     elif t == 'upload':
         actions.upload(page, action['locator'], action['path'])
+    # --- NOOD_0186: media, multi-upload, calendar, hover menus ---------------
+    elif t == 'upload_multi':
+        actions.upload_multi(page, action['locator'], action['paths'])
+    elif t == 'media_play':
+        actions.media_play(page, action.get('locator'))
+    elif t == 'media_pause':
+        actions.media_pause(page, action.get('locator'))
+    elif t == 'media_mute':
+        actions.media_mute(page, action.get('locator'), action.get('muted', True))
+    elif t == 'media_seek':
+        actions.media_seek(page, action['seconds'], action.get('locator'))
+    elif t == 'media_volume':
+        actions.media_volume(page, action['percent'], action.get('locator'))
+    elif t == 'assert_media_state':
+        actions.assert_media_state(page, action['state'], action.get('locator'),
+                                   action.get('negate', False))
+    elif t == 'assert_media_time':
+        actions.assert_media_time(page, action['seconds'], action.get('op', '>='),
+                                  action.get('locator'))
+    elif t == 'assert_media_duration':
+        actions.assert_media_duration(page, action['seconds'], action.get('locator'))
+    elif t == 'pick_date':
+        actions.pick_date(page, action['locator'], action.get('date'),
+                          action.get('offset_days'))
+    elif t == 'menu_select':
+        actions.menu_select(page, action['trigger'], action['item'])
     elif t == 'assert_download':
         actions.assert_download(page, getattr(context, '_downloads', []), action.get('name'))
     elif t == 'check':

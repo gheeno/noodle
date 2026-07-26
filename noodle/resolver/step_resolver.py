@@ -150,12 +150,30 @@ def clear_index_cache() -> None:
     _example_index_cache = None
 
 
+# NOOD_0186 — grammar words that must not count as "shared vocabulary" when
+# deciding whether a near-miss suggestion is actually about the same thing.
+_SUGGEST_STOPWORDS = frozenset({
+    'user', 'i', 'the', 'a', 'an', 'to', 'in', 'on', 'into', 'from', 'and',
+    'then', 'is', 'are', 'should', 'be', 'of', 'for', 'with', 'at', 'that',
+})
+
+
 def _suggest(step_text: str) -> str:
     corpus = _example_corpus()
     if not corpus:
         return ""
     lowered = {c.lower(): c for c in corpus}
     hits = difflib.get_close_matches(step_text.lower(), lowered.keys(), n=3, cutoff=0.5)
+    # NOOD_0186 — difflib's char-level ratio can clear the cutoff on stopword
+    # overlap alone ("frobnicates the widget xyzzy" scores exactly 0.5 against
+    # "User mutes the video"). A suggestion sharing no content word with the
+    # step is noise, however the characters line up: require one real token
+    # in common.
+    def _content_words(text: str) -> set:
+        return {w for w in re.findall(r"[a-z']+", text.lower())
+                if w not in _SUGGEST_STOPWORDS}
+    words = _content_words(step_text)
+    hits = [h for h in hits if words & _content_words(h)]
     if not hits:
         return ""
     lines = "\n".join(f"    {lowered[h]}" for h in hits)
@@ -257,6 +275,12 @@ VALID_TYPES = frozenset({
     'click_modifier', 'context_menu_select',
     'rotate_viewport', 'landscape', 'portrait', 'assert_viewport',
     'assert_request_count',
+    # NOOD_0186 — the five audited web-coverage gaps: HTML5 media, multi-file
+    # upload, click-driven calendar pickers, hover-menu composites (native-
+    # dialog steps refuse at resolution, so they have no type to list here)
+    'media_play', 'media_pause', 'media_mute', 'media_seek', 'media_volume',
+    'assert_media_state', 'assert_media_time', 'assert_media_duration',
+    'upload_multi', 'pick_date', 'menu_select',
 })
 
 # NOOD_0177 — action types that execute code. They stay in VALID_TYPES because

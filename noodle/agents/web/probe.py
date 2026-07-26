@@ -1823,6 +1823,20 @@ def _pick_suggestion(texts: list[str], want: str) -> int | None:
     return best_i if best >= 0.72 else None
 
 
+def _rows_match_term(rows: list[dict], term: str) -> bool:
+    """NOOD_0186 — does the captured list belong to the FULL typed term?
+    True when any row shares a content word (≥3 chars, substring match so
+    partial typing like 'cleane' still hits 'cleaner') with the term. A stale
+    prefix's response ('Va' → Vanuatu, Van Halen…) shares none. A term with
+    no anchorable word accepts whatever is shown. Pure — unit-testable
+    without a browser."""
+    words = [w for w in re.findall(r"\w+", term.lower()) if len(w) >= 3]
+    if not words:
+        return True
+    return any(w in (r.get("text") or "").lower()
+               for r in rows for w in words)
+
+
 def _suggest(page, pg: dict, term: str, timeout_ms: int,
              follow: str | None = None) -> None:
     """NOOD_0141 (P1-1) — typeahead capture: type `term` per-character into
@@ -1854,8 +1868,17 @@ def _suggest(page, pg: dict, term: str, timeout_ms: int,
         type_fn(term, delay=75)
         _settle(page, min(timeout_ms, 5000), armed=armed)
         rows = page.evaluate(_SUGGEST_JS)
-        if not rows:                      # slow async render — bounded retry
-            page.wait_for_timeout(1500)
+        # NOOD_0186 — per-keystroke XHRs land out of order: the first read
+        # can be a stale prefix's list (typing "Vacuum cleane" once captured
+        # the suggestions for "Va" — regression-benchmark TC1). Poll until a
+        # row shares a content word with the term (the full term's response
+        # has arrived) or the bounded window ends — a site may genuinely
+        # suggest nothing matching, and the last list is then the honest
+        # capture. Subsumes the old empty-list retry.
+        for _ in range(6):
+            if rows and _rows_match_term(rows, term):
+                break
+            page.wait_for_timeout(500)
             rows = page.evaluate(_SUGGEST_JS)
         block = _suggest_block(rows, term)
         if block is None:
