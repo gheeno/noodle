@@ -59,7 +59,8 @@ _PAREN = re.compile(r"\(([^()]{3,})\)")
 _CONJ = re.compile(r"\s+(?:and(?:\s+then)?|then)\s+", re.I)
 
 VERBS_HELP = ("go to / open url / then url <url>; search for <term>; "
-              "click <name>; enter <value> in <field>; "
+              "click <name>; click the suggestion <option> (after a search); "
+              "enter <value> in <field>; "
               "select <option> from <list>; add [<item>] to <destination>; "
               "verify[:] <destination> has <item> | verify <text>; "
               "close popups / location prompt; take a screenshot")
@@ -418,8 +419,29 @@ def expand(text: str, base_url: str | None = None) -> dict:
             actions.append(act)
             _cover(n, "action", [act["id"]])
         elif n["kind"] == "click":
-            actions.append({"do": "click", "target": n["target"]})
-            _cover(n, "action")
+            # NOOD_0185 — "click the suggestion X" after a search is the
+            # typeahead flow, benchmark-proven unreachable by prompt before
+            # this: the search action itself becomes a suggest (type the
+            # term, pick option X from the dropdown, never submit).
+            sug = re.match(r"^(?:the\s+)?suggestions?:?\s+(.+)$",
+                           n["target"], re.I)
+            back = [s for j, s in sorted(searches.items())
+                    if j < i and s["do"] == "search"]
+            if sug and back:
+                src = back[-1]
+                src.update(do="suggest", option=_clean(sug.group(1)))
+                _cover(n, "action", [src["id"]])
+                assumptions.append(
+                    f"step {no} '{n['raw']}': picking '{src['option']}' from "
+                    f"the search suggestions for '{src['term']}' (typeahead — "
+                    "the search is never submitted)")
+            elif sug:
+                _refuse(n, "clicking a suggestion needs a search step first",
+                        conflict=True)
+                continue
+            else:
+                actions.append({"do": "click", "target": n["target"]})
+                _cover(n, "action")
         elif n["kind"] == "enter":
             actions.append({"do": "enter", "target": n["target"],
                             "value": n["value"]})
@@ -577,10 +599,20 @@ def expand(text: str, base_url: str | None = None) -> dict:
                     "source_clauses": [n["clause"]],
                     "note": assumptions[-1]})
             if check is None:
-                check = {"any_of": [rest]}
+                # NOOD_0185 — the benchmark caught this: a plain `verify
+                # <text>` used to emit an any_of check, which compiles to a
+                # link/title/alt-scoped "result titles" count locator — it can
+                # never match a <label> or other plain page text. The stated
+                # intent ("literal text is visible") maps to `see`, which
+                # compiles to `the user sees "<text>"`. Wrapping quotes from
+                # the prompt are part of the quoting, not the text.
+                text = rest.strip()
+                if len(text) > 1 and text[0] == text[-1] and text[0] in "\"'":
+                    text = text[1:-1]
+                check = {"see": text}
                 assumptions.append(
                     f"step {no} '{n['raw']}': asserting the literal text "
-                    f"'{rest}' is visible")
+                    f"'{text}' is visible")
             if n["evidence"] or pending_evidence:
                 check["evidence"] = "screenshot"
                 pending_evidence = False
@@ -625,6 +657,8 @@ def expand(text: str, base_url: str | None = None) -> dict:
     for a in actions:
         if a["do"] == "search":
             labels.append(f"search '{a['term']}'")
+        elif a["do"] == "suggest":
+            labels.append(f"suggestion '{a['option']}' for '{a['term']}'")
         elif a["do"] == "add_to":
             labels.append(f"add to {a['destination']}")
         elif a["do"] in ("click", "enter", "select"):

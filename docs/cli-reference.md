@@ -520,6 +520,23 @@ $ noodle cost noodle_tests/web/shop/features/checkout.feature --model anthropic/
   💰 Estimate for noodle_tests/web/shop/features/checkout.feature: 412 input tokens | ~$0.0012 input-cost floor (output tokens unknowable pre-run) | model anthropic/claude-sonnet-5
 ```
 
+## noodle feature-regression
+
+Core-product regression benchmark (NOOD_0185): prove prompt → `.feature`
+generation is still fast, cheap and accurate after engine changes. Executed
+by the driving agent (Claude, Copilot, a human) on any OS, **only when
+asked** — full guide: [docs/feature-regression.md](feature-regression.md).
+
+```
+noodle feature-regression [--score results.json]
+```
+
+| Flag / arg | Default | Purpose | When to use |
+|---|---|---|---|
+| (none) | — | Print the runbook: setup, the fixed benchmark test cases, per-test-case measurement protocol, results schema | After developing new engine capabilities; also a self-contained demo |
+| `--init` | off | Scaffold a fresh `regression_runs/<stamp>_<build>/` workspace — a new gitignored folder every run; features, reports, results.json and verdict.json all stay inside it | First step of every benchmark run — never reuse an old workspace |
+| `--score` | none | Score a filled results JSON: per-TC breakdown + averages + `PASS`/`REGRESSED` verdict, exit 1 on REGRESSED; writes `verdict.json` + `verdict.html` next to the results file and serves the scorecard at `/verdict.html` beside Allure/RCA | Last step of the runbook, or in a script |
+
 ## noodle rca-report
 
 Root-cause every failed/errored scenario from the last run into Markdown.

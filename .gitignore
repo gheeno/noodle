@@ -12,6 +12,9 @@ reports/
 artifacts/
 # `noodle archive` zips artifacts/ here.
 archives/
+# Per-build benchmark workspaces from `noodle feature-regression --init`
+# (NOOD_0185) — one folder per run, kept locally for build-vs-build review.
+regression_runs/
 # Squad: ignore runtime state (logs, inbox, sessions)
 .squad/orchestration-log/
 .squad/log/
