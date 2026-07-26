@@ -1,6 +1,8 @@
+import socket
 import urllib.error
 import urllib.request
 
+from noodle.config import rest_timeout
 from noodle.target_policy import check_target
 
 
@@ -18,8 +20,11 @@ _OPENER = urllib.request.build_opener(
     urllib.request.HTTPHandler, urllib.request.HTTPSHandler, _NoRedirect)
 
 
-def rest_call(method, url, body=None, headers=None):
-    """HTTP request via stdlib. Returns (status_code, body_str, headers_dict)."""
+def rest_call(method, url, body=None, headers=None, timeout=None):
+    """HTTP request via stdlib. Returns (status_code, body_str, headers_dict).
+
+    `timeout` (seconds) is the step's own "within N seconds"; without one the
+    run-wide budget applies (NOODLE_REST_TIMEOUT, default 30s — NOOD_0182)."""
     # NOOD_0177 — the default opener also carries FileHandler/FTPHandler, so
     # REST_BASE_URL='file:///etc' + a GET turned this into a local file reader
     # whose body landed in an assertable {var:REST_BODY}. _OPENER carries only
@@ -34,8 +39,29 @@ def rest_call(method, url, body=None, headers=None):
     h.update(headers or {})
     data = body.encode() if isinstance(body, str) else body
     req = urllib.request.Request(url, data=data, headers=h, method=method)
+    budget = rest_timeout(timeout)
     try:
-        with _OPENER.open(req, timeout=30) as r:
+        with _OPENER.open(req, timeout=budget) as r:
             return r.status, r.read().decode(), dict(r.headers)
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode(), dict(e.headers)
+    # NOOD_0182 — a slow-but-healthy endpoint used to die here as a raw
+    # URLError(timed out) with no hint that the budget was the problem. Name it,
+    # and name both ways to raise it. Non-timeout URLErrors (DNS, refused,
+    # TLS) still propagate untouched — those are real failures.
+    except (TimeoutError, socket.timeout) as e:
+        raise AssertionError(_slow(method, url, budget)) from e
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, (TimeoutError, socket.timeout)):
+            raise AssertionError(_slow(method, url, budget)) from e
+        raise
+
+
+def _slow(method, url, budget) -> str:
+    return (
+        f"{method} {url} did not respond within {budget:g}s.\n"
+        f"  → Endpoint is slow, not broken? Give this step more time: append "
+        f"\"within {int(budget * 2)} seconds\" to it,\n"
+        f"    or raise the run-wide budget in .env: NOODLE_REST_TIMEOUT="
+        f"{int(budget * 2)} (seconds)."
+    )

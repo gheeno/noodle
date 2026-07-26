@@ -853,7 +853,8 @@ def execute_step(step_text: str, context):
         # NOOD_0011 — carry the REST auth headers so "sets the bearer token"
         # guards api_call too (Graph/OData-style data setup + verification).
         hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
-        actions.api_call(page, action['method'], action['url'], action.get('body'), hdrs)
+        actions.api_call(page, action['method'], action['url'], action.get('body'), hdrs,
+                         action.get('timeout'))
     elif t == 'load_data':
         # Same app_dir/resources/ resolution as load_resource below — the docs
         # (feature-packages.md's resolution table) promise both fixture-style
@@ -1016,13 +1017,15 @@ def execute_step(step_text: str, context):
         hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
         path = action['path']
         url = path if path.startswith('http') else base.rstrip('/') + '/' + path.lstrip('/')
-        status, body, headers = rest_client.rest_call(action['method'], url, action.get('body'), hdrs)
+        status, body, headers = rest_client.rest_call(action['method'], url, action.get('body'), hdrs,
+                                                      action.get('timeout'))
         if status == 401 and '_REST_OAUTH' in context._vars:
             # Token likely expired — refresh once and retry once, never loop.
             o = json.loads(context._vars['_REST_OAUTH'])
             _oauth2_fetch(context, o['url'], o['client_id'], o['client_secret'])
             hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
-            status, body, headers = rest_client.rest_call(action['method'], url, action.get('body'), hdrs)
+            status, body, headers = rest_client.rest_call(action['method'], url, action.get('body'), hdrs,
+                                                          action.get('timeout'))
         context._vars['REST_STATUS'] = str(status)
         context._vars['REST_BODY'] = body
         context._vars['REST_HEADERS'] = json.dumps(dict(headers))

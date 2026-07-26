@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from noodle.config import rest_timeout
 from noodle.log import logger
 from noodle.reporting import paths as _paths
 
@@ -1710,7 +1711,7 @@ def block_route(page: Page, url: str):
 
 
 def api_call(page: Page, method: str, url: str, body: str = None,
-             headers: dict = None):
+             headers: dict = None, timeout: float | None = None):
     """Hit an HTTP endpoint directly (Playwright's request context — shares the
     browser's cookies). For data setup/teardown without driving the UI. Fails on
     a non-2xx response.
@@ -1723,8 +1724,11 @@ def api_call(page: Page, method: str, url: str, body: str = None,
         # A string body ships without a content type, so JSON APIs (express,
         # ASP.NET) silently parse it to an empty object — declare it.
         headers['Content-Type'] = 'application/json'
+    # NOOD_0182 — Playwright's own 30s request default is invisible and
+    # unraisable from a feature file; share the REST budget instead.
     resp = page.request.fetch(url, method=method, data=body,
-                              headers=headers or None)
+                              headers=headers or None,
+                              timeout=rest_timeout(timeout) * 1000)
     if not resp.ok:
         raise AssertionError(f"API {method} {url} → {resp.status} {resp.status_text}")
     logger.info(f"\n  🛰  {method} {url} → {resp.status}")
@@ -2642,8 +2646,12 @@ def wait_response(page: Page, fragment: str, timeout: int | None = None):
     Honest limitation: this waits for the NEXT matching response, so it must
     follow the step that triggers it and will time out if the response already
     completed. For 'a request was made at some point this scenario', use
-    assert_request_made instead — that one inspects the recorded history."""
-    timeout = timeout or int(os.getenv("NOODLE_TIMEOUT", "10000"))
+    assert_request_made instead — that one inspects the recorded history.
+
+    NOOD_0182 — the budget is the REST one (NOODLE_REST_TIMEOUT, 30s), not the
+    10s element timeout: this waits on a backend, not on the DOM. Per step:
+    "waits for the response from '/api/x' within 90 seconds"."""
+    timeout = timeout or int(rest_timeout() * 1000)
     try:
         resp = page.wait_for_response(lambda r: fragment in r.url, timeout=timeout)
     except PlaywrightTimeoutError as e:

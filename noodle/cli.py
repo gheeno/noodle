@@ -598,6 +598,7 @@ _ENV_STUB_BASE = """\
 NOODLE_BROWSER=chromium         # chromium | firefox | webkit | safari | edge
 NOODLE_HEADLESS=false           # true in CI
 NOODLE_TIMEOUT=10000            # per-action timeout, milliseconds (clicks, page loads)
+#NOODLE_REST_TIMEOUT=30         # REST/API budget, SECONDS — a ceiling, not a wait: the step continues the instant the response lands. Slow report/batch/cold-start endpoint? raise it, e.g. 180. Per step: "... within 180 seconds"
 #NOODLE_FIND_TIMEOUT=120000     # element-find + page-load budget, ms — a CEILING, not a wait: steps proceed the instant the element appears. Slow internal site? raise it, e.g. 300000 (5 min)
 #NOODLE_WAIT_EXTENSION=30000    # one extra wait granted at the find deadline while the page is still loading (network active)
 # Authoring on a SLOW/spinner-heavy site? Uncomment this dev-loop floor so a missed

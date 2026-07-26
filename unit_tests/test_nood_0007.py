@@ -192,7 +192,7 @@ def test_web_step_without_browser_fails_clearly():
 def test_rest_step_without_browser_is_allowed(monkeypatch):
     from noodle.agents.web import rest_client
     monkeypatch.setattr(rest_client, "rest_call",
-                        lambda m, u, b=None, h=None: (200, '{"ok": true}', {}))
+                        lambda m, u, b=None, h=None, t=None: (200, '{"ok": true}', {}))
     ctx = _api_ctx()
     runner.execute_step("User performs a GET request at 'https://api.example/x'", ctx)
     assert ctx._vars["REST_STATUS"] == "200"
@@ -235,7 +235,7 @@ def test_oauth2_fetch_and_401_refresh_retry(monkeypatch):
     from noodle.agents.web import rest_client
     log = []
 
-    def fake_rest_call(method, url, body=None, headers=None):
+    def fake_rest_call(method, url, body=None, headers=None, timeout=None):
         log.append((method, url, body, dict(headers or {})))
         if "auth/token" in url:
             token = f"tok{sum('auth/token' in c[1] for c in log)}"
