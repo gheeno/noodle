@@ -3,7 +3,7 @@ import os
 import re
 import shlex
 
-from noodle import app_lifecycle
+from noodle import app_lifecycle, mfa
 from noodle.agents.web import actions
 from noodle.log import logger
 from noodle.orchestrator import script_runner
@@ -804,6 +804,17 @@ def execute_step(step_text: str, context):
             actions.fill(page, cells[0], cells[1])
     elif t == 'save_session':
         actions.save_session(context, action['path'])
+    # --- NOOD_0184: MFA one-time codes (TOTP + emailed) -----------------------
+    elif t == 'totp_fill':
+        actions.fill(page, action['locator'], mfa.totp_code(action.get('secret')))
+    elif t == 'totp_store':
+        key = action['var'].upper().replace(" ", "_")
+        context._vars[key] = mfa.totp_code(action.get('secret'))
+        logger.info(f"\n  🔑 Stored `{key}` = one-time code (valid ~30s)")
+    elif t == 'email_code':
+        key = action['var'].upper().replace(" ", "_")
+        context._vars[key] = mfa.email_code(action.get('match'), action.get('timeout'))
+        logger.info(f"\n  📧 Stored `{key}` = emailed one-time code")
     elif t == 'switch_frame':
         actions.switch_frame(page, action['name'])
     # --- NOOD_0009: drag & drop, cookies/storage, iframe exit, scoped steps ---
