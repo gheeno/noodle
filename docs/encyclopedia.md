@@ -171,6 +171,17 @@ NOODLE_PIXEL_THRESHOLD=0.01    # max fraction of changed pixels for "match the b
 NOODLE_LOG_LEVEL=INFO          # DEBUG | INFO | WARNING | ERROR
 ```
 
+Parallel runs (see [§7 Running in parallel](#running-in-parallel--locks--lanes)):
+
+```bash
+NOODLE_PARALLEL_PROCESSES=0    # N feature files at once (--parallel / --sequential override)
+NOODLE_REUSE_BROWSER=1         # 1 = one browser per worker, a fresh context per scenario
+                               # (same isolation, ~0.6s less setup per scenario);
+                               # 0 = relaunch the browser every scenario, the old behaviour
+NOODLE_LOCK_TIMEOUT=300        # s a @serial/@lock: scenario waits before failing loudly
+NOODLE_LOCK_TTL=600            # s after which a lock left by a killed worker is broken
+```
+
 **LLM (optional)** — Noodle Test Framework works fully without one. By default no LLM is
 called and no AI costs are incurred. To enable, see
 **[§16 Using an LLM](#16-using-an-llm--setup-providers-and-modes)** — it covers
@@ -653,6 +664,22 @@ When User mocks "**/api/checkout" with status 500
 When User blocks requests to "**/analytics/**"
 ```
 
+### Clock & pre-boot scripts
+Anything the page renders from *today's date* — "expires in 3 days", a countdown,
+a session-timeout banner, a month-end total — is otherwise untestable without
+waiting for real time to pass. Set the clock **before** navigating; `freezes`
+stops it so a value can't change between reading and asserting; `advances` fires
+every timer it passes, so a 15-minute session timeout happens now.
+```gherkin
+When User sets the clock to "2026-01-01"
+When User freezes the clock
+When User advances the clock by 30 days
+When User runs the script "window.FEATURE_X = true" before every page load
+```
+The last one runs *before* any page script (unlike `runs the script`, which runs
+after load) — the way to stub a feature flag, an analytics SDK or a seeded
+`localStorage` token the app reads while starting up.
+
 ### API setup / teardown
 Hit an endpoint directly (Playwright's request context — shares browser cookies),
 e.g. to seed or clean data without driving the UI. Fails on a non-2xx response.
@@ -723,6 +750,53 @@ And  "abc" should contain "b"
 The principle: **the app computes, the test observes.** Noodle Test Framework stores the app's
 output and asserts on it — it never re-implements the app's arithmetic. Variables
 reset between scenarios (tests stay independent).
+
+### Running in parallel — locks & lanes
+
+`noodle run tests/ --headless --parallel 4` runs four **feature files** at
+once. Scenarios *inside* one file always stay sequential, in order, in one
+process — so a file whose scenarios share a login, a seeded record or an
+ordered setup is safe with no extra work. (`--parallel-scheme scenario` opts
+out of that guarantee and warns; leave it alone unless every scenario is
+genuinely independent.)
+
+Two files that touch the *same real-world thing* are the case parallelism
+can't see. Two answers, in order of preference:
+
+**1. Give each worker its own account (nothing serializes).** Each worker has
+a lane number 1…N. Define numbered keys and `{env:…}` picks this lane's:
+
+```bash
+SHOP_USER_1=tester1     SHOP_PASS_1=…      # in the secrets file
+SHOP_USER_2=tester2     SHOP_PASS_2=…
+```
+
+```gherkin
+When User enters '{env:SHOP_USER}' in the username field   # lane 2 → tester2
+```
+
+Unnumbered keys resolve as always, and a sequential run is lane 1 — so the
+same suite behaves identically either way.
+
+**2. Lock the resource (serializes the tagged scenarios).** When a second
+account genuinely isn't available:
+
+```gherkin
+@lock:warehouse_stock
+Feature: Stock adjustments
+  # never overlaps another @lock:warehouse_stock feature, whatever --parallel says
+```
+
+`@serial` is the same thing on one global lane. Locks release even when the
+scenario fails; one left behind by a killed worker is broken automatically
+after `NOODLE_LOCK_TTL`.
+
+Everything else is automatic: each worker writes its screenshots, traces,
+videos, network logs and Allure results into its own subdirectory (they used
+to be named from step text, so two files sharing a step sentence overwrote
+each other), and the reports merge into one at the end.
+
+Re-running just what broke: `noodle run tests/ --failed`.
 
 ---
 

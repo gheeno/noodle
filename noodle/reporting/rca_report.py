@@ -879,7 +879,32 @@ def render_markdown(results_dir: str = None) -> str:
             cells = [re.sub(r"\s+", " ", c).strip().replace("|", "\\|") for c in row]
             lines.append("| " + " | ".join(cells) + " |")
 
-    return "\n".join(lines + _evidence_md(results_dir) + _cost_footer(results_dir))
+    return "\n".join(lines + _traces_md(entries) + _evidence_md(results_dir)
+                     + _cost_footer(results_dir))
+
+
+def _traces_md(entries: list[dict]) -> list[str]:
+    """NOOD_0183 — every failed web scenario already saves a full Playwright
+    trace (DOM snapshots + network + sources, the headline debugging edge over
+    Selenium). Until now the only pointer to it was one `logger.info` line in
+    the live console — which `--quiet`, the default for agents and CI, throws
+    away. So the single most useful artifact a failure produces was being
+    written and never mentioned again. Name it where failures are actually
+    read."""
+    from noodle.reporting import paths as _paths
+    found = []
+    for e in entries:
+        p = _paths.traces_dir() / f"{e['scenario'].replace(' ', '_').replace('/', '_')[:80]}.zip"
+        if p.is_file():
+            found.append((e["scenario"], p))
+    if not found:
+        return []
+    out = ["", f"## Playwright traces ({len(found)})", "",
+           "Step-by-step replay of the failure — DOM snapshot, network and "
+           "console at every action. Open one with:", ""]
+    for scenario, p in found:
+        out += [f"- **{scenario}** — `playwright show-trace {p}`"]
+    return out
 
 
 def _cost_footer(results_dir: str = None) -> list[str]:

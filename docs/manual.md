@@ -706,15 +706,89 @@ cd ~/projects/my-tests && noodle run --headless
 run N feature files at once via [BehaveX](https://github.com/hrcorval/behavex):
 
 ```bash
-pip install -e ".[parallel]"                        # one-time — already in if you installed "[all]"
+pip install -e ".[parallel]"                   # one-time — already in if you installed "[all]"
 noodle run web/ --headless --parallel 4        # 4 feature files at a time
+noodle run web/ --headless --parallel -1       # one worker per CPU core
+noodle run web/ --sequential                   # force one process, whatever .env says
 ```
 
-Falls back to `$NOODLE_PARALLEL_PROCESSES` if `--parallel` is unset. Keep
+Falls back to `$NOODLE_PARALLEL_PROCESSES` if `--parallel` is unset; a
+`--sequential` on the command line beats both, so a workspace that turns
+parallelism on in config can still be debugged one scenario at a time. Keep
 runs serial (the default) for small suites or when debugging a single
 scenario — parallel output interleaves and the auto-written
 `rca.md` is skipped (see [Diagnosing failures](#diagnosing-failures--rca)
 below), so run `rca-report` explicitly afterward.
+
+### Running a suite in parallel without collisions
+
+**The unit of parallelism is the feature file.** Every scenario inside one
+`.feature` runs sequentially, in order, in the same process — so a file whose
+scenarios share a login, a seeded record, or an ordered setup is safe by
+construction. `--parallel-scheme scenario` opts out of that guarantee and
+splits a single file across workers; Noodle warns when you ask for it. Leave
+it on the default unless every scenario in every file is genuinely independent.
+
+Four things a big parallel suite collides on, and what Noodle does about each:
+
+| Collision | Handling |
+|---|---|
+| **Two feature files sharing one login/account/record** | Tag them `@serial` (one global lane) or `@lock:<name>` (one lane per named resource). Scenarios holding the same lock never overlap, whatever the worker count. |
+| **N workers logging in as the same user** | Give each worker its own account — see below. Better than a lock: nothing serializes. |
+| **Evidence files overwriting each other** | Automatic. Screenshots, traces, videos and network logs are named from step/scenario *text*, so two features sharing a sentence used to write the same file; each worker now gets its own `p<pid>/` leaf. |
+| **Allure results overwriting each other** | Automatic (since NOOD_0022) — per-worker results dir, merged into one report at the end. |
+
+**Per-worker accounts.** Each worker gets a lane number, `NOODLE_WORKER_INDEX`
+= 1…N (always 1 when sequential). If a suite defines numbered keys, `{env:KEY}`
+resolves to *this lane's* value automatically — the feature file doesn't change:
+
+```bash
+# app secrets file — four lanes, four real accounts
+SHOP_USER_1=tester1      SHOP_PASS_1=…
+SHOP_USER_2=tester2      SHOP_PASS_2=…
+SHOP_USER_3=tester3      SHOP_PASS_3=…
+SHOP_USER_4=tester4      SHOP_PASS_4=…
+```
+
+```gherkin
+When User enters '{env:SHOP_USER}' in the username field   # lane 3 gets tester3
+```
+
+A lane with no numbered key falls back to the plain `SHOP_USER`, so this is
+opt-in by simply defining the numbers, and a suite written for lanes behaves
+identically when run sequentially (everything is lane 1). Prefer this to
+`@serial` whenever the app can give you more than one account — a lock makes
+the locked scenarios run one at a time, which is the thing you were trying to
+avoid.
+
+**Locking, concretely:**
+
+```gherkin
+@lock:warehouse_stock
+Feature: Stock adjustments
+  # never runs at the same time as any other @lock:warehouse_stock feature
+```
+
+Locks are held for one scenario at a time and released even when it fails. A
+worker killed mid-scenario leaves a lock behind; it is broken automatically
+after `NOODLE_LOCK_TTL` seconds (default 600). A scenario that waits longer
+than `NOODLE_LOCK_TIMEOUT` (default 300s) fails loudly rather than running
+unlocked.
+
+**Throughput.** Noodle keeps one browser per worker process and gives each
+scenario a fresh browser *context* — same isolation (cookies, storage, cache,
+permissions are all context-scoped), without paying ~0.6s of driver and
+browser startup per scenario. On a 106-scenario sample suite that is 175s →
+142s; the saving scales with scenario count and gets larger under worker
+contention. `NOODLE_REUSE_BROWSER=0` restores a relaunch per scenario if you
+ever need to isolate a browser-level bug.
+
+**Re-running just what broke:**
+
+```bash
+noodle run web/ --failed          # only last run's failed/broken scenarios
+noodle run web/ --name "Checkout" # only scenarios whose name contains this
+```
 
 Native apps (Android/iOS emulators, Windows 11/macOS desktop apps) need
 `pip install noodle[mobile]` + a running Appium server first — see

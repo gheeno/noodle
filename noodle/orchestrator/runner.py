@@ -98,6 +98,18 @@ def substitute(text: str, extra: dict | None = None, quote_captured: bool = Fals
     def env_lookup(key: str) -> tuple[str | None, bool]:
         if key in extra:                   # captured-store fallback
             return extra[key], True
+        # NOOD_0183 — per-lane credentials. Under --parallel each worker gets a
+        # lane number (NOODLE_WORKER_INDEX, 1..N), and a suite that defines
+        # SHOP_USER_1..SHOP_USER_4 gets one account per lane automatically —
+        # so N workers logging in at once are N DIFFERENT users, which is what
+        # apps with one-session-per-account actually require. Opt-in by simply
+        # defining the numbered keys; without them this is a no-op and plain
+        # SHOP_USER is used, as before.
+        lane = os.getenv("NOODLE_WORKER_INDEX")
+        if lane:
+            laned = os.getenv(f"{key}_{lane}")
+            if laned is not None:
+                return laned, False
         return os.getenv(key), False
 
     def unified(m):
@@ -1110,6 +1122,14 @@ def execute_step(step_text: str, context):
         actions.dismiss_permission_prompt(page, action.get('permission', 'location'))
     elif t == 'set_offline':
         actions.set_offline(page, action['offline'])
+    elif t == 'set_clock':
+        actions.set_clock(page, action['when'])
+    elif t == 'freeze_clock':
+        actions.freeze_clock(page, action.get('when'))
+    elif t == 'advance_clock':
+        actions.advance_clock(page, action['amount'], action['unit'])
+    elif t == 'add_init_script':
+        actions.add_init_script(page, action['script'])
     elif t == 'throttle_network':
         actions.throttle_network(page, action['profile'])
     elif t == 'assert_a11y':

@@ -89,7 +89,7 @@ def test_parallel_toggle_flag_env_and_default(monkeypatch):
     from noodle import cli
     seen = {}
     monkeypatch.setattr(cli, "_run_parallel",
-                        lambda path, n, tag, env, cwd=".", scheme="feature":
+                        lambda path, n, tag, env, cwd=".", scheme="feature", names=None:
                         seen.update(n=n, scheme=scheme) or 0)
     # keep the single-process default path from actually launching behave
     monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 0})())

@@ -1372,6 +1372,53 @@ Chromium-only — it rides a CDP session; firefox/webkit fail with a clear error
 
 ---
 
+## Clock Control (NOOD_0183)
+
+Anything the page renders from *today's date* — "expires in 3 days", a
+countdown, a session-timeout banner, an end-of-month total — is otherwise
+untestable without waiting for real time to pass. The usual workaround is to
+seed data relative to today, which makes the expected values move every day
+and go red on the 1st of the month. These steps drive the page's own `Date`,
+`setTimeout` and `setInterval`, so the app believes them:
+
+```gherkin
+When User sets the clock to '2026-01-01'
+When User sets the clock to '2026-12-25T09:30:00'
+When User freezes the clock
+When User freezes the clock at '2026-01-01'
+When User advances the clock by 30 days
+When User advances the clock by 1.5 hours
+```
+
+Set the clock **before** navigating — a page that reads the date at boot has
+already read it otherwise. `freezes` is what a countdown assertion needs: a
+running clock can change the value between the step that reads it and the
+step that asserts on it. `advances` fires every timer it passes, so a
+30-second poll or a 15-minute session timeout runs *now* instead of in fifteen
+minutes. Units: second, minute, hour, day, week, month, year.
+
+Needs Playwright ≥ 1.45 — an older one fails with the upgrade command.
+
+---
+
+## Pre-boot Script Injection (NOOD_0183)
+
+`runs the script '…'` executes **after** load, so it cannot stub what the app
+reads while starting up — a feature flag, an analytics SDK, `window.matchMedia`,
+a token in `localStorage`. This one runs before any page script, on this page
+and every page it navigates to:
+
+```gherkin
+When User runs the script 'window.FEATURE_X = true' before every page load
+When User runs the script 'resources/scripts/stubs.js' on each page load
+```
+
+A `.js` path that exists on disk is read from the file; anything else is
+treated as inline JavaScript. Register it before the navigation you want it to
+affect.
+
+---
+
 ## Accessibility Auditing (Phase P)
 
 Runs the vendored axe-core (no network fetch, no new dependency) inside the

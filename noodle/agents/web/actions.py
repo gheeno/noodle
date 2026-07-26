@@ -1,6 +1,7 @@
 import os
 import re
 import time
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Page
@@ -2498,6 +2499,76 @@ def dismiss_permission_prompt(page: Page, permission: str = "location"):
 def set_offline(page: Page, offline: bool):
     page.context.set_offline(offline)
     logger.info(f"\n  📡 Network {'OFFLINE' if offline else 'online'}")
+
+
+# NOOD_0183 — clock control. Anything a page renders from the CURRENT date is
+# otherwise untestable without waiting for real time to pass: "expires in 3
+# days", a countdown, a session timeout banner, an end-of-month report. Testers
+# work around it by seeding data relative to today, which makes the test's
+# expected values move every day and go red on the 1st of the month. Playwright
+# drives the page's own Date/setTimeout/setInterval, so the app believes it.
+_CLOCK_UNITS = {"second": 1, "minute": 60, "hour": 3600,
+                "day": 86400, "week": 604800, "month": 2592000, "year": 31536000}
+
+
+def set_clock(page: Page, when: str):
+    """Pin the page's clock to `when` (any format Date understands —
+    '2026-01-01', '2026-01-01T09:30:00'). Time still ticks forward from there;
+    `freeze` is the variant that stops it dead."""
+    try:
+        page.clock.install(time=when)
+    except AttributeError:
+        raise AssertionError(
+            "Clock control needs Playwright 1.45+ — upgrade with "
+            "`pip install -U playwright`.")
+    logger.info(f"\n  🕰️  Clock set to {when}")
+
+
+def freeze_clock(page: Page, when: str | None = None):
+    """Stop the page's clock. With `when`, stop it AT that moment. A frozen
+    clock is what a countdown/relative-time assertion needs: the value can't
+    change between the step that reads it and the step that asserts on it."""
+    try:
+        if when:
+            page.clock.install(time=when)
+        page.clock.pause_at(when) if when else page.clock.pause_at(
+            page.evaluate("new Date().toISOString()"))
+    except AttributeError:
+        raise AssertionError(
+            "Clock control needs Playwright 1.45+ — upgrade with "
+            "`pip install -U playwright`.")
+    logger.info(f"\n  ⏸️  Clock frozen{f' at {when}' if when else ''}")
+
+
+def advance_clock(page: Page, amount: float, unit: str):
+    """Jump the page's clock forward, firing every timer it passes — the point
+    is that a 30-second poll or a 15-minute session timeout runs NOW."""
+    unit = unit.rstrip('s').lower()
+    if unit not in _CLOCK_UNITS:
+        raise AssertionError(
+            f"Unknown time unit '{unit}'. Use one of: "
+            f"{', '.join(sorted(_CLOCK_UNITS))}.")
+    seconds = amount * _CLOCK_UNITS[unit]
+    try:
+        page.clock.run_for(int(seconds * 1000))
+    except AttributeError:
+        raise AssertionError(
+            "Clock control needs Playwright 1.45+ — upgrade with "
+            "`pip install -U playwright`.")
+    logger.info(f"\n  ⏩ Clock advanced {amount:g} {unit}(s)")
+
+
+def add_init_script(page: Page, script: str):
+    """Run `script` before ANY page script, on this page and every page it
+    navigates to. The gap `runs the script` can't fill: it executes after load,
+    so it cannot stub what the app reads at boot — a feature flag, an analytics
+    SDK, `window.matchMedia`, a seeded localStorage token. A file path is read
+    from disk; anything else is treated as inline JS."""
+    src = Path(script)
+    body = src.read_text() if (script.endswith(".js") and src.is_file()) else script
+    page.context.add_init_script(body)
+    logger.info(f"\n  💉 Init script registered ({len(body)} chars) — "
+                "applies from the next navigation")
 
 
 # Standard Lighthouse throttling values (latency ms, throughput bytes/s).

@@ -1292,6 +1292,18 @@ PATTERNS = [
     (r'^throttles? the network to ["\'](.+?)["\']$',
                                                    'throttle_network', lambda m: {'profile': _q(m.group(1))}),
 
+    # --- NOOD_0183 — clock control + pre-boot script injection ------------------
+    # These sit ABOVE the assertion families because "advances the clock by 3
+    # days" would otherwise be eaten by the generic number/compare patterns.
+    (r'^(?:sets?|pins?) the (?:page |browser |system )?(?:clock|date|time) to ["\'](.+?)["\']$',
+                                                   'set_clock',        lambda m: {'when': _q(m.group(1))}),
+    (r'^freezes? the (?:page |browser |system )?(?:clock|date|time)(?: at ["\'](.+?)["\'])?$',
+                                                   'freeze_clock',     lambda m: {'when': _q(m.group(1)) if m.group(1) else None}),
+    (r'^advances? the (?:page |browser |system )?(?:clock|date|time) by (\d+(?:\.\d+)?) (second|minute|hour|day|week|month|year)s?$',
+                                                   'advance_clock',    lambda m: {'amount': float(m.group(1)), 'unit': m.group(2)}),
+    (r'^runs? the script ["\'](.+?)["\'] (?:on|before) (?:every|each) page load$',
+                                                   'add_init_script',  lambda m: {'script': _q(m.group(1))}),
+
     # --- Phase P (F11) — accessibility auditing (axe-core) ---------------------
     # MUST precede the count assertions ("should see at most N ...") and the
     # semantic catch-all ("the X should have ..."), both of which would

@@ -220,6 +220,8 @@ VALID_TYPES = frozenset({
     'set_offline', 'throttle_network',
     'assert_a11y', 'write_clipboard', 'assert_clipboard', 'assert_ws_message',
     'emulate_media', 'save_pdf',
+    # NOOD_0183 — page clock control + pre-boot script injection
+    'set_clock', 'freeze_clock', 'advance_clock', 'add_init_script',
     # Phase J — multi-user contexts; Phase L — request/soft assertions
     'new_context', 'use_context', 'assert_request_made', 'soft_assert_check',
     # NOOD_0181 — address a tab/window by title or URL, past the two-page model

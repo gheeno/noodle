@@ -194,8 +194,11 @@ def run(
     browser: str = typer.Option(None, "--browser", "-b", help="chromium|firefox|webkit|safari|edge"),
     retries: int = typer.Option(None, "--retries", help="Re-run a failed scenario N times (0 off)"),
     log_level: str = typer.Option(None, "--log-level", help="DEBUG|INFO|WARNING|ERROR"),
-    parallel: int = typer.Option(None, "--parallel", help="N feature files at once via behavex (web, headless, parallel extra)"),
-    parallel_scheme: str = typer.Option("feature", "--parallel-scheme", help="With --parallel: shard by 'feature' (a browser per file) or 'scenario'"),
+    parallel: int = typer.Option(None, "--parallel", help="N feature files at once (behavex); -1 = per CPU"),
+    sequential: bool = typer.Option(False, "--sequential", help="Force one process"),
+    parallel_scheme: str = typer.Option("feature", "--parallel-scheme", help="'feature' (a file's scenarios stay serial) or 'scenario'"),
+    name: str = typer.Option(None, "--name", "-n", help="Only scenarios whose name contains this"),
+    failed: bool = typer.Option(False, "--failed", help="Re-run last run's failures"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Live behave stream to <artifacts>/run.log, stdout gets the summary (automatic off a TTY)"),
     preflight: bool = typer.Option(None, "--preflight/--no-preflight", help="Resolve every {env:KEY} before the browser; missing aborts (exit 2). Default on"),
     serve: bool = typer.Option(False, "--serve", help="Host the Allure + RCA reports after the run, print URLs"),
@@ -229,6 +232,15 @@ def run(
     # parallelism without changing the command). 0 or unset = single process.
     if parallel is None:
         parallel = int(os.getenv("NOODLE_PARALLEL_PROCESSES", "0") or "0")
+    # NOOD_0183 — an explicit --sequential beats both, so a workspace that sets
+    # NOODLE_PARALLEL_PROCESSES in .env can still be debugged one scenario at a
+    # time without editing config. -1 means "one worker per core".
+    if sequential:
+        if parallel > 0:
+            typer.echo("  ↩️  --sequential — running one process (parallelism off)")
+        parallel = 0
+    elif parallel < 0:
+        parallel = os.cpu_count() or 1
     # Bug 2: reject mutually exclusive flags up front
     if headed and headless:
         raise typer.BadParameter(
@@ -319,6 +331,18 @@ def run(
     # trends into the new report, so there's nothing to archive first. `noodle
     # archive` remains for the rare "stash this exact run" case.
 
+    # NOOD_0183 — --failed re-runs last run's red scenarios by name, the
+    # dev-loop lap that matters on a 1000-scenario suite. It composes with
+    # --name (both become behave --name filters, which OR together).
+    names = [name] if name else []
+    if failed:
+        last_failed = _failed_scenario_names(cwd)
+        if not last_failed:
+            typer.echo("  ✅ No failed scenarios recorded in the last run — nothing to re-run.")
+            raise typer.Exit(0)
+        typer.echo(f"  🔁 Re-running {len(last_failed)} failed scenario(s) from the last run")
+        names += last_failed
+
     # Parallel: behavex runs N behave workers, each writing to its own results
     # subdir (set in hooks.before_all). We clean once, run, flatten, report.
     if parallel > 0:
@@ -327,7 +351,17 @@ def run(
                 f"Unsupported scheme '{parallel_scheme}'. Valid options: feature, scenario",
                 param_hint="'--parallel-scheme'",
             )
-        rc = _run_parallel(path, parallel, tag, env, cwd, parallel_scheme)
+        # NOOD_0183 — two guards, both warnings not errors: the run is still
+        # valid, it just won't behave the way the author probably expects.
+        if parallel_scheme == "scenario":
+            typer.echo(
+                "  ⚠ --parallel-scheme scenario splits ONE feature file across workers.\n"
+                "    Scenarios sharing a login, a seeded record or an ordered setup will\n"
+                "    collide. The default 'feature' scheme keeps a file's scenarios serial.")
+        if env.get("NOODLE_HEADLESS") != "true":
+            typer.echo(f"  ⚠ --parallel {parallel} with a headed browser opens {parallel} "
+                       "windows fighting for focus — add --headless.")
+        rc = _run_parallel(path, parallel, tag, env, cwd, parallel_scheme, names)
         _log_run_end(str(Path(cwd) / _paths.artifacts_root() / "allure-results"), rc, _run_t0)
         raise typer.Exit(rc)
 
@@ -347,6 +381,8 @@ def run(
 
     if tag:
         args += ["--tags", tag]
+    for n in names:
+        args += ["--name", n]
 
     # NOOD_0116 --quiet: the biggest context-cost of an agent-driven run is
     # the full behave console stream staying resident per LLM call. Divert it
@@ -468,8 +504,25 @@ def _all_failures_quarantined(results_dir: str):
     return all(failed)
 
 
+def _failed_scenario_names(cwd: str = ".") -> list[str]:
+    """NOOD_0183 — scenario names that failed in the last run, read from the
+    allure results that run already wrote (no extra bookkeeping file to keep
+    in sync). Works after a parallel run too — the merge flattens worker dirs
+    into this one before anything reads it."""
+    results = _paths.last_run_root(cwd) / "allure-results"
+    names = []
+    for f in results.glob("*-result.json"):
+        try:
+            r = json.loads(f.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if r.get("status") in ("failed", "broken") and r.get("name"):
+            names.append(r["name"])
+    return sorted(set(names))
+
+
 def _run_parallel(path: str, processes: int, tag: str, env: dict, cwd: str = ".",
-                  scheme: str = "feature") -> int:
+                  scheme: str = "feature", names: list[str] | None = None) -> int:
     """Run feature files concurrently via behavex, then merge into one report."""
     try:
         import behavex  # noqa: F401
@@ -480,6 +533,15 @@ def _run_parallel(path: str, processes: int, tag: str, env: dict, cwd: str = "."
         )
     results = Path(cwd) / _paths.artifacts_root() / "allure-results"
     _clean_results_root(results)            # workers skip the wipe in parallel mode
+    # NOOD_0183 — clear locks/lanes left by a killed previous run, once, in the
+    # parent. A worker must never do this: it would free a live sibling's lock.
+    from noodle import runlock
+    _prev = os.getcwd()
+    try:
+        os.chdir(cwd)
+        runlock.reset_control_dir()
+    finally:
+        os.chdir(_prev)
     env = {**env, "NOODLE_PARALLEL_WORKER": "1"}
     # Same PATH concern as _BEHAVE_CMD — resolve through this interpreter.
     args = [sys.executable, "-m", "behavex", path,
@@ -487,6 +549,8 @@ def _run_parallel(path: str, processes: int, tag: str, env: dict, cwd: str = "."
             "--parallel-scheme", scheme]
     if tag:
         args += ["--tags", tag]
+    for n in names or []:
+        args += ["--name", n]
     rc = subprocess.run(args, env=env, cwd=cwd).returncode
     _merge_worker_results(results)          # flatten p*/ so report + scan read one dir
 

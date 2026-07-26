@@ -60,20 +60,33 @@ def reports_dir() -> Path:
     return artifacts_root() / "reports"
 
 
+# NOOD_0183 — every evidence filename below is derived from TEXT (a step
+# sentence, a scenario name), never from a uuid: `FAILED_the_cart_is_empty.png`,
+# `Checkout.zip`, `Checkout.json`. Two feature files that share a step sentence
+# — which is the whole point of a shared step vocabulary — therefore wrote the
+# same file from two processes at the same moment under --parallel, and the
+# report attached whichever write finished last. Giving each worker its own
+# leaf makes the collision impossible instead of unlikely; the paths recorded
+# in allure-results stay absolute-from-workspace, so the report and RCA follow
+# them with no merge step.
+def _worker_leaf() -> str:
+    return f"p{os.getpid()}" if os.getenv("NOODLE_PARALLEL_WORKER") == "1" else ""
+
+
 def screenshots_dir() -> Path:
-    return artifacts_root() / "screenshots"
+    return artifacts_root() / "screenshots" / _worker_leaf()
 
 
 def traces_dir() -> Path:
-    return artifacts_root() / "traces"
+    return artifacts_root() / "traces" / _worker_leaf()
 
 
 def videos_dir() -> Path:
-    return artifacts_root() / "videos"
+    return artifacts_root() / "videos" / _worker_leaf()
 
 
 def network_dir() -> Path:
-    return artifacts_root() / "network"
+    return artifacts_root() / "network" / _worker_leaf()
 
 
 def logs_dir() -> Path:

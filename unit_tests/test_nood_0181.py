@@ -104,19 +104,20 @@ class _Ctx:
         self._vars = {}
 
 
-def test_narrow_viewport_warns_that_it_is_not_mobile(caplog):
+def test_narrow_viewport_warns_that_it_is_not_mobile(capsys):
+    # NOOD_0183 — capsys, not caplog: noodle's logger writes through its own
+    # console handler and does not propagate to root, so caplog saw nothing and
+    # this test was red on main while the warning it checks was being printed.
     from noodle.orchestrator import runner
     page = _ViewportPage()
     ctx = _Ctx(page)
-    with caplog.at_level("WARNING"):
-        runner.execute_step("sets the viewport to 390x844", ctx)
+    runner.execute_step("sets the viewport to 390x844", ctx)
     assert page.size == {'width': 390, 'height': 844}     # still resized
-    assert "@mobile" in caplog.text and "no touch" in caplog.text
+    out = capsys.readouterr().out
+    assert "@mobile" in out and "no touch" in out
     # Warned once per scenario, not once per resize — this is guidance, not noise.
-    caplog.clear()
-    with caplog.at_level("WARNING"):
-        runner.execute_step("switches to mobile view", ctx)
-    assert "@mobile" not in caplog.text
+    runner.execute_step("switches to mobile view", ctx)
+    assert "@mobile" not in capsys.readouterr().out
 
 
 def test_desktop_width_does_not_warn(caplog):
