@@ -4,6 +4,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a35] — 2026-07-25
+
+**NOOD_0182** — fix: REST waits had no budget an author could set.
+
+Reported as *"a GET that takes 20 seconds fails"*. Verified — partly true, and
+worse than reported in one place:
+
+| Path | Before | Now |
+|------|--------|-----|
+| `waits for the response from '/api/x'` | **10s** (`NOODLE_TIMEOUT`, the *element* budget) → a 20s API answer failed | REST budget, 30s default |
+| `performs a GET call at '/x'` (all woks) | 30s hardcoded, unreachable; blew up as a raw `URLError(timed out)` | env + per-step, named failure |
+| `calls GET '...'` (Playwright request) | Playwright's invisible 30s | same budget |
+| `@perf` load generator | 30s hardcoded | same budget |
+
+One knob, `config.rest_timeout()` — `NOODLE_REST_TIMEOUT` (seconds, default
+30), deliberately separate from `NOODLE_TIMEOUT`: a report endpoint or a cold
+serverless call answers in minutes and a UI timeout has no business capping it.
+Per step, `within N seconds` overrides it:
+
+    When User performs a GET call at '/reports/annual' within 180 seconds
+    And User waits for the response from '/api/orders' within 90 seconds
+
+Every budget is a **ceiling, not a sleep** — the step continues the instant the
+response lands (socket-blocking / Playwright event, never a timer); a unit test
+pins that a 2s response under a 10s budget costs 2s.
+
+All woks: `rest_*` steps need no browser, so this is the same budget in `@api`,
+`@web`, `@appium`/mobile, desktop and `@perf` scenarios.
+
+A timeout now fails as an assertion that names the budget and both ways to
+raise it, instead of a bare `URLError`. Non-timeout `URLError`s (DNS, refused,
+TLS) still propagate untouched — those are real failures, not slow ones.
+
 ## [0.2.0a34] — 2026-07-25
 
 **NOOD_0181** — feature: mobile-web touch gestures, plus four capability gaps

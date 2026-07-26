@@ -138,7 +138,7 @@ def _hit(url: str, method: str, timeout_s: float) -> tuple[float, bool, int]:
 
 def run_load(url: str, users: int = 5, duration_s: float | None = None,
              total_requests: int | None = None, method: str = "GET",
-             timeout_s: float = 30.0) -> LoadResult:
+             timeout_s: float | None = None) -> LoadResult:
     """Hammer `url` with `users` concurrent workers until the duration elapses
     or the request budget is spent (exactly one of duration_s/total_requests).
 
@@ -148,6 +148,11 @@ def run_load(url: str, users: int = 5, duration_s: float | None = None,
     """
     if (duration_s is None) == (total_requests is None):
         raise ValueError("run_load needs exactly one of duration_s / total_requests")
+    # NOOD_0182 — same REST budget as every other wok: a backend that answers
+    # in 45s under load is slow, and the report should say so, not score every
+    # sample as a timeout error at a hardcoded 30s.
+    from noodle.config import rest_timeout
+    timeout_s = rest_timeout(timeout_s)
     # NOOD_0177 — this is a load generator whose target comes from a step
     # sentence, and wok.infer_tag routes anything mentioning "performance" here,
     # so "check the checkout page performance" could point a flood at production

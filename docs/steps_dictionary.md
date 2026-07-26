@@ -1090,6 +1090,20 @@ When performs a DELETE call at '/objects/{var:OBJ_ID}'
 When performs a DELETE call at '/objects/{var:OBJ_ID}' storing response in {var:DEL_RESP}
 ```
 
+**Slow endpoints (NOOD_0182).** A call gets 30 seconds by default. Raise it
+run-wide with `NOODLE_REST_TIMEOUT=180` (seconds) in `.env`, or per step:
+
+```gherkin
+When performs a GET call at '/reports/annual' within 180 seconds
+When performs a POST call at '/batch' with body '{"n": 1}' storing response in {var:JOB} within 120 seconds
+```
+
+The budget is a **ceiling, not a wait** — the step continues the instant the
+response arrives. It applies to every wok (`rest_` steps need no browser, so
+they run in `@api`, `@web`, `@appium` and desktop scenarios alike), to
+`calls GET '<url>'`, and to the `@perf` load generator's per-request timeout.
+Exceeding it fails the step with the budget and both ways to raise it named.
+
 ### Response Assertions
 
 ```gherkin
@@ -1684,7 +1698,8 @@ ready.
 | `waits until there are 10 'rows'` | Count wait — the correct "results loaded" check |
 | `waits until the 'total' changes` | Snapshots the text when the step starts |
 | `waits until the 'total' changes from '10'` | Explicit prior value |
-| `waits for the response from '/api/orders'` | **Waits for the NEXT matching response**, so it must follow the triggering step. If the call already finished, assert history instead: `a request to '/api/orders' should have been made` |
+| `waits for the response from '/api/orders'` | **Waits for the NEXT matching response**, so it must follow the triggering step. If the call already finished, assert history instead: `a request to '/api/orders' should have been made`. Budget: `NOODLE_REST_TIMEOUT` (30s), *not* the 10s element timeout — NOOD_0182 |
+| `waits for the response from '/api/orders' within 90 seconds` | Per-step budget for a slow backend. A **ceiling, not a wait**: the step continues the instant the response lands |
 | `scrolls until 'Item 100' is visible` | Infinite scroll / lazy load — `scrolls to 'X'` only reaches elements already in the DOM and never drives the loader |
 | `loads all results by scrolling` | Scrolls until the page stops growing |
 | `scrolls the 'sidebar' panel to the bottom` | Scrolls **inside** a named container (bottom/top/up/down/left/right) |

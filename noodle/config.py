@@ -97,6 +97,26 @@ def dev_fix_attempts() -> int:
         return 10
 
 
+def rest_timeout(override: float | None = None) -> float:
+    """NOOD_0182 — seconds a single HTTP call may take before the step fails.
+    One budget for every wok: the stdlib REST client (@api, and any scenario —
+    mobile/desktop included — since rest_ steps need no browser), Playwright's
+    `api_call`, the network-response wait, and the perf load generator.
+
+    Deliberately separate from NOODLE_TIMEOUT (Playwright per-action / element
+    budget): report endpoints, cold serverless and batch APIs answer in minutes,
+    and a UI timeout has no business capping them. A step's own
+    "within N seconds" wins over the env var.
+
+    ponytail: seconds (not ms) because every REST sentence says seconds."""
+    if override:
+        return float(override)
+    try:
+        return max(1.0, float(os.getenv("NOODLE_REST_TIMEOUT", "30")))
+    except ValueError:
+        return 30.0
+
+
 def load(workspace: str = ".") -> dict:
     """Merge noodle.yaml (if present) over the defaults.
 

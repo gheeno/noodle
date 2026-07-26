@@ -15,6 +15,20 @@ def _q(s: str) -> str:
     return s
 
 
+# NOOD_0182 — per-step REST budget: "... within 90 seconds" on any step that
+# waits on a backend (REST call, API call, response wait). Optional; without it
+# the run-wide NOODLE_REST_TIMEOUT applies.
+_WITHIN = r'(?:(?: and)? (?:with)?in (?:up to )?(\d+(?:\.\d+)?) seconds?)?'
+
+
+def _secs(raw: str | None) -> float | None:
+    return float(raw) if raw else None
+
+
+def _ms(raw: str | None) -> int | None:
+    return int(float(raw) * 1000) if raw else None
+
+
 # NOOD_0152 — direction words → pixel deltas, for the mouse-level drags.
 _DIRECTION_DELTA = {'right': (1, 0), 'left': (-1, 0), 'down': (0, 1), 'up': (0, -1)}
 
@@ -421,8 +435,8 @@ PATTERNS = [
     # Block requests to a URL glob (route.abort) — e.g. analytics/ads.
     (r'^blocks? requests? to ["\'](.+?)["\']$',    'block_route',    lambda m: {'url': _q(m.group(1))}),
     # API setup/teardown — call an endpoint directly (no browser nav).
-    (r'^calls? (GET|POST|PUT|DELETE|PATCH) ["\'](.+?)["\'](?: with body ["\'](.+?)["\'])?$',
-                                                   'api_call',       lambda m: {'method': m.group(1).upper(), 'url': _q(m.group(2)), 'body': m.group(3)}),
+    (r'^calls? (GET|POST|PUT|DELETE|PATCH) ["\'](.+?)["\'](?: with body ["\'](.+?)["\'])?' + _WITHIN + r'$',
+                                                   'api_call',       lambda m: {'method': m.group(1).upper(), 'url': _q(m.group(2)), 'body': m.group(3), 'timeout': _secs(m.group(4))}),
     # Load a resource file (payload, fixture, …) from the feature's resources/ folder.
     # Single file → stored in PAYLOAD (and PAYLOAD_<STEM> for consistency).
     (r"^uses? (?:this )?(?:payload|resource|fixture) ['\"](.+?)['\"]$",
@@ -897,10 +911,10 @@ PATTERNS = [
     # Network response wait — the correct replacement for "waits 3 seconds"
     # in an SPA. Previously MISSED into wait_visible, hunting the page for the
     # literal text "response from '/api/orders'".
-    (r'^waits? for (?:the )?(?:response|reply) (?:from|to|for) ["\'](.+?)["\']$',
-                                                   'wait_response',  lambda m: {'fragment': _q(m.group(1))}),
-    (r'^waits? for (?:the )?["\'](.+?)["\'] (?:request|call|api call) to (?:complete|finish|respond)$',
-                                                   'wait_response',  lambda m: {'fragment': _q(m.group(1))}),
+    (r'^waits? for (?:the )?(?:response|reply) (?:from|to|for) ["\'](.+?)["\']' + _WITHIN + r'$',
+                                                   'wait_response',  lambda m: {'fragment': _q(m.group(1)), 'timeout': _ms(m.group(2))}),
+    (r'^waits? for (?:the )?["\'](.+?)["\'] (?:request|call|api call) to (?:complete|finish|respond)' + _WITHIN + r'$',
+                                                   'wait_response',  lambda m: {'fragment': _q(m.group(1)), 'timeout': _ms(m.group(2))}),
     # Per-step wait timeout (NOOD_0009) — "for up to N seconds" overrides
     # NOODLE_TIMEOUT for this one wait. MUST precede the open-ended waits below.
     (r'^waits? until ["\'](.+?)["\'] (?:is visible|appears?|loads?) (?:for )?(?:up to |within )?(\d+) seconds?$',
@@ -1213,8 +1227,9 @@ PATTERNS = [
     (r"^performs? (?:a |an )?(GET|POST|PUT|PATCH|DELETE) (?:call|request) "
      r"(?:at|to|on) '([^']+)'"
      r"(?: with (?:request )?body '([^']+)')?"
-     r"(?: (?:and )?stor(?:e|es|ing) (?:the )?(?:response )?(?:as|in) [\[`]([^\]`]+)[\]`])?$",
-                                                   'rest_call',              lambda m: {'method': m.group(1).upper(), 'path': m.group(2), 'body': m.group(3), 'var': m.group(4)}),
+     r"(?: (?:and )?stor(?:e|es|ing) (?:the )?(?:response )?(?:as|in) [\[`]([^\]`]+)[\]`])?"
+     + _WITHIN + r"$",
+                                                   'rest_call',              lambda m: {'method': m.group(1).upper(), 'path': m.group(2), 'body': m.group(3), 'var': m.group(4), 'timeout': _secs(m.group(5))}),
     # Status code assertion.
     (r'^the response status(?: code)? should (?:be|equal) (\d+)$',
                                                    'rest_assert_status',     lambda m: {'expected': int(m.group(1))}),
