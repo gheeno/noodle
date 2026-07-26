@@ -119,10 +119,12 @@ def test_former_mis_routes_now_reach_the_right_action(step, expected_type):
 
 
 def test_email_steps_refuse_instead_of_string_comparing():
-    """There is no mail adapter. Falling through to assert_compare would
-    compare the literal words "the email" and produce an undiagnosable red,
-    so the step must refuse AT RESOLUTION with a usable workaround."""
-    with pytest.raises(AssertionError, match="no email adapter"):
+    """Message-content assertions have no adapter. Falling through to
+    assert_compare would compare the literal words "the email" and produce an
+    undiagnosable red, so the step must refuse AT RESOLUTION with a usable
+    workaround — for email (NOOD_0184) that workaround is the real one: the
+    IMAP one-time-code step."""
+    with pytest.raises(AssertionError, match="waits for an email code"):
         _r("the email should contain 'Verify your account'")
     with pytest.raises(AssertionError, match="no SMS adapter"):
         _r("the sms should contain '123456'")

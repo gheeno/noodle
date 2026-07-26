@@ -839,6 +839,45 @@ NOODLE_STORAGE_STATE=artifacts/session.json noodle run noodle_tests/web/myapp --
 
 ---
 
+## MFA / One-Time Codes
+
+Solve the MFA challenge itself (NOOD_0184) instead of bypassing it. Two
+sources, both configured in `secrets.env`.
+
+**TOTP (authenticator-app codes)** — computed from the base32 secret shown
+when the test account enrolled its authenticator (Google/Microsoft
+Authenticator, or an Entrust *soft token* enrolled as TOTP):
+
+```gherkin
+When User enters the one-time code for {env:MFA_SECRET} in the 'verification code' field
+When User stores the one-time code for {env:MFA_SECRET} in {var:OTP}
+```
+
+Without a `for …` clause the secret comes from `NOODLE_TOTP_SECRET`. The
+stored form composes with any wok — fill `{var:OTP}` into a mobile or
+desktop field with the normal fill steps.
+
+**Emailed codes (IMAP)** — polls the inbox until an unseen message carrying
+a 4-8 digit code arrives, newest first; the consumed message is marked read
+so a code is never handed out twice:
+
+```gherkin
+When User waits for an email code and stores it in {var:OTP}
+When User waits for an email code containing 'Verify' and stores it in {var:OTP} within 120 seconds
+```
+
+Config (`secrets.env`): `NOODLE_IMAP_HOST`, `NOODLE_IMAP_USER`,
+`NOODLE_IMAP_PASSWORD` (required); `NOODLE_IMAP_PORT` (993),
+`NOODLE_IMAP_FOLDER` (INBOX), `NOODLE_MAIL_TIMEOUT` (90s) optional — use a
+dedicated test inbox, never a personal account.
+
+**Still not automatable — by design:** Entrust push approvals, hardware
+tokens, and SMS. For those, enroll the test account with a TOTP soft token,
+ask for an MFA-exempt + IP-allowlisted test account, or fall back to
+Browser Session Persistence above.
+
+---
+
 ## Assertions — Value Comparison
 
 Used to compare stored variables against expected values.

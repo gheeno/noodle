@@ -52,10 +52,20 @@ def _edge_offset(locator: str, amount: str, direction: str) -> dict:
 
 
 def _no_mail_adapter(noun: str):
-    """NOOD_0152 — there is no mail/SMS adapter, so these steps cannot work.
-    They must fail HERE, at resolution, because they otherwise fall through to
+    """NOOD_0152 — general message-content assertions have no adapter, so
+    these steps must fail HERE, at resolution: they otherwise fall through to
     assert_compare, which string-compares the literal words "the email" and
-    produces a red nobody can diagnose. Refusing honestly beats pretending."""
+    produces a red nobody can diagnose. Refusing honestly beats pretending.
+    NOOD_0184 — the email arm now points at the one thing Noodle DOES read
+    email for: pulling an MFA/verification code out of an IMAP inbox."""
+    if noun == 'email':
+        raise AssertionError(
+            "Noodle reads email only to extract one-time codes, not to "
+            "assert on message content. For an MFA/verification code:\n"
+            "  When User waits for an email code and stores it in {var:OTP}\n"
+            "(needs NOODLE_IMAP_HOST/USER/PASSWORD in secrets.env). For "
+            "anything else, assert the on-page confirmation instead."
+        )
     raise AssertionError(
         f"Noodle has no {noun} adapter, so it can't read {noun} messages. "
         f"Assert the on-page confirmation instead, or fetch the message "
@@ -310,6 +320,21 @@ _IMG = (r'(?:image|img|picture|photo|carousel(?: item| tile| slide| card)?|'
         r'banner|flyer|logo|avatar|profile (?:picture|photo|image)|'
         r'thumbnail|tile|badge|poster|graphic|illustration|'
         r'hero(?: image| banner)?|ad|advert(?:isement)?)')
+
+# NOOD_0184 — every way authors name an MFA code. No capturing groups: the
+# fragment is spliced into patterns that number their own groups.
+_OTP = (r'(?:one-?time|totp|otp|mfa|2fa|authenticator|verification|security) '
+        r'(?:code|password|passcode|token|pin)')
+# Optional secret source: quoted (may contain the spaces authenticator apps
+# display) or a bare token. After runner.substitute an {env:X} that resolved
+# arrives as the raw base32 value; one that DIDN'T resolve arrives as [X] and
+# mfa.totp_code turns that into a "secret not set" error naming the variable.
+_OTP_FOR = r'(?: (?:for|from|using) (?:["\']([^"\']+)["\']|(\S+)))?'
+
+
+def _otp_secret(quoted: str | None, bare: str | None) -> str | None:
+    return quoted or bare or None
+
 
 # NOOD_0152 — nouns that mean "a bounded box on the page" for focus_element.
 # Sibling of _IMG: same action, but these are ordinary layout containers whose
@@ -588,6 +613,22 @@ PATTERNS = [
     # silently becomes a DOM fill hunting for a 'location prompt' element.
     (r'^(?:enters?|types?|answers?|provides?) .+? (?:in|into|to) (?:the )?(location|geolocation|notifications?|camera|microphone)(?: permission)? (?:prompt|pop-?up|bubble|request)$',
                                                    '_reject',        lambda m: _no_text_into_permission_prompt(m.group(1).lower())),
+
+    # NOOD_0184 — MFA one-time codes. All three MUST precede the generic fill
+    # and store_text patterns ("enters the one-time code…" is otherwise a DOM
+    # fill of the literal words; "stores the one-time code…" hunts the page
+    # for an element called "one-time code").
+    (rf'^(?:enters?|types?|fills? in|inputs?) (?:the )?{_OTP}{_OTP_FOR} '
+     rf'(?:in|into) (?:the )?["\'](.+?)["\'](?: field| box| input)?$',
+                                                   'totp_fill',      lambda m: {'secret': _otp_secret(m.group(1), m.group(2)), 'locator': _q(m.group(3))}),
+    (rf'^(?:stores?|saves?|generates?|gets?) (?:the )?{_OTP}{_OTP_FOR} '
+     rf'(?:as|into|in) [\[`]([^\]`]+)[\]`]$',
+                                                   'totp_store',     lambda m: {'secret': _otp_secret(m.group(1), m.group(2)), 'var': m.group(3)}),
+    # Emailed codes — poll the NOODLE_IMAP_* inbox until the code arrives.
+    (rf'^(?:waits? for|reads?|gets?|fetch(?:es)?) (?:an |the )?(?:latest |newest )?e-?mail(?:ed)? '
+     rf'(?:{_OTP}|code)(?: containing ["\'](.+?)["\'])? '
+     rf'and stor(?:es?|ing) (?:it )?(?:as|into|in) [\[`]([^\]`]+)[\]`]{_WITHIN}$',
+                                                   'email_code',     lambda m: {'match': _q(m.group(1)) if m.group(1) else None, 'var': m.group(2), 'timeout': _secs(m.group(3))}),
 
     # NOOD_0152 — email/SMS steps fail HERE rather than falling through to
     # assert_compare, which would literally compare the words "the email".

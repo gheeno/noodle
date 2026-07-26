@@ -222,6 +222,8 @@ VALID_TYPES = frozenset({
     'emulate_media', 'save_pdf',
     # NOOD_0183 — page clock control + pre-boot script injection
     'set_clock', 'freeze_clock', 'advance_clock', 'add_init_script',
+    # NOOD_0184 — MFA one-time codes: TOTP (RFC 6238) fill/store + IMAP email
+    'totp_fill', 'totp_store', 'email_code',
     # Phase J — multi-user contexts; Phase L — request/soft assertions
     'new_context', 'use_context', 'assert_request_made', 'soft_assert_check',
     # NOOD_0181 — address a tab/window by title or URL, past the two-page model

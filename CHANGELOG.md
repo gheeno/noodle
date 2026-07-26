@@ -4,6 +4,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a37] — 2026-07-26
+
+**NOOD_0184** — feature: MFA one-time codes — TOTP + email inbox.
+
+MFA'd test environments previously had one answer: session reuse
+(`NOODLE_STORAGE_STATE`). Now the challenge itself can be solved, stdlib-only
+(no new dependencies):
+
+- **TOTP (RFC 6238)** — `enters the one-time code for {env:MFA_SECRET} in
+  'verification code'` computes the authenticator-app code from the enrolled
+  base32 secret (accepted exactly as apps display it: spaces/dashes/case/
+  padding). `stores the one-time code … in {var:OTP}` composes with any wok.
+  Secret falls back to `NOODLE_TOTP_SECRET`; an unresolved `{env:X}` ref
+  fails naming the missing variable, not with a base32 stack trace. Verified
+  against the RFC 6238 Appendix B test vectors.
+- **Emailed codes (IMAP)** — `waits for an email code [containing 'Verify']
+  and stores it in {var:OTP} [within N seconds]` polls the
+  `NOODLE_IMAP_HOST/USER/PASSWORD` inbox (SSL, port 993) for unseen mail,
+  newest first, HTML bodies included; prefers a 6-digit code over date-like
+  numbers; marks only the consumed message read so a code is never handed
+  out twice. Budget: `NOODLE_MAIL_TIMEOUT` (90s) or the step's `within`.
+- The NOOD_0152 email refusal now points at the real workaround (the IMAP
+  code step) instead of a hand-rolled `call_function` mailbox.
+- Still refused, honestly: SMS, Entrust push approvals, hardware tokens —
+  un-automatable by design; enroll a TOTP soft token or use session reuse.
+
 ## [0.2.0a36] — 2026-07-26
 
 **NOOD_0183** — feature: parallel runs that don't collide, plus four web-wok gaps.
