@@ -263,6 +263,11 @@ def before_all(context):
     else:
         _clean_allure_results()
         log.attach_file_handler(str(_paths.logs_dir() / "noodle.log"))
+    # NOOD_0183 — this process's lane, 1..N (always 1 when sequential). Exported
+    # so a suite can give each lane its own account: define SHOP_USER_1..N and
+    # `{env:SHOP_USER}` resolves to this lane's, no feature-file change.
+    from noodle import runlock
+    os.environ["NOODLE_WORKER_INDEX"] = str(runlock.worker_index())
     healing.reset()
     # NOOD_0007 — fresh LLM budget + step-resolution memo per run.
     from noodle.llm import client as _llm_client
@@ -556,12 +561,82 @@ def _wire_capture_listeners(context):
     context.page.on("websocket", _on_websocket)
 
 
+# NOOD_0183 — one Playwright driver + browser per worker process, reused across
+# scenarios; measured 0.672s → 0.034s of per-scenario setup (driver spawn
+# 0.28s + launch 0.23s + first context 0.16s, against a bare new_context).
+# At 1000 scenarios that is ~11 minutes of pure process spawning removed, and
+# it is what Playwright's own runner does: browser per worker, context per test.
+# Keyed on everything that changes what the browser IS — engine, channel,
+# headless, slow_mo, args, remote endpoint — so an @firefox or @headed scenario
+# never gets served the wrong one. NOODLE_REUSE_BROWSER=0 restores relaunching.
+_browsers: dict[tuple, tuple] = {}
+
+
+def _reuse_browsers() -> bool:
+    return os.getenv("NOODLE_REUSE_BROWSER", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _launch(engine, launch_opts, remote_url):
+    pw = sync_playwright().start()
+    browser_type = getattr(pw, engine)
+    if remote_url:
+        browser = browser_type.connect(remote_url, slow_mo=launch_opts.get("slow_mo", 0))
+        logger.info(f"\n  🌐 Connected to remote browser: {remote_url.split('?')[0]}")
+    else:
+        if launch_opts.get("args"):
+            logger.info(f"\n  🚩 Extra browser args: {launch_opts['args']}")
+        browser = browser_type.launch(**launch_opts)
+    return pw, browser
+
+
+def _browser_for(engine, launch_opts, remote_url):
+    """The (playwright, browser) pair for these launch options — cached unless
+    reuse is off. A browser that died between scenarios (crash, external kill)
+    is evicted and relaunched once, so one bad scenario can't poison the rest
+    of the file."""
+    if not _reuse_browsers():
+        return _launch(engine, launch_opts, remote_url)
+    key = (engine, remote_url, tuple(sorted(
+        (k, tuple(v) if isinstance(v, list) else v) for k, v in launch_opts.items())))
+    cached = _browsers.get(key)
+    if cached is not None and cached[1].is_connected():
+        return cached
+    if cached is not None:
+        _close_pair(cached)
+        del _browsers[key]
+    _browsers[key] = _launch(engine, launch_opts, remote_url)
+    return _browsers[key]
+
+
+def _close_pair(pair) -> None:
+    pw, browser = pair
+    for closer in (browser.close, pw.stop):
+        try:
+            closer()
+        except Exception:
+            pass
+
+
+def close_cached_browsers() -> None:
+    for pair in list(_browsers.values()):
+        _close_pair(pair)
+    _browsers.clear()
+
+
 def before_scenario(context, scenario):
     log.bind(scenario=scenario.name)  # NOOD_0171 — correlation
     context._noodle_scenario_t0 = time.monotonic()  # NOOD_0173 — scenario.end duration
     log.telemetry("scenario.start", "▶️ scenario.start",
                   tags=sorted(scenario.effective_tags))
     tags = set(scenario.effective_tags)
+
+    # NOOD_0183 — @serial / @lock:<name>: hold a cross-worker mutex for the
+    # whole scenario. Taken BEFORE any skip check below so a scenario that
+    # skips never leaves a lock behind (after_scenario releases either way),
+    # and before the browser launch so a waiting lane isn't burning a browser.
+    from noodle import runlock
+    for _lock in runlock.lock_names(tags):
+        runlock.acquire(_lock)
 
     # @live scenarios hit a real external site — opt-in only, so CI and casual
     # runs never make surprise network calls. Set NOODLE_RUN_LIVE=1 to run.
@@ -700,24 +775,17 @@ def before_scenario(context, scenario):
 
     timeout = int(os.getenv("NOODLE_TIMEOUT", "10000"))
 
-    context._pw = sync_playwright().start()
     engine, channel = _ENGINE_ALIASES.get(browser_name, (browser_name, None))
-    browser_type = getattr(context._pw, engine)
     # Phase H (F4) — NOODLE_REMOTE_URL points at a remote Playwright/CDP
     # endpoint (BrowserStack, Sauce Labs, a Playwright grid): connect instead
     # of launching locally. The rest of the lifecycle is identical.
     remote_url = os.getenv("NOODLE_REMOTE_URL")
-    if remote_url:
-        context._browser = browser_type.connect(remote_url, slow_mo=slow_mo)
-        logger.info(f"\n  🌐 Connected to remote browser: {remote_url.split('?')[0]}")
-    else:
-        launch_opts = {"headless": headless, "slow_mo": slow_mo}
-        if channel:
-            launch_opts["channel"] = channel
-        if extra_args := _browser_args():
-            launch_opts["args"] = extra_args
-            logger.info(f"\n  🚩 Extra browser args: {extra_args}")
-        context._browser = browser_type.launch(**launch_opts)
+    launch_opts = {"headless": headless, "slow_mo": slow_mo}
+    if channel:
+        launch_opts["channel"] = channel
+    if extra_args := _browser_args():
+        launch_opts["args"] = extra_args
+    context._pw, context._browser = _browser_for(engine, launch_opts, remote_url)
 
     ctx_opts = {"ignore_https_errors": ignore_https_errors(tags)}
     device_name = _device_from(tags, context._pw.devices)
@@ -1157,11 +1225,15 @@ def after_scenario(context, scenario):
     # Bug 6: clean up each resource independently so a failure on one
     # (e.g. _bctx never created) does not skip stopping _pw and leak
     # an orphaned browser process.
-    for attr, method in [
-        ("_bctx",    lambda r: r.close()),
-        ("_browser", lambda r: r.close()),
-        ("_pw",      lambda r: r.stop()),
-    ]:
+    # NOOD_0183 — with browser reuse on (the default) only the CONTEXT closes
+    # here: it is the unit that owns cookies, storage, cache, permissions and
+    # pages, so a fresh one per scenario is the same isolation the old
+    # relaunch bought, minus 0.64s of process spawning. The browser and the
+    # Playwright driver stay in the per-process cache and close in after_all.
+    _teardown = [("_bctx", lambda r: r.close())]
+    if not _reuse_browsers():
+        _teardown += [("_browser", lambda r: r.close()), ("_pw", lambda r: r.stop())]
+    for attr, method in _teardown:
         # NOOD_0025: none of these are set for @api/@appium scenarios — same
         # ctx_get requirement as above.
         resource = ctx_get(context, attr, None)
@@ -1170,6 +1242,12 @@ def after_scenario(context, scenario):
                 method(resource)
             except Exception:
                 pass
+
+    # NOOD_0183 — release every lock this scenario took, pass or fail. Runs
+    # after teardown so the next lane never sees a half-closed browser holding
+    # the shared account.
+    from noodle import runlock
+    runlock.release_all()
 
     # NOOD_0173 — scenario.end telemetry (feature/scenario ride the correlation
     # context; status is behave's final Status enum).
@@ -1183,6 +1261,13 @@ def after_scenario(context, scenario):
 
 def after_all(context):
     _run_hooks("after_all", context)
+    # NOOD_0183 — the reused browsers outlive every scenario; this is the only
+    # place they close. Do it before the report build so a wedged browser can't
+    # keep the process alive past the artifacts a run is judged on.
+    close_cached_browsers()
+    from noodle import runlock
+    runlock.release_all()
+    runlock.release_worker_index()
     parallel = os.getenv("NOODLE_PARALLEL_WORKER") == "1"
     rdir = _paths.results_dir()
     # In parallel mode keep every output inside the worker's own dir and skip

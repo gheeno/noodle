@@ -155,6 +155,14 @@ class TestBrowserValidation:
 # ---------------------------------------------------------------------------
 
 class TestAfterScenarioCleanup:
+    @pytest.fixture(autouse=True)
+    def _relaunch_per_scenario(self, monkeypatch):
+        """NOOD_0183 — this class pins the relaunch-per-scenario teardown, which
+        is now what NOODLE_REUSE_BROWSER=0 selects. The default (reuse on)
+        deliberately leaves the browser open for the next scenario and closes it
+        in after_all — TestBrowserReuse pins that half."""
+        monkeypatch.setenv("NOODLE_REUSE_BROWSER", "0")
+
     def test_all_three_resources_closed_on_success(self):
         from noodle import hooks
 
@@ -319,7 +327,7 @@ class TestCustomHookRegistry:
 
         assert order == [1, 2]
 
-    def test_raising_hook_does_not_block_later_hooks_or_cleanup(self, clean_registry):
+    def test_raising_hook_does_not_block_later_hooks_or_cleanup(self, clean_registry, monkeypatch):
         """NOOD_0025: a crashing user hook (e.g. tests/steps/custom_hooks.py's
         log_timing touching context.session_id when before_scenario's own
         preconditions.run() aborted first) used to propagate out of
@@ -331,6 +339,8 @@ class TestCustomHookRegistry:
         """
         from noodle import hooks
 
+        # NOOD_0183 — pin the full three-resource cleanup, so reuse off.
+        monkeypatch.setenv("NOODLE_REUSE_BROWSER", "0")
         order = []
         hooks.register("after_scenario", lambda ctx, sc: (_ for _ in ()).throw(
             AttributeError("session_id")))

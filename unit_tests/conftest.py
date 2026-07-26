@@ -60,6 +60,20 @@ def _reset_mcp_allowed_roots():
 
 
 @pytest.fixture(autouse=True)
+def _reset_browser_cache():
+    """NOOD_0183 — hooks._browsers caches one browser per launch-option key for
+    the life of the process, so a MagicMock browser cached by one test would be
+    handed to the next (its is_connected() is a truthy Mock) and that test's
+    `launch.assert_called_once()` would see zero launches. Also stops a real
+    browser leaking between tests."""
+    yield
+    import sys
+    hooks = sys.modules.get("noodle.hooks")
+    if hooks is not None:
+        hooks._browsers.clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_noodle_console_stream():
     """NOOD_0172 — server.main() calls log.route_console_to_stderr(), a
     process-global flip of the console handler; without restoring it every

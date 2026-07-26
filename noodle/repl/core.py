@@ -461,7 +461,11 @@ def preflight(target: str | None = None, workspace: str = ".", *,
         warnings += validate.redundant_post_nav_waits(text)
     missing, errors = [], []
     for key in refs:
-        if _is_placeholder(env.get(key)):
+        # NOOD_0183 — a suite using per-lane credentials defines SHOP_USER_1..N
+        # and no bare SHOP_USER; that resolves fine at run time (runner.substitute
+        # picks this worker's lane), so preflight must not call it missing.
+        if _is_placeholder(env.get(key)) and \
+                all(_is_placeholder(env.get(f"{key}_{n}")) for n in range(1, 9)):
             missing.append(key)
             errors.append(
                 f"{{env:{key}}} is {'missing' if key not in env else 'a placeholder'} "

@@ -4,6 +4,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.2.0a36] — 2026-07-26
+
+**NOOD_0183** — feature: parallel runs that don't collide, plus four web-wok gaps.
+
+### Parallel
+
+Audited `--parallel` against the "hundreds to thousands of scenarios" case.
+The scheme was already right — sharding is per **feature file**, so scenarios
+inside one file always run sequentially in one process and a file whose
+scenarios share a login is safe by construction. Four things around it were
+not.
+
+| Weakness | Fix |
+|---|---|
+| Evidence files collided **by name** across workers — `FAILED_<step text>.png`, `EVIDENCE_<step text>.jpg`, `<scenario>.zip`, `<scenario>.json` all shared one dir, so two features sharing a step sentence wrote the same file from two processes, and Allure attached whichever write won | each worker gets a `p<pid>/` leaf under `screenshots/`, `traces/`, `videos/`, `network/` |
+| Every scenario relaunched the Playwright driver *and* a browser — measured **0.672s** of pure setup per scenario (driver 0.28s, launch 0.23s, first context 0.16s) | one browser per worker, a fresh **context** per scenario — the same isolation (cookies/storage/cache/permissions are context-scoped) for **0.034s**. `NOODLE_REUSE_BROWSER=0` restores the old behaviour |
+| No way to say "these two feature files share one account" | `@serial` / `@lock:<name>` — a cross-process mutex (atomic `mkdir`, no dependency), held per scenario, released on pass *or* fail, stale locks broken after `NOODLE_LOCK_TTL` |
+| N workers logging in as the *same* user | `NOODLE_WORKER_INDEX` (lane 1…N) + numbered keys: define `SHOP_USER_1..4` and `{env:SHOP_USER}` resolves to this lane's account with no feature-file change. Sequential runs are lane 1, so a lane-aware suite behaves identically either way |
+
+Measured on the 106-scenario BusterBlock sample: 175s → **142s** sequential
+(browser reuse alone), 106 passed / 0 failed both ways. Lock verified with
+three feature files across three worker processes — critical sections strictly
+non-overlapping (4.3s), and overlapping when the tag is removed (1.5s).
+
+New flags: `--sequential` (beats `$NOODLE_PARALLEL_PROCESSES`), `--parallel -1`
+(one worker per core), `--failed` (re-run only last run's failures), `--name`
+(filter by scenario name). `--parallel-scheme scenario` now warns that it
+splits a single feature file across workers, and a headed parallel run warns
+about the window pile-up.
+
+### Web wok
+
+Audited the ~200-action vocabulary against how Playwright and Selenide are
+actually used. Four real gaps (relative locators, `nth()`, and HAR replay were
+checked and deliberately **not** added — `in row`/`in section` scoping,
+ambiguity-as-an-error, and `mock_route` already cover them):
+
+- **Traces were written and never mentioned again.** Every failed web scenario
+  saves a full Playwright trace, but the only pointer to it was one console
+  line that `--quiet` — the default for agents and CI — discards. `rca.md` now
+  lists each failure's trace with a copy-pasteable `playwright show-trace`.
+- **Clock control** — `sets the clock to '2026-01-01'`, `freezes the clock`,
+  `advances the clock by 30 days`. Anything rendered from today's date
+  (countdowns, "expires in 3 days", session timeouts, month-end totals) was
+  untestable without waiting for real time.
+- **Pre-boot script injection** — `runs the script '…' before every page load`.
+  `runs the script` fires after load, so it could not stub what an app reads at
+  boot: a feature flag, an analytics SDK, a seeded `localStorage` token.
+
+### Also
+
+- `unit_tests/test_nood_0181.py::test_narrow_viewport_warns_that_it_is_not_mobile`
+  was red on `main` — it asserted on `caplog`, but Noodle's logger does not
+  propagate to root, so it never saw the warning it checks. Switched to
+  `capsys`; the engine behaviour was correct all along.
+
 ## [0.2.0a35] — 2026-07-25
 
 **NOOD_0182** — fix: REST waits had no budget an author could set.

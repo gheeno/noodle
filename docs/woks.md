@@ -55,7 +55,7 @@ to what `hooks.py`/`catch_all.py` actually do.
 
 What Noodle grew up on: Playwright-driven browser automation with
 accessibility-first locators, POM fallback, self-healing, tracing, network
-capture. REST testing (`@api`) and the pixel/OCR bridge for canvas and
+capture, clock control and pre-boot script injection. REST testing (`@api`) and the pixel/OCR bridge for canvas and
 browser-embedded terminal UIs (`@terminal`) ride in this wok because they
 share the web session lifecycle. Nothing about it changed in NOOD_0155 —
 the wok concept formalizes the boundary around it.

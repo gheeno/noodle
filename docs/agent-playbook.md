@@ -399,6 +399,24 @@ Conventions actually enforced/expected by this codebase:
 | `{pom:NAME}` | Explicit POM-key resolver — forces a `pom.yaml` lookup even when the plain text would otherwise resolve some other way | `{pom:login button}` |
 | `[NAME]`, `` `NAME` `` | **Legacy** — still resolve (env / var respectively) with a one-time deprecation warning per ref. Don't use in new tests. | — |
 
+**Per-lane credentials (NOOD_0183).** Under `--parallel`, each worker gets a
+lane number (`NOODLE_WORKER_INDEX`, 1…N; always 1 sequentially). If the suite
+defines numbered keys, `{env:KEY}` resolves to *this lane's* value — the
+`.feature` file is unchanged and needs no new syntax:
+
+```bash
+SHOP_USER_1=tester1     # secrets file — four lanes, four real accounts
+SHOP_USER_2=tester2
+SHOP_USER_3=tester3
+SHOP_USER_4=tester4
+```
+
+A lane with no numbered key falls back to plain `SHOP_USER`, so this is opt-in
+by defining the numbers, and a suite written for lanes runs identically
+sequentially. This is the right answer to *"N workers can't all log in as the
+same user"* — reach for `@serial`/`@lock:` only when a second account is
+genuinely unavailable.
+
 ### Tag vocabulary
 
 Functional tags — each one changes engine behavior, confirmed by reading
@@ -438,6 +456,7 @@ just this list:
 | `@slow` | 500ms delay between actions (debugging) |
 | `@record_video` | Record a `.webm`, saved to `artifacts/videos/` |
 | `@precondition:NAME` | Runs `NAME`'s `setup:` HTTP calls (from `preconditions.yaml`) before the scenario, `teardown:` after — even on failure |
+| `@serial` / `@lock:NAME` | **Parallel safety (NOOD_0183).** Holds a cross-worker mutex for the scenario, released on pass *or* fail. `@serial` = one global lane; `@lock:warehouse_stock` = one lane per named resource. Only needed when two **different feature files** touch the same real-world thing (one account, one seeded record, one port) — scenarios *inside* one file are already sequential. Prefer per-lane credentials (below) when the app can give you more than one account: a lock serializes the very scenarios you parallelized |
 | `@page:NAME` | Pin the active POM page context when the URL alone can't identify which page's `pageobjects/*_pom.yaml` applies |
 | `@audit` | Extra audit log line per scenario (this repo's own `sample_feature_tests/steps/custom_hooks.py` convention, not core engine) |
 
