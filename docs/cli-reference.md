@@ -546,7 +546,7 @@ noodle feature-regression [--score results.json]
 
 | Flag / arg | Default | Purpose | When to use |
 |---|---|---|---|
-| (none) | — | Print the runbook: setup, the fixed benchmark test cases, per-test-case measurement protocol, results schema | After developing new engine capabilities; also a self-contained demo |
+| (none) | — | Print the runbook: setup, the fixed benchmark test cases, per-test-case measurement protocol, results schema — **exits 2**: the printed protocol is not a run, so exit 0 can never read as a completed benchmark (NOOD_0189) | After developing new engine capabilities; also a self-contained demo |
 | `--init` | off | Scaffold a fresh `regression_runs/<stamp>_<build>/` workspace — a new gitignored folder every run; features, reports, results.json and verdict.json all stay inside it | First step of every benchmark run — never reuse an old workspace |
 | `--score` | none | Score a filled results JSON: per-TC breakdown + averages + `PASS`/`REGRESSED` verdict, exit 1 on REGRESSED; writes `verdict.json` + `verdict.html` next to the results file and serves the scorecard at `/verdict.html` beside Allure/RCA | Last step of the runbook, or in a script |
 

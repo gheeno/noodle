@@ -164,5 +164,32 @@ def test_cli_exit_codes(tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({"test_cases": [_tc(aic=99)]}))
     assert r.invoke(cli.app, ["feature-regression", "--score", str(bad)]).exit_code == 1
+    # bare-command exit code owned by test_bare_command_exits_non_zero…
     assert "tc1_search_suggestion (prompt)" in r.invoke(
         cli.app, ["feature-regression"]).output
+
+
+def test_zero_cost_without_a_host_basis_is_not_a_measurement():
+    """NOOD_0189 — `aic: 0` used to satisfy `0 > cap` and pass silently,
+    while `null` failed as a missing measurement: the placeholder scored
+    better than the omission it stood for."""
+    v = regression.score({"test_cases": [
+        _tc(aic=0, cost_basis="measured: host billing unavailable; floor=0"),
+        _tc(id="tc2_account_textboxes")]})
+    assert v["verdict"] == "REGRESSED"
+    assert any("unmeasured cost" in r for r in v["regressions"])
+
+
+def test_zero_cost_is_accepted_when_the_host_reported_it():
+    v = regression.score({"test_cases": [
+        _tc(aic=0, cost_basis="host-reported"),
+        _tc(id="tc2_account_textboxes")]})
+    assert v["verdict"] == "PASS"
+
+
+def test_bare_command_exits_non_zero_so_a_runbook_is_never_a_result():
+    """NOOD_0189 — the printed protocol was reported as a completed run
+    because exit 0 read as success."""
+    out = CliRunner().invoke(cli.app, ["feature-regression"])
+    assert out.exit_code != 0
+    assert "NOT a run" in out.output

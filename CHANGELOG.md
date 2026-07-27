@@ -4,6 +4,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a5] — 2026-07-27
+
+**NOOD_0189** — fix: the regression benchmark's cost AC is now falsifiable.
+
+A 2026-07-27 benchmark session produced a PASS that hid two failures: the
+bare `noodle feature-regression` (exit 0) was reported as a completed run,
+and a placeholder `aic: 0` satisfied the `> cap` cost check while `null`
+would have failed loudly.
+
+- `score()` rejects a cost of 0 as "unmeasured cost" unless `cost_basis`
+  starts with `host-reported` — a driving agent always bills something
+- bare `noodle feature-regression` exits 2 (1 already means REGRESSED /
+  stale install) and the runbook's last line states it is NOT a run
+- three pinning tests in `unit_tests/test_nood_0185.py`
+
 ## [1.0.0a4] — 2026-07-27
 
 **NOOD_0188** — feature: the NOOD_0187 deferred batch — goal-grammar growth,
