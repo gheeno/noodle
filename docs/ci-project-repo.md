@@ -63,7 +63,7 @@ resources:
     - repository: noodle
       type: git                    # 'github' for a GitHub-hosted engine
       name: Tooling/noodle         # <Project>/<Repo> in Azure Repos
-      ref: refs/tags/1.0.0a7       # pin it — a moving ref is not a build
+      ref: refs/tags/1.0.0a9       # pin it — a moving ref is not a build
 
 jobs:
   # …the project's own build / deploy jobs stay as they are…
@@ -95,6 +95,20 @@ by `.feature` file, runs headless, and publishes everything.
 | `historyRuns` | `30` | trend runs retained |
 | `jobName` | `noodle_tests` | prefix, if you need two of these in one pipeline |
 
+**The tag has to exist.** `ref:` resolves against the *engine* repo, so
+whoever releases the engine tags it there — bumping `pyproject.toml` is not
+enough, and in Azure Repos an unresolvable ref fails the pipeline at
+compile time (before any job runs, so there's no log to read). One command per
+release, in the engine clone:
+
+```bash
+git tag 1.0.0a9 && git push origin 1.0.0a9      # no 'v' prefix
+```
+
+Without tags, every project ends up tracking a branch, and "which engine ran
+this build?" stops having an answer. `/api/health` and `noodle --version` report
+what a given agent actually installed.
+
 **Pin the engine.** `ref: refs/tags/<version>` — versions are `1.0.0aN` during
 alpha, `1.0.0bN` in beta, then `1.0.0`. No `v` prefix. Bump the ref
 deliberately; a project that tracks a branch is not running a reproducible
@@ -114,6 +128,13 @@ the engine at a Key Vault:
 Grant the agent identity `get` + `list` on that vault and the engine resolves
 every key from it at run time. One variable to map instead of a per-project
 list.
+
+Key Vault needs the engine's `azure` extra, and the template installs it for
+you when `keyVaultUrl` is set — you don't also pass `extras: '[azure]'`
+(NOOD_0193; before this the install went green and the run then died at
+`before_all` with "the Azure SDK is missing"). An unset variable that Azure
+leaves as the literal `$(NOODLE_KEYVAULT_URL)` counts as "no vault", exactly as
+the engine reads it.
 
 Not on Key Vault? Use the escape hatch:
 
@@ -149,8 +170,14 @@ the Allure report.
 The template already handles the three things that break a first run on a
 locked-down corporate agent, so you shouldn't have to discover them:
 
-1. **No `sudo`.** Nothing is installed globally; the Allure CLI goes into a
-   workspace-local directory.
+1. **No `sudo`.** Nothing Noodle needs is installed globally; the Allure CLI
+   goes into a workspace-local directory. The one step that *would* want root
+   is `playwright install --with-deps`, which apt-gets the browser's system
+   libraries — so the template only uses it when passwordless `sudo` is
+   actually available, and otherwise downloads the browser alone and warns
+   (NOOD_0193). If Chromium then fails to launch, the agent image is missing
+   those libs: have an admin run `playwright install-deps` on it **once**.
+   MS-hosted `ubuntu-latest` needs none of this.
 2. **`allure` bin-name collisions.** An agent-local npm registry can shadow
    the `allure` package name. The template installs by exact version and
    invokes the *resolved* binary, failing loudly if its `--version` doesn't

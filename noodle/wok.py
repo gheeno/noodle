@@ -80,6 +80,9 @@ WOKS: dict[str, Wok] = {
     #   2. The API WOK is the browserless LIFECYCLE for suites whose subject
     #      IS the API. `@api` means "start no browser" — a CI-image and
     #      startup-cost decision, NOT permission to use REST steps.
+    # NOOD_0193 — this wok is Noodle TESTING someone's REST service. Not the
+    # "engine API" (noodle/mcp/rest.py, `/api/*`), which is another system
+    # driving Noodle. Same word, opposite direction; docs/glossary.md pins it.
     "api": Wok(
         name="api",
         title="API",

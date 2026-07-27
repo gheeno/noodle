@@ -22,6 +22,25 @@ which one you mean removes most ambiguity about where a change lands.
 The three compose: the **engine** runs a **workspace**'s tests, each
 scenario cooking in one (or, composed, several) **woks**.
 
+### "API" means two different things — say which (NOOD_0193)
+
+Noodle both *tests* APIs and *is* callable as one. Two unrelated things, one
+word, so the docs and prompts always qualify it:
+
+| Say this | Means | The system under test is | Where |
+|---|---|---|---|
+| **the api wok** | Noodle testing someone's REST service | their API | `@api` tag, `sample_feature_tests/api/`, [woks.md § API](woks.md#api) |
+| **the engine API** | another system driving Noodle over HTTP | nothing — this is the *caller* side | `/api/*` on `noodle-mcp`, [engine-api-guide.md](engine-api-guide.md) |
+
+They meet in exactly one harmless place: `POST /api/tools/run_and_report`
+with `{"tag": "api"}` uses the engine API to run api-wok tests.
+
+Unqualified "the API" in an issue or a prompt is ambiguous — the engine API is
+an **engine surface**, alongside the CLI, the MCP server and the LSP, so it
+lands in engine code; the api wok is a **capability**, so extending it lands in
+the wok's patterns and per-wok tests. Different change, different reviewer,
+different tests.
+
 ## Configuration files
 
 | What you're configuring | File | Notes |

@@ -70,7 +70,7 @@ No prior AI, automation, or Python experience assumed.
 | [docs/workspace-guide.md](docs/workspace-guide.md) | manual testers / QE leads | Full walkthrough for a workspace living outside this repo — scaffolding, POM mapping, custom scripts, naming rules, reports |
 | [docs/glossary.md](docs/glossary.md) | everyone | The three canonical nouns (**engine** / **workspace** / **wok**) + where to find everything — env vars, YAML files, outputs, resources |
 | [docs/steps_dictionary.md](docs/steps_dictionary.md) | testers & maintainers | All built-in step patterns with phrasings and examples — plus [Adding a new step](docs/steps_dictionary.md#adding-a-new-step): the 4-tier ladder, how to add a pattern to `patterns.py`, and why the editor may warn on a step that already matches |
-| [docs/woks.md](docs/woks.md) | everyone | The **woks** — Noodle's four capability work areas (web, mobile, desktop, performance): engines, routing tags, cross-wok composition, per-wok unit tests. `noodle wok` lists them |
+| [docs/woks.md](docs/woks.md) | everyone | The **woks** — Noodle's five capability work areas (web, api, mobile, desktop, performance): engines, routing tags, cross-wok composition, per-wok unit tests. `noodle wok` lists them |
 | [docs/architecture.md](docs/architecture.md) | learning the tech | Deep dive: components, resolution hierarchy, the LLM layer, tech stack |
 | [docs/design-history.md](docs/design-history.md) | maintainers | The rationale trail behind every capability, condensed from the build phases — including the retired target-architecture vision sketch and the RCA design plan |
 | [docs/codebase-spec.md](docs/codebase-spec.md) | maintainers | Formal repo inventory — every package, entrypoint, data layout, and config surface, as of a point in time. Not a how-to. |
@@ -82,6 +82,7 @@ No prior AI, automation, or Python experience assumed.
 | [.claude/skills/noodle/SKILL.md](.claude/skills/noodle/SKILL.md) | AI coding agents | The playbook condensed into an installable skill (same file at `.copilot/skills/noodle/`) — install steps: [§ Install the noodle skill](#install-the-noodle-skill-claude-code--copilot-cli) |
 | [docs/external-site-walkthrough.md](docs/external-site-walkthrough.md) | new users, AI coding agents | Worked example: a real suite built against a live external site, direct-CLI (not `noodle repl`), including the real failures hit and fixed along the way |
 | [docs/mcp-guide.md](docs/mcp-guide.md) | AI SDLC integrators | `noodle-mcp` setup, local quickstart, tool reference, design rationale, and MAF / Azure AI Foundry wiring (stdio + remote) |
+| [docs/engine-api-guide.md](docs/engine-api-guide.md) | developers calling Noodle from their own service | The **engine API** — drive Noodle over plain HTTP (`/api/*`) from Java/.NET/Node/CI with no MCP: install, start, Swagger UI, and a worked example per operation (author, update, run serial or parallel, reports). Spec: [docs/openapi.json](docs/openapi.json). Not the **api wok** (testing someone's REST service) — see [docs/woks.md](docs/woks.md#api) |
 | [docs/ai-sdlc-integration.md](docs/ai-sdlc-integration.md) | Azure DevOps admins, multi-agent AI SDLC integrators | One-time Azure DevOps setup, wiring a LangChain/MAF agent to generate/run tests via `noodle-mcp`, and a worked multi-agent Squad-pattern example |
 
 **Quick links:**
@@ -183,10 +184,12 @@ inside its own folder.
 
 ## How it works
 
-Two ways to drive Noodle — same six things happen either way (write a new
-test, update one, add custom code for a step nothing built-in covers,
-resolve variables/step wording, run the suite, generate the reports); only
-*who types what* changes.
+Three ways to drive Noodle — the same six things happen whichever you pick
+(write a new test, update one, add custom code for a step nothing built-in
+covers, resolve variables/step wording, run the suite, generate the
+reports); only *who types what* changes. The first two are below; the third
+is [API mode](#api-mode--drive-noodle-from-your-own-service), for a service
+calling Noodle over plain HTTP.
 
 **MCP mode** — an AI coding agent (Claude Code, GitHub Copilot) drives
 Noodle for you via [MCP](docs/manual.md#mcp-server--noodle-mcp-ai-sdlc) ("Model Context
@@ -225,6 +228,35 @@ flowchart TD
     E --> F(["You read the pass/fail summary,<br/>the Allure report, and the RCA report yourself"])
 ```
 
+### API mode — drive Noodle from your own service
+
+The third way, when the caller is **another system** rather than a person or
+an agent sitting in your editor: a Java/.NET/Node service or a CI job that
+can't speak MCP. Start the server, then POST to it — no MCP handshake, no
+session id, no Python on the calling side:
+
+```bash
+export NOODLE_MCP_API_KEY="$(openssl rand -hex 24)"
+noodle-mcp --transport streamable-http --port 8100 --workspace-root ~/noodle_tests
+```
+
+```bash
+curl -X POST http://localhost:8100/api/tools/run_and_report \
+  -H "Authorization: Bearer $NOODLE_MCP_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"headless": true, "serve_reports": true}'
+```
+
+Every MCP tool is reachable this way — author a test, update one, run it
+serially or in parallel, fetch the Allure + RCA reports. Browse them live at
+`/api/docs` (Swagger UI), generate a client from
+[docs/openapi.json](docs/openapi.json), and read the worked example per
+operation in **[docs/engine-api-guide.md](docs/engine-api-guide.md)**.
+
+> This is the **engine API** — something else driving Noodle. It is *not*
+> the **api wok**, which is Noodle testing someone else's REST service with
+> `@api` ([docs/woks.md](docs/woks.md#api)). Same word, opposite direction.
+
 | Mode | `NOODLE_LLM_MODE` | `NOODLE_MODEL` | Behaviour |
 |------|---------------------|-----------------|-----------|
 | **Off** *(default)* | *(unset)* | *(unset)* | Patterns only. Unresolved step fails loudly. Fully local, zero cost. |
@@ -250,16 +282,17 @@ flowchart TD
 
 ## Woks — the work areas, and the tags that route them
 
-Noodle tests four kinds of system, each a **wok** (a capability work area —
+Noodle tests five kinds of system, each a **wok** (a capability work area —
 the name puns on "WOrK area"). You never configure a wok — **the tags at
 the top of a `.feature` file (or on one scenario) pick it**, and the engine
 sets up the right session before the scenario runs. Same Gherkin, same
-screenshots-into-Allure + RCA reporting in all four. Run `noodle wok` to
+screenshots-into-Allure + RCA reporting in all five. Run `noodle wok` to
 see them with per-machine install status.
 
 | Wok | Put these tags on the feature/scenario | What the engine starts |
 |-----|---|---|
-| **Web** *(default)* | `@web` (or no tag at all) · `@api` (REST, no browser) · `@terminal` (canvas/xterm UIs via OCR) | A Playwright browser (`@api` skips it) |
+| **Web** *(default)* | `@web` (or no tag at all) · `@terminal` (canvas/xterm UIs via OCR) | A Playwright browser |
+| **API** | `@api` (REST — the subject *is* the service) | Nothing: browserless, so a REST-only suite needs no Playwright install. REST steps themselves work in **any** scenario untagged; `@api` only skips the browser |
 | **Mobile** | `@appium`, or `@android` / `@ios` (imply `@appium` + default capabilities) | An Appium session on your device/emulator |
 | **Desktop** | `@visual` (pixel agent: OpenCV + OCR — any UI that renders) · `@windows` / `@mac` (native apps via Appium) | The visual agent, or Appium's WinAppDriver/Mac2 |
 | **Performance** | `@perf` | No browser — the built-in load generator |

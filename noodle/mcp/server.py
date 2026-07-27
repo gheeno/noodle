@@ -853,6 +853,11 @@ def main(argv: list[str] | None = None) -> None:
                      "an open MCP server executes tests for anyone who finds it")
     mcp.settings.host, mcp.settings.port = args.host, args.port
     app = mcp.streamable_http_app()
+    # NOOD_0193 — the same tools as plain JSON at /api/*, for callers that can't
+    # speak MCP (Java service, curl in CI). Mounted before the gate so the key
+    # covers both doorways; see noodle/mcp/rest.py.
+    from noodle.mcp import rest
+    rest.mount(app)
     if key:
         app = _require_key(app, key)
     import uvicorn  # ships with the mcp extra

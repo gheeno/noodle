@@ -1,7 +1,7 @@
 # Woks — Noodle's capability work areas
 <!-- Branch: NOOD_0155 -->
 
-> **For:** everyone — the concept doc for Noodle's four testing domains.
+> **For:** everyone — the concept doc for Noodle's five testing domains.
 > Architecture context: [architecture.md § 2](architecture.md#2-the-component-map).
 
 A **wok** is a self-contained capability domain — an area where Noodle can
@@ -65,6 +65,12 @@ because it genuinely does share the web session lifecycle.
 - Unit tests: `unit_tests/woks/web/` (boundary guards) + the whole legacy suite
 
 ### API
+
+> **The api wok is Noodle testing *someone else's* API.** Don't confuse it with
+> the **engine API** — the `/api/*` HTTP surface another system uses to drive
+> Noodle itself ([engine-api-guide.md](engine-api-guide.md)). Testing an API vs.
+> being called as one; see
+> [glossary.md](glossary.md#api-means-two-different-things--say-which-nood_0193).
 
 REST services, **browserless**. `@api` is the one tag that means "no browser
 at all": `hooks.before_scenario` nulls the page and returns before any launch,
