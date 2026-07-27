@@ -102,6 +102,13 @@ def _run_hooks(event: str, *args):
         try:
             fn(*args)
         except Exception as e:
+            # NOOD_0187 — NOODLE_STRICT_HOOKS=1 re-raises: by default a broken
+            # user hook degrades to a logged error and the run can still go
+            # green, which is right for teardown-safety but wrong when the
+            # hook IS the test setup. Strict mode lets CI refuse that green.
+            if os.getenv("NOODLE_STRICT_HOOKS", "").strip().lower() in (
+                    "1", "true", "yes", "on"):
+                raise
             logger.error(f"\n  ❌ {event} hook '{fn.__name__}' raised: {e!r}")
 
 try:
@@ -262,7 +269,16 @@ def before_all(context):
         log.bind(worker=os.getpid())
     else:
         _clean_allure_results()
+        _paths.clean_worker_leaves()   # NOOD_0187 — stale p<pid>/ leaves from a prior parallel run
         log.attach_file_handler(str(_paths.logs_dir() / "noodle.log"))
+    # NOOD_0187 — a core-only install (no [reporting]/[all] extra) silently
+    # produced NO allure-results, NO junit, NO RCA: a run that writes no
+    # evidence must at least say so once, loudly.
+    if not _REPORTING:
+        logger.warning(
+            "\n  ⚠️  Reporting extras not installed — this run will produce NO "
+            "allure-results, junit.xml or RCA report. Install with: "
+            "pip install noodle[all]")
     # NOOD_0183 — this process's lane, 1..N (always 1 when sequential). Exported
     # so a suite can give each lane its own account: define SHOP_USER_1..N and
     # `{env:SHOP_USER}` resolves to this lane's, no feature-file change.
@@ -305,6 +321,16 @@ def _clean_allure_results():
     # junit.xml now lives in reports/, but clean a pre-move leftover too —
     # allure generate would ingest it and double-count every scenario.
     (results / "junit.xml").unlink(missing_ok=True)
+    # NOOD_0187 — per-feature junit slices + cost ledgers from a previous
+    # parallel run: load_total() rglobs llm_cost*.json, so stale ones from a
+    # killed run inflated the reported spend of the next.
+    for f in (*results.glob("junit.*.xml"), *results.glob("llm_cost*.json"),
+              *results.glob("healing-report*.txt")):
+        f.unlink(missing_ok=True)
+    import shutil
+    for d in results.glob("p[0-9]*"):
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
 
 
 def before_feature(context, feature):
@@ -499,20 +525,29 @@ def _wire_capture_listeners(context):
     uncaught JS errors, failed requests, every request URL, websocket frames.
     Mirrors _downloads' lifecycle: reset here, read by assertion actions.
     Listeners are additive — nothing asserts unless a step asks."""
-    console_errors: list = []
-    page_errors: list = []
-    failed_requests: list = []
-    requests: list = []
-    mutations: list = []
-    failed_responses: list = []
-    ws_frames: list = []
-    context._console_errors = console_errors
-    context._page_errors = page_errors
-    context._failed_requests = failed_requests
-    context._requests = requests
-    context._mutations = mutations
-    context._failed_responses = failed_responses
-    context._ws_frames = ws_frames
+    context._console_errors = []
+    context._page_errors = []
+    context._failed_requests = []
+    context._requests = []
+    context._mutations = []
+    context._failed_responses = []
+    context._ws_frames = []
+    attach_capture_listeners(context, context.page)
+
+
+def attach_capture_listeners(context, page):
+    """NOOD_0187 — attach the capture listeners to `page`, appending into the
+    scenario's EXISTING lists. Split out of _wire_capture_listeners so a named
+    browser context ('buyer'/'seller') gets the same console/network/ws
+    capture as the primary page — before this, the second user's failures
+    debugged blind and half the assertion vocabulary silently saw nothing."""
+    console_errors = context._console_errors
+    page_errors = context._page_errors
+    failed_requests = context._failed_requests
+    requests = context._requests
+    mutations = context._mutations
+    failed_responses = context._failed_responses
+    ws_frames = context._ws_frames
 
     def _on_console(msg):
         if msg.type == "error":
@@ -553,12 +588,12 @@ def _wire_capture_listeners(context):
         ws.on("framereceived", lambda payload: ws_frames.append(
             {"url": ws.url, "direction": "received", "payload": payload}))
 
-    context.page.on("console", _on_console)
-    context.page.on("pageerror", _on_page_error)
-    context.page.on("requestfailed", _on_request_failed)
-    context.page.on("request", _on_request)
-    context.page.on("response", _on_response)
-    context.page.on("websocket", _on_websocket)
+    page.on("console", _on_console)
+    page.on("pageerror", _on_page_error)
+    page.on("requestfailed", _on_request_failed)
+    page.on("request", _on_request)
+    page.on("response", _on_response)
+    page.on("websocket", _on_websocket)
 
 
 # NOOD_0183 — one Playwright driver + browser per worker process, reused across
@@ -623,6 +658,18 @@ def close_cached_browsers() -> None:
     _browsers.clear()
 
 
+def _record_skip(scenario, reason: str) -> None:
+    """NOOD_0187 — a gated skip used to leave no trace in any report: the
+    scenario vanished from Allure/junit/summary and a fully gated-off suite
+    read as a clean run. Write a skipped result so every reader sees it."""
+    if _REPORTING:
+        try:
+            _, r = _writer.write_skip_result(scenario, reason)
+            _suite_results.append(r)
+        except Exception:
+            pass
+
+
 def before_scenario(context, scenario):
     log.bind(scenario=scenario.name)  # NOOD_0171 — correlation
     context._noodle_scenario_t0 = time.monotonic()  # NOOD_0173 — scenario.end duration
@@ -635,26 +682,33 @@ def before_scenario(context, scenario):
     # skips never leaves a lock behind (after_scenario releases either way),
     # and before the browser launch so a waiting lane isn't burning a browser.
     from noodle import runlock
+    runlock.touch_worker_lane()   # NOOD_0187 — keep this lane's TTL alive on long features
     for _lock in runlock.lock_names(tags):
         runlock.acquire(_lock)
 
     # @live scenarios hit a real external site — opt-in only, so CI and casual
     # runs never make surprise network calls. Set NOODLE_RUN_LIVE=1 to run.
     if 'live' in tags and os.getenv("NOODLE_RUN_LIVE", "").lower() not in ("1", "true", "yes"):
-        scenario.skip("@live is opt-in — set NOODLE_RUN_LIVE=1 to run real-site tests")
+        reason = "@live is opt-in — set NOODLE_RUN_LIVE=1 to run real-site tests"
+        scenario.skip(reason)
+        _record_skip(scenario, reason)
         return
 
     # @llm scenarios need a model at run time — skip (not fail) when none is
     # configured, so the no-LLM default run stays green (NOOD_0065).
     if 'llm' in tags and not os.getenv("NOODLE_MODEL"):
-        scenario.skip("@llm needs NOODLE_MODEL in .env (e.g. anthropic/claude-sonnet-5) — "
-                      "see README § LLM augmentation")
+        reason = ("@llm needs NOODLE_MODEL in .env (e.g. anthropic/claude-sonnet-5) — "
+                  "see README § LLM augmentation")
+        scenario.skip(reason)
+        _record_skip(scenario, reason)
         return
 
     # @terminal scenarios need the OCR engine — skip (not fail) where tesseract
     # isn't installed, so a suite stays green on a box without the [visual] extra.
     if 'terminal' in tags and not _ocr_available():
-        scenario.skip("OCR engine (tesseract) not installed — pip install noodle[visual]")
+        reason = "OCR engine (tesseract) not installed — pip install noodle[visual]"
+        scenario.skip(reason)
+        _record_skip(scenario, reason)
         return
 
     # Per-scenario locator/POM state — reset so tags/pins don't leak between scenarios.
@@ -713,10 +767,10 @@ def before_scenario(context, scenario):
         # retries on an ImportError that a re-run can't fix, same treatment
         # as the @terminal/OCR check above.
         if not _appium_available():
-            scenario.skip(
-                "Appium client not installed — pip install noodle[mobile] "
-                "(and a running Appium server + device/emulator)"
-            )
+            reason = ("Appium client not installed — pip install noodle[mobile] "
+                      "(and a running Appium server + device/emulator)")
+            scenario.skip(reason)
+            _record_skip(scenario, reason)
             return
         context.page = None
         if _REPORTING:
@@ -800,6 +854,12 @@ def before_scenario(context, scenario):
         os.makedirs(videos_dir, exist_ok=True)
         ctx_opts['record_video_dir'] = str(videos_dir)
     ctx_opts.update(_emulation_opts(tags))  # Phase N/O — geo/perms/locale/tz/scheme/offline
+    # NOOD_0187 — options a NAMED context ('buyer'/'seller') must inherit:
+    # cert policy + emulation. Deliberately NOT storage_state — a second user
+    # being a different session is the point of a named context.
+    context._named_ctx_opts = dict(ctx_opts)
+    context._named_ctx_opts.pop('storage_state', None)
+    context._named_ctx_opts.pop('record_video_dir', None)
 
     # NOOD_0011 — reuse a saved login session (cookies + localStorage): log in
     # once, save via "saves the browser session as '<file>'", then point
@@ -968,11 +1028,17 @@ def after_step(context, step):
                 logger.info(f"\n  📸 Screenshot saved: {raw_path}")
                 ar = _allure_result(context)
                 if ar is not None:
+                    # NOOD_0187 — redact BEFORE the label is burned into the
+                    # image pixels. NOOD_0177 scrubbed the filename, but the
+                    # raw step name still went to annotate.py, which draws it
+                    # into the PNG — a literal credential in step text became
+                    # permanent pixels, base64-inlined into rca.html.
+                    label = log.redact(step.name)[:60]
                     if marked.get("matched") or marked.get("expected"):
                         annotated_path = _annotate.draw_failure_markers(
-                            raw_path, step.name[:60], marked)
+                            raw_path, label, marked)
                     else:
-                        annotated_path = _annotate.draw_not_found(raw_path, step.name[:60])
+                        annotated_path = _annotate.draw_not_found(raw_path, label)
                     # NOOD_0035: only annotated_path is attached to the Allure
                     # result below — the raw copy is now dead weight (double
                     # the PNG storage per failure). Drop it.
@@ -1113,6 +1179,17 @@ def after_scenario(context, scenario):
             scenario.set_status("failed")
         except Exception:
             pass
+        # NOOD_0187 — record the failure on the result too. set_status only
+        # changes behave's console verdict: no STEP failed, so the Allure/
+        # junit result said "passed" AND behave's exit code stayed 0 — the
+        # report and the build both lied about a soft-failed scenario. The
+        # synthetic failed step makes every reader (and the CLI's results-
+        # derived exit code) agree with the console.
+        ar_soft = _allure_result(context)
+        if ar_soft is not None:
+            ar_soft.add_failure(
+                "soft assertion failure(s)",
+                "\n".join(f"- {s}" for s in soft))
 
     # Network/console capture (from _wire_capture_listeners) — one log per
     # scenario, attached to its Allure result at test-case level so it shows
@@ -1177,6 +1254,19 @@ def after_scenario(context, scenario):
         ar.finish(scenario)
         _writer.write_result(ar)
         _suite_results.append(ar)
+
+    # NOOD_0187 — @record_video: the .webm was recorded and never referenced
+    # by any report. Resolve its future path while the page is alive; the file
+    # is only complete after the context closes below, so the attach (and a
+    # result re-write) happens at the end of this function.
+    video_path = None
+    if ar is not None:
+        try:
+            vid = getattr(ctx_get(context, "page", None), "video", None)
+            if vid is not None:
+                video_path = str(vid.path())
+        except Exception:
+            video_path = None
 
     # Stop tracing BEFORE closing the context (tracing.stop needs it alive).
     # Save the zip only when the scenario failed; otherwise discard.
@@ -1243,6 +1333,15 @@ def after_scenario(context, scenario):
             except Exception:
                 pass
 
+    # NOOD_0187 — the context is closed, so the video file is complete: attach
+    # it and re-write the result JSON (same uuid, plain overwrite).
+    if video_path and ar is not None and Path(video_path).is_file():
+        try:
+            ar.add_attachment("video", video_path, "video/webm")
+            _writer.write_result(ar)
+        except Exception:
+            pass
+
     # NOOD_0183 — release every lock this scenario took, pass or fail. Runs
     # after teardown so the next lane never sees a half-closed browser holding
     # the shared account.
@@ -1259,34 +1358,65 @@ def after_scenario(context, scenario):
                   tags=sorted(scenario.effective_tags))
 
 
-def after_all(context):
-    _run_hooks("after_all", context)
-    # NOOD_0183 — the reused browsers outlive every scenario; this is the only
-    # place they close. Do it before the report build so a wedged browser can't
-    # keep the process alive past the artifacts a run is judged on.
+_worker_atexit_registered = False
+
+
+def _worker_process_cleanup():
+    """NOOD_0187 — close the cached browsers and free this worker's lane at
+    PROCESS exit. behavex runs after_all once per FEATURE FILE (not once per
+    worker process), so closing there rebuilt the browser for every file —
+    the NOOD_0183 reuse win vanished under --parallel — and releasing the lane
+    per feature made a worker's per-lane credentials churn mid-run."""
     close_cached_browsers()
     from noodle import runlock
-    runlock.release_all()
     runlock.release_worker_index()
+
+
+def after_all(context):
+    _run_hooks("after_all", context)
+    global _worker_atexit_registered
+    from noodle import runlock
+    runlock.release_all()
     parallel = os.getenv("NOODLE_PARALLEL_WORKER") == "1"
+    if parallel and _reuse_browsers():
+        if not _worker_atexit_registered:
+            import atexit
+            atexit.register(_worker_process_cleanup)
+            _worker_atexit_registered = True
+    else:
+        # NOOD_0183 — the reused browsers outlive every scenario; close before
+        # the report build so a wedged browser can't keep the process alive
+        # past the artifacts a run is judged on.
+        close_cached_browsers()
+        runlock.release_worker_index()
     rdir = _paths.results_dir()
     # In parallel mode keep every output inside the worker's own dir and skip
     # the report build — the CLI merges all worker dirs into one report once.
+    # NOOD_0187 — behavex fires after_all per FEATURE in a reused worker
+    # process, so fixed filenames (junit.xml, healing-report.txt, the cost
+    # ledger) were overwritten by every feature and the merged artifacts kept
+    # only each worker's LAST feature. Parallel outputs get a unique suffix;
+    # the CLI merge globs them all.
+    import uuid as _uuid
+    slice_id = _uuid.uuid4().hex[:8]
     healing.write_report(
-        str(rdir / "healing-report.txt") if parallel
+        str(rdir / f"healing-report.{slice_id}.txt") if parallel
         else str(_paths.reports_dir() / "healing-report.txt")
     )
     # NOOD_0080 — persist this run's LLM spend BEFORE the RCA render below
     # (its footer reads llm_cost*.json). Workers write per-pid files; the
     # CLI's merge flattens them and readers sum every llm_cost*.json.
     from noodle.llm import cost as _llm_cost
-    _llm_cost.write_json(rdir)
+    _llm_cost.write_json(rdir, suffix=slice_id if parallel else None)
     if not parallel:
         logger.info(f"\n  💰 {_llm_cost.format_line()}")
-    if _REPORTING and _suite_results:
+    if _REPORTING:
         # NOOD_0022 — environment.properties + categories.json so the report's
         # Environment and Categories widgets aren't empty. Written into the
         # (worker) results dir; the parallel merge flattens them up.
+        # NOOD_0187 — no longer gated on _suite_results: an empty run writes an
+        # empty junit.xml and an honest empty report instead of leaving last
+        # run's artifacts in place for CI to publish as this run's.
         from noodle.reporting import allure_meta
         allure_meta.write_meta(rdir)
         # junit.xml must stay OUT of allure-results — allure generate ingests
@@ -1294,9 +1424,14 @@ def after_all(context):
         # Parallel workers keep theirs in the worker dir; the CLI merges them.
         _junit.write_junit(
             _suite_results,
-            str(rdir / "junit.xml") if parallel else str(_paths.reports_dir() / "junit.xml"),
+            str(rdir / f"junit.{slice_id}.xml") if parallel
+            else str(_paths.reports_dir() / "junit.xml"),
         )
         if not parallel:
+            # NOOD_0187 — stamp retried-then-green results as flaky before the
+            # report build so Allure's Retries tab shows them.
+            from noodle.reporting import summary as _summary
+            _summary.mark_flaky(str(rdir))
             _builder.generate()
             # NOOD_0082 — heuristic RCA is free (no LLM call); write rca.md +
             # rca.html alongside the Allure report on EVERY run (a green run

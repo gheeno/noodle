@@ -221,6 +221,76 @@ def collect(results_dir: str = None) -> list[dict]:
     return out
 
 
+def collect_flaky(results_dir: str = None) -> list[dict]:
+    """NOOD_0187 — scenarios that failed and then passed via auto-retry. The
+    only prior signal was behave's stdout line, which --quiet (the CI/agent
+    default) diverts into run.log — so a flaky pass was indistinguishable
+    from a clean one everywhere the run is actually read."""
+    d = Path(results_dir or _paths.results_dir())
+    files = sorted(d.glob("*-result.json")) if d.is_dir() else []
+    groups: dict = {}
+    for f in files:
+        try:
+            r = json.loads(f.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        key = r.get("historyId") or r.get("fullName") or f.name
+        groups.setdefault(key, []).append(r)
+    out = []
+    for rs in groups.values():
+        if len(rs) < 2:
+            continue
+        final = max(rs, key=lambda r: r.get("stop", 0))
+        if final.get("status") != "passed":
+            continue
+        labels = {lab["name"]: lab["value"] for lab in final.get("labels", [])}
+        out.append({"app": labels.get("parentSuite", ""),
+                    "feature_file": labels.get("featureFile", ""),
+                    "feature": labels.get("feature", ""),
+                    "scenario": final.get("name", ""),
+                    "attempts": len(rs)})
+    return out
+
+
+def _provenance(results_dir: str = None) -> dict:
+    """NOOD_0187 — who/when/what this report is about: run id (from the
+    environment.properties the run wrote), generated-at, and the scenario
+    counts. A served rca.html with no provenance could not be told apart
+    from a different run's — that is how a stale green gets believed."""
+    from datetime import datetime
+    d = Path(results_dir or _paths.results_dir())
+    latest = _latest_results(results_dir)
+    counts: dict = {}
+    for r in latest:
+        s = r.get("status", "")
+        counts[s] = counts.get(s, 0) + 1
+    run_id = ""
+    env_file = d / "environment.properties"
+    if env_file.is_file():
+        try:
+            for line in env_file.read_text().splitlines():
+                if line.startswith("noodle.run.id="):
+                    run_id = line.split("=", 1)[1].strip()
+                    break
+        except OSError:
+            pass
+    return {"run_id": run_id, "total": len(latest),
+            "passed": counts.get("passed", 0),
+            "failed": counts.get("failed", 0) + counts.get("broken", 0),
+            "skipped": counts.get("skipped", 0),
+            "generated": datetime.now().astimezone().isoformat(timespec="seconds")}
+
+
+def _provenance_line(p: dict) -> str:
+    rid = f"run {p['run_id']} — " if p["run_id"] else ""
+    return (f"{rid}generated {p['generated']} — {p['total']} scenario(s): "
+            f"{p['passed']} passed, {p['failed']} failed, {p['skipped']} skipped")
+
+
+_EMPTY_RUN_NOTE = ("0 scenarios ran — this report proves nothing. Check the "
+                   "path/tag/name filter and the run log.")
+
+
 def collect_warnings(results_dir: str = None) -> list[dict]:
     """Scenarios that PASSED but a step still logged a ⚠️ warning (ambiguous
     locator, self-heal, vision-locate failure). Lenient mode never fails the
@@ -839,10 +909,18 @@ def _evidence_md(results_dir: str = None) -> list[str]:
 def render_markdown(results_dir: str = None) -> str:
     entries = collect(results_dir)
     warned = collect_warnings(results_dir)
-    lines = ["# RCA Report", ""]
+    flaky = collect_flaky(results_dir)
+    prov = _provenance(results_dir)
+    lines = ["# RCA Report", "", f"_{_provenance_line(prov)}_", ""]
+    if prov["total"] == 0:
+        # NOOD_0187 — an empty run must never render the green tick: that is
+        # exactly the page a typo'd --tag used to serve.
+        lines.append(f"⚠️ {_EMPTY_RUN_NOTE}")
+        return "\n".join(lines + _cost_footer(results_dir))
     if not entries and not warned:
         lines.append("No failed or errored scenarios in the last run. ✅")
-        return "\n".join(lines + _evidence_md(results_dir) + _cost_footer(results_dir))
+        return "\n".join(lines + _flaky_md(flaky) + _evidence_md(results_dir)
+                         + _cost_footer(results_dir))
 
     if entries:
         lines.append(f"{len(entries)} failed/errored scenario(s).\n")
@@ -879,8 +957,23 @@ def render_markdown(results_dir: str = None) -> str:
             cells = [re.sub(r"\s+", " ", c).strip().replace("|", "\\|") for c in row]
             lines.append("| " + " | ".join(cells) + " |")
 
-    return "\n".join(lines + _traces_md(entries) + _evidence_md(results_dir)
-                     + _cost_footer(results_dir))
+    return "\n".join(lines + _flaky_md(flaky) + _traces_md(entries)
+                     + _evidence_md(results_dir) + _cost_footer(results_dir))
+
+
+def _flaky_md(flaky: list[dict]) -> list[str]:
+    if not flaky:
+        return []
+    out = ["", f"## Passed after retry ({len(flaky)})", "",
+           "These scenarios **failed at least once** and only went green on an "
+           "auto-retry. A pass that needs a retry is a flake to fix, not a pass "
+           "to trust.", "",
+           "| App / .feature | Feature | Scenario | Attempts |", "|---|---|---|---|"]
+    for fk in flaky:
+        row = [_provenance_md(fk), fk["feature"], fk["scenario"], str(fk["attempts"])]
+        out.append("| " + " | ".join(c.replace("\n", " ").replace("|", "\\|")
+                                     for c in row) + " |")
+    return out
 
 
 def _traces_md(entries: list[dict]) -> list[str]:
@@ -1007,10 +1100,20 @@ def render_html(results_dir: str = None) -> str:
     (see noodle/repl/repl.py:_serve_rca), not just read as source text."""
     entries = collect(results_dir)
     warned = collect_warnings(results_dir)
-    body = ["<h1>RCA Report</h1>"]
+    flaky = collect_flaky(results_dir)
+    prov = _provenance(results_dir)
+    body = ["<h1>RCA Report</h1>",
+            f'<p class="count">{html.escape(_provenance_line(prov))}</p>']
+
+    if prov["total"] == 0:
+        # NOOD_0187 — same honesty as the markdown: never a green tick for a
+        # run that executed nothing.
+        body.append(f"<p>⚠️ {html.escape(_EMPTY_RUN_NOTE)}</p>")
+        return f"<!doctype html><meta charset=utf-8><title>RCA Report</title><style>{_HTML_STYLE}</style>{''.join(body)}"
 
     if not entries and not warned:
         body.append('<p class="ok">No failed or errored scenarios in the last run. ✅</p>')
+        body.extend(_flaky_html(flaky))
         body.extend(_evidence_html(results_dir))
         return f"<!doctype html><meta charset=utf-8><title>RCA Report</title><style>{_HTML_STYLE}</style>{''.join(body)}"
 
@@ -1063,8 +1166,30 @@ def render_html(results_dir: str = None) -> str:
             )
         body.append("</table>")
 
+    body.extend(_flaky_html(flaky))
     body.extend(_evidence_html(results_dir))
     return f"<!doctype html><meta charset=utf-8><title>RCA Report</title><style>{_HTML_STYLE}</style>{''.join(body)}"
+
+
+def _flaky_html(flaky: list[dict]) -> list[str]:
+    if not flaky:
+        return []
+    body = [f"<h2>Passed after retry ({len(flaky)})</h2>",
+            "<p>These scenarios <strong>failed at least once</strong> and only "
+            "went green on an auto-retry. A pass that needs a retry is a flake "
+            "to fix, not a pass to trust.</p>",
+            "<table><tr><th>App / .feature</th><th>Feature</th>"
+            "<th>Scenario</th><th>Attempts</th></tr>"]
+    for fk in flaky:
+        body.append(
+            "<tr>"
+            f"<td>{_provenance_html(fk)}</td>"
+            f"<td>{html.escape(fk['feature'])}</td>"
+            f"<td>{html.escape(fk['scenario'])}</td>"
+            f"<td>{fk['attempts']}</td>"
+            "</tr>")
+    body.append("</table>")
+    return body
 
 
 def write_reports(results_dir: str = None, out_dir: str = None) -> dict:

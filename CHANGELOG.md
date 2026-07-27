@@ -4,6 +4,118 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a3] — 2026-07-27
+
+**NOOD_0187** — fix: the framework never lies — report integrity, parallel
+scale, CI/cloud readiness.
+
+A five-lens audit (report trust, parallel scale, pipeline readiness,
+generation cost, web coverage) found concrete ways a green could lie and
+hard ceilings on running 1000s of tests. This closes them.
+
+**Report integrity — every false-green path found is closed:**
+
+- `ScenarioResult.finish()` now reads behave's own verdict, not just recorded
+  steps: a `@soft`-assert-only failure, a setup-hook/precondition error and an
+  undefined step all wrote `"passed"` to Allure/junit/`last_run.json` (the
+  soft case even exited 0). Soft failures also land as a synthetic failed
+  step listing every collected assertion.
+- **Exit codes derive from the written results in both modes**: behave's 0 on
+  a soft-failed run and behavex's observed lying 0 both red the build now.
+- **Zero scenarios ran → exit 3**, not silent green: a typo'd `--tag` used to
+  produce a green pipeline that tested nothing while `report serve` hosted
+  the PREVIOUS run's report. The RCA renders "0 scenarios ran — this report
+  proves nothing" instead of the green tick, junit.xml is always written
+  (even empty), and an empty run builds an honest empty report. `--shard`
+  legs and `NOODLE_ALLOW_EMPTY=1` downgrade to a warning (a slice can
+  legitimately filter to zero; both ADO pipelines set it per shard).
+- **Skipped scenarios exist now**: gated skips (@live off, missing
+  OCR/Appium/NOODLE_MODEL) write a skipped result — they were invisible in
+  every report, so a fully gated-off suite read as a clean run.
+- **Retries are honest**: retried-then-green scenarios are stamped
+  `flaky` in Allure, counted in `last_run.json` (`flaky: [...]`), and the RCA
+  gets a "Passed after retry" section. The quarantine scan and `--failed`
+  also dedupe to last-attempt (a retried-green no longer re-runs or blocks
+  the all-quarantined override).
+- `@quarantine`'s exit-0 rewrite is recorded (`quarantine_overrode_exit`) and
+  `NOODLE_STRICT_QUARANTINE=1` disables it. `NOODLE_STRICT_HOOKS=1` makes a
+  crashing custom hook fail the run instead of logging.
+- **Secrets can no longer become pixels**: the failure/evidence label burned
+  into screenshots by annotate.py is value-scrubbed first (NOOD_0177 covered
+  the filename, not the drawn caption).
+- Provenance everywhere: environment.properties gains noodle version, engine
+  git SHA, Playwright version, run id + timestamp; rca.md/rca.html open with
+  run id, generated-at and true counts; `--json` returns `null` for report
+  paths that don't exist; step durations are real (start = stop − behave's
+  measured duration, no more 0 ms timeline); `@record_video`'s .webm is
+  attached to the Allure result (it was recorded and never referenced);
+  a core-only install warns loudly that no results will be written.
+
+**Parallel scale (1000s of tests, several teams):**
+
+- `noodle run --shard i/N` — deterministic feature-file slices for splitting
+  one suite across machines; `--timeout N` kills the wedged run (process
+  group) at 124 and still reports the partial results; `--fail-fast` stops at
+  first red. `--parallel` now goes through the same reporting tail as
+  sequential: `--json`/`--quiet`/`--serve` all work (parallel `--json`
+  printed nothing).
+- behavex runs `after_all` once per FEATURE, not per worker — that overwrote
+  each worker's junit/healing/cost ledger with its last feature (the
+  published junit held one testsuite per WORKER) and closed the reused
+  browser between files. Parallel outputs now carry unique slice ids and
+  merge by glob; browsers/lanes close at process exit (atexit) so the
+  NOOD_0183 reuse win survives multi-feature workers.
+- The merge is Windows-safe (`shutil.move`, fixed-name metadata skips —
+  `Path.rename` onto an existing dst crashes there) and flattens the
+  per-worker traces/network leaves, so the RCA's trace section and the
+  NOOD_0156 mutation classifier work under `--parallel` (they silently saw
+  empty dirs).
+- Lock/lane hardening: lane mtime heartbeats every scenario (a feature
+  running past NOODLE_LOCK_TTL had its lane stolen — two workers, same
+  credentials); stale-lock breaking is rename-atomic (the rmdir+mkdir pair
+  could double-grant `@serial`); `reset_control_dir(workspace)` takes the
+  root instead of chdir; `--failed` names are `re.escape`d (behave --name is
+  a regex); workers clamp to 60 on Windows; stale per-pid artifact leaves and
+  cost ledgers are cleaned at run start (the cost rglob summed dead runs).
+
+**Pipeline / cloud / ADO:**
+
+- `constraints.txt` (uv.lock export, `make constraints`) pins every
+  transitive dep in all three CI surfaces — an unpinned morning resolve
+  could break pipelines nobody touched. The GitHub gate diffs it against the
+  lock.
+- GitHub Actions grows an **e2e job** (BusterBlock + headless chromium +
+  `--parallel 2 --timeout`, junit/Allure/RCA uploaded) and a **docker build
+  job** — it was lint+unit only, no `.feature` ever ran on GitHub.
+- The Windows ADO pipeline is re-synced with Linux: ruff in the gate,
+  tesseract, chromium in discover, the Allure CLI (reports silently never
+  built on Windows shards), per-shard trend-history cache,
+  generate-if-missing. Both pipelines: Playwright browser cache keyed on
+  constraints.txt, quoted `$(tagFlag)` (tags with spaces), and cmd comments
+  fixed to `rem`.
+- `scripts/list_features.py` exits 1 on zero discovered features (an empty
+  matrix made the tests job a green no-op); the non-editable-install warning
+  is suppressed off-TTY (wheel installs in CI are deliberate, `noodle
+  update` advice was wrong there).
+
+**Authoring accuracy:**
+
+- The intent-contract lock refuses only **blocked** contracts: a cleanly
+  goal-authored feature used to freeze its entire app package against any
+  manual edit or auto-run — the main autonomous-agent dead end.
+- Named browser contexts ('buyer'/'seller') inherit the scenario's context
+  options and get the same console/network/websocket/download capture as the
+  primary page — the second user debugged blind with half the assertion
+  vocabulary silently seeing nothing.
+- New step: `no server errors should occur` (`no HTTP errors should have
+  occurred`) — fails on any 4xx/5xx in the page's own traffic. The data was
+  already captured for RCA; `no network requests should fail` only sees
+  transport aborts, so a page full of 500s passed it.
+
+Instruction budget: `noodle run --help` 5120 → 5504 B (three new flags; a
+flag's existence is routing — NOOD_0179 rule; rationale lives in
+docs/cli-reference.md).
+
 ## [1.0.0a2] — 2026-07-26
 
 **NOOD_0186** — feature: the five audited web-coverage gaps closed — HTML5

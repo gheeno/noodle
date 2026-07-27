@@ -3,7 +3,14 @@
 # GitHub's merge button — that gap let the VALID_TYPES drift guard fail across
 # four merges (NOOD_0152 → NOOD_0156). Mark this check required in branch
 # protection to close it. ponytail: mirrors the pipeline's gate step verbatim,
-# no matrix — engine code is 3.11+ and the browser suites live in Azure.
+# no matrix — engine code is 3.11+.
+#
+# NOOD_0187 — plus two new jobs, so GitHub is no longer a lint-only gate while
+# every real feature run lived in Azure:
+#   e2e    — the bundled web suite end-to-end (BusterBlock app, headless
+#            chromium, parallel), junit + Allure + RCA published as artifacts.
+#   docker — the image builds; a broken Dockerfile used to surface only when
+#            someone hand-built for the Container Apps deploy.
 name: tests
 
 on:
@@ -27,7 +34,25 @@ jobs:
       # without the binary it skipped, so the @terminal/@ocr_fallback path that
       # canvas and xterm.js UIs depend on had no gate at all.
       - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
-      - run: pip install -e ".[all,llm]"
+      # NOOD_0187 — constraints.txt (exported from uv.lock, `make constraints`)
+      # pins every transitive dep: CI resolves the same tree every run instead
+      # of whatever resolved that morning. The gate keeps that export from
+      # silently drifting behind the lockfile.
+      #
+      # Compare PINS ONLY (strip comment lines). Two reasons the raw files
+      # can't be diffed: uv writes the invoking command line into the header,
+      # so an `-o constraints.txt` file never equals a piped export; and the
+      # `# via` annotations are uv-version-sensitive formatting, not content.
+      # A merge gate that reds the build over a comment is a gate people learn
+      # to ignore — what matters is that every version pin still matches.
+      - run: |
+          pip install uv
+          uv export --frozen --no-emit-project --all-extras --no-hashes \
+            --format requirements-txt | grep -v '^[[:space:]]*#' > /tmp/pins.lock
+          grep -v '^[[:space:]]*#' constraints.txt > /tmp/pins.committed
+          diff /tmp/pins.committed /tmp/pins.lock \
+            || { echo "constraints.txt is stale — run: make constraints"; exit 1; }
+      - run: pip install -e ".[all,llm]" -c constraints.txt
       # NOOD_0181 — the touch-gesture tests drive a real browser: CDP touch
       # events either scroll the page or they don't, and no fake can tell you
       # which. The playwright PACKAGE is a core dep but the browser download
@@ -37,3 +62,74 @@ jobs:
       - run: playwright install chromium
       - run: ruff check .
       - run: python -m pytest unit_tests -q
+
+  e2e:
+    needs: lint-and-unit
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ~/pw-browsers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - uses: actions/cache@v4
+        with:
+          path: ~/pw-browsers
+          key: pw-browsers-${{ hashFiles('constraints.txt') }}
+      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
+      - run: pip install -e ".[all,llm]" -c constraints.txt
+      - run: playwright install chromium --with-deps
+      # Allure 3 CLI, pinned exact — same rationale as azure-pipelines.yml.
+      - run: sudo npm install -g allure@3.14.1
+      # BusterBlock — the bundled Node/Express test app the web suite targets.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - run: |
+          cd test-apps/busterblock && npm ci
+          nohup npm start > "$GITHUB_WORKSPACE/busterblock.log" 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3333 >/dev/null && exit 0
+            sleep 1
+          done
+          echo "BusterBlock never came up on :3333"; cat "$GITHUB_WORKSPACE/busterblock.log"; exit 1
+      # BusterBlock's own demo credentials live in a gitignored secrets file
+      # (NOOD_0118), so a fresh checkout has only the .example and preflight
+      # correctly refuses to launch a browser (exit 2). Seed it from the
+      # example — `-n` never clobbers, and shell/CI env still outranks the
+      # file (NOOD_0133 precedence), so a real secret store is unaffected.
+      - run: |
+          cp -n sample_feature_tests/web/busterblock/resources/busterblock_secrets.env.example \
+                sample_feature_tests/web/busterblock/resources/busterblock_secrets.env
+
+      # The real suite: headless, 2 workers, wall-clock budget. Exit codes are
+      # honest now (0 scenarios → 3, soft-asserts → 1), so this job IS the gate.
+      #
+      # Scoped to BusterBlock — the bundled app started above — deliberately.
+      # The rest of sample_feature_tests/ drives seven third-party sites
+      # (saucedemo, qaplayground, the-internet, practicetestautomation,
+      # hackertyper, copy.sh, restful-api.dev); gating merges on those means a
+      # red build whenever someone else's site is slow, which teaches everyone
+      # to ignore the gate. BusterBlock is hermetic: 106 scenarios, no egress.
+      - run: noodle run sample_feature_tests/web/busterblock --headless --parallel 2 --timeout 1800
+        env:
+          NOODLE_ARTIFACTS_DIR: artifacts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: noodle-test-artifacts
+          path: |
+            artifacts/reports
+            artifacts/last_run.json
+            artifacts/screenshots
+            artifacts/traces
+          if-no-files-found: warn
+
+  docker:
+    needs: lint-and-unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t noodle .

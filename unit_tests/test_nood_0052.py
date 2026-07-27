@@ -21,10 +21,14 @@ def test_report_default_resolves_inside_workspace(tmp_path):
 
 def test_parallel_exit_code_derived_from_merged_results(tmp_path, monkeypatch):
     """behavex has returned 0 with failed scenarios — the merged results are
-    the ground truth for the build's exit code."""
+    the ground truth for the build's exit code. NOOD_0187 moved the derivation
+    into run()'s shared tail (_derive_exit_code), so BOTH modes get it; this
+    pins the parallel half end-to-end: fake behavex says 0, a failed result
+    exists after the merge, the derived exit code is 1."""
     import subprocess as sp
 
     import noodle.cli as cli
+    from noodle.reporting import summary
 
     results = tmp_path / "artifacts" / "allure-results"
     results.mkdir(parents=True)
@@ -46,8 +50,11 @@ def test_parallel_exit_code_derived_from_merged_results(tmp_path, monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "behavex", _FakeBehavex())
 
-    rc = cli._run_parallel("tests", 2, None, {}, cwd=str(tmp_path))
-    assert rc == 1   # behavex said 0; the failed result must win
+    rc, timed_out = cli._run_parallel("tests", 2, None, {}, cwd=str(tmp_path))
+    assert (rc, timed_out) == (0, False)     # behavex's lie passes through here…
+    data = summary.collect(str(results))
+    rc, _notes = cli._derive_exit_code(data, rc, timed_out, allow_empty=False)
+    assert rc == 1   # …and the shared tail reds the build off the results
 
 
 def test_rule_plan_parses_compound_create_run_report():

@@ -80,10 +80,14 @@ variables:
     ${{ else }}:
       value: '--headed'
   - name: tagFlag
+    # NOOD_0187 — double quotes (cmd.exe shell) so a tag with a space survives.
     ${{ if ne(parameters.testTag, '') }}:
-      value: '--tag ${{ parameters.testTag }}'
+      value: '--tag "${{ parameters.testTag }}"'
     ${{ else }}:
       value: ''
+  # NOOD_0187 — cacheable browser install path, mirrors the Linux pipeline.
+  - name: PLAYWRIGHT_BROWSERS_PATH
+    value: $(Pipeline.Workspace)/pw-browsers
 
 # File-level web sharding (Phase E) — see the Linux pipeline for the full notes.
 # `discover` emits a dynamic matrix of WEB .feature files; `tests` runs one per
@@ -103,10 +107,19 @@ jobs:
       # the browser shard fan-out, mirroring azure-pipelines.yml.
       # NOOD_0074 — `llm` is excluded from `all` (see azure-pipelines.yml);
       # add it back explicitly so the LLM-dependent unit tests still run.
+      # NOOD_0187 — synced with the Linux gate: it had drifted to pytest-only,
+      # so ruff violations, OCR paths and touch-gesture tests (browser needed)
+      # were untested on Windows while the Linux gate covered them.
       - powershell: |
-          pip install -e ".[all,llm]"
+          choco install tesseract -y --no-progress
+          Write-Host "##vso[task.prependpath]C:\Program Files\Tesseract-OCR"
+        displayName: 'Install tesseract (OCR bridge tests)'
+      - powershell: |
+          pip install -e ".[all,llm]" -c constraints.txt
+          playwright install chromium
+          ruff check .
           python -m pytest unit_tests -q
-        displayName: 'Unit tests (gate the shard matrix)'
+        displayName: 'Lint + unit tests (gate the shard matrix)'
         workingDirectory: $(Build.SourcesDirectory)
       - powershell: |
           $matrix = python scripts/list_features.py --root "$(testsRoot)"
@@ -130,9 +143,25 @@ jobs:
         inputs:
           versionSpec: '3.11'
 
+      # NOOD_0187 — chromium download cache, keyed on constraints.txt (the
+      # Playwright pin lives there) — mirrors the Linux pipeline.
+      - task: Cache@2
+        inputs:
+          key: '"pw-browsers-win" | constraints.txt'
+          path: $(Pipeline.Workspace)/pw-browsers
+        displayName: 'Restore Playwright browsers cache'
+
+      - powershell: |
+          choco install tesseract -y --no-progress
+          Write-Host "##vso[task.prependpath]C:\Program Files\Tesseract-OCR"
+        displayName: 'Install tesseract (@ocr_fallback / @terminal steps)'
+
       - script: |
-          pip install -e ".[all,llm]"
+          pip install -e ".[all,llm]" -c constraints.txt
           playwright install chromium --with-deps
+          rem NOOD_0187 — Allure 3 CLI was never installed on Windows shards, so
+          rem hooks.after_all silently skipped the report build every run.
+          npm install -g allure@3.14.1
         displayName: Install Noodle
         workingDirectory: $(Build.SourcesDirectory)
 
@@ -155,14 +184,39 @@ jobs:
         displayName: 'Start BusterBlock test app'
         workingDirectory: $(Build.SourcesDirectory)
 
+      # NOOD_0187 — seed BusterBlock's demo credentials when absent (the real
+      # secrets file is gitignored, so a fresh checkout would fail preflight).
+      # Never clobbers; variable-group/Key Vault env still outranks the file.
+      - powershell: |
+          $src = "sample_feature_tests/web/busterblock/resources/busterblock_secrets.env.example"
+          $dst = "sample_feature_tests/web/busterblock/resources/busterblock_secrets.env"
+          if (-not (Test-Path $dst)) { Copy-Item $src $dst }
+        displayName: 'Seed BusterBlock demo credentials (if absent)'
+        workingDirectory: $(Build.SourcesDirectory)
+
+      # NOOD_0187 — per-shard Allure trend history, mirroring the Linux
+      # pipeline's Cache@2 trick (immutable keys: BuildId never hits, the
+      # restoreKeys prefix pulls the newest previous run).
+      - task: Cache@2
+        condition: always()
+        inputs:
+          key: '"allure-history-win" | "$(System.JobName)" | "$(Build.BuildId)"'
+          restoreKeys: |
+            "allure-history-win" | "$(System.JobName)"
+          path: $(workspaceDir)/artifacts/reports/allure-history
+        displayName: 'Restore Allure history (7-day pipeline cache)'
+
       - script: |
-          # NOOD_0086 — shards run single .feature files, which would route
-          # artifacts into each app's report/ folder; CI needs the classic
-          # shared artifacts/ tree for the publish steps below, so pin it.
+          rem NOOD_0086 — shards run single .feature files, which would route
+          rem artifacts into each app's report/ folder; CI needs the classic
+          rem shared artifacts/ tree for the publish steps below, so pin it.
           noodle run "$(featurePath)" --workspace "$(workspaceDir)" $(headlessFlag) $(tagFlag)
         displayName: 'Run tests — $(featurePath)'
         env:
           NOODLE_ARTIFACTS_DIR: artifacts
+          # NOOD_0187 — a matrix leg is a slice; a tag filter can zero it
+          # legitimately (see the Linux pipeline note on exit 3).
+          NOODLE_ALLOW_EMPTY: "1"
           BASE_URL: $(BASE_URL)
           MY_EMAIL: $(MY_EMAIL)
           MY_CARD: $(MY_CARD)
@@ -171,6 +225,18 @@ jobs:
           NOODLE_PARALLEL_PROCESSES: $(parallelProcesses)   # 0 = single process
           # Optional Key Vault — see the Linux pipeline for setup notes.
           NOODLE_KEYVAULT_URL: $(NOODLE_KEYVAULT_URL)
+
+      # NOOD_0187 — synced from the Linux pipeline: if the run crashed before
+      # after_all there is no Allure report yet; generate one so the published
+      # artifact always has it (guarded — generate appends a history entry).
+      - powershell: |
+          New-Item -ItemType Directory -Force -Path "$(workspaceDir)/artifacts/allure-results" | Out-Null
+          if (-not (Test-Path "$(workspaceDir)/artifacts/reports/allure-report/index.html")) {
+            python -c "from noodle.reporting import builder; builder.generate(r'$(workspaceDir)/artifacts/allure-results', r'$(workspaceDir)/artifacts/reports/allure-report')"
+          }
+        displayName: 'Generate Allure 3 report (if missing)'
+        condition: always()
+        workingDirectory: $(Build.SourcesDirectory)
 
       # `noodle run` only auto-writes a bare markdown RCA when a scenario
       # failed AND parallelProcesses is 0 (see noodle/hooks.py::after_all) —

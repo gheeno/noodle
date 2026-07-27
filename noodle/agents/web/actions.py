@@ -2404,6 +2404,14 @@ def assert_no_failed_requests(page: Page, failures: list):
     _assert_none_captured(failures, "failed network requests", page.url)
 
 
+def assert_no_server_errors(page: Page, failed_responses: list):
+    """NOOD_0187 — HTTP 4xx/5xx responses on the page's own traffic. An
+    aborted request lands in assert_no_failed_requests; a 500 completes
+    'fine' at the transport layer, so it was captured (hooks._on_response)
+    but unassertable — RCA could see server errors a test couldn't."""
+    _assert_none_captured(failed_responses, "HTTP 4xx/5xx responses", page.url)
+
+
 def assert_request_made(page: Page, requests: list, url_fragment: str):
     """A request whose URL contains `url_fragment` (or matches it as a glob)
     was observed this scenario. Waits up to NOODLE_TIMEOUT — the triggering

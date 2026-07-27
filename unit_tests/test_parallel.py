@@ -83,16 +83,23 @@ def test_merge_junits_skips_missing_and_malformed(tmp_path):
     assert text.count("<testsuite ") == 1                  # only the good one
 
 
-def test_parallel_toggle_flag_env_and_default(monkeypatch):
+def test_parallel_toggle_flag_env_and_default(monkeypatch, tmp_path):
     from typer.testing import CliRunner
 
     from noodle import cli
     seen = {}
-    monkeypatch.setattr(cli, "_run_parallel",
-                        lambda path, n, tag, env, cwd=".", scheme="feature", names=None:
-                        seen.update(n=n, scheme=scheme) or 0)
+
+    def fake_parallel(path, n, tag, env, cwd=".", scheme="feature", names=None, **kw):
+        seen.update(n=n, scheme=scheme)
+        return 0, False
+
+    monkeypatch.setattr(cli, "_run_parallel", fake_parallel)
     # keep the single-process default path from actually launching behave
     monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 0})())
+    # NOOD_0187 — isolate the results-reading tail from the repo tree and the
+    # zero-scenarios guard (the fakes never write results).
+    monkeypatch.setenv("NOODLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("NOODLE_ALLOW_EMPTY", "1")
     run = CliRunner()
 
     seen.clear()

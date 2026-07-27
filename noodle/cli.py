@@ -199,6 +199,9 @@ def run(
     parallel_scheme: str = typer.Option("feature", "--parallel-scheme", help="'feature' (a file's scenarios stay serial) or 'scenario'"),
     name: str = typer.Option(None, "--name", "-n", help="Only scenarios whose name contains this"),
     failed: bool = typer.Option(False, "--failed", help="Re-run last run's failures"),
+    shard: str = typer.Option(None, "--shard", help="i/N — deterministic feature-file slice, for splitting across machines"),
+    run_timeout: int = typer.Option(None, "--timeout", help="Kill the run after N seconds (exit 124, partial results kept)"),
+    fail_fast: bool = typer.Option(False, "--fail-fast", help="Stop at the first failure"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Live behave stream to <artifacts>/run.log, stdout gets the summary (automatic off a TTY)"),
     preflight: bool = typer.Option(None, "--preflight/--no-preflight", help="Resolve every {env:KEY} before the browser; missing aborts (exit 2). Default on"),
     serve: bool = typer.Option(False, "--serve", help="Host the Allure + RCA reports after the run, print URLs"),
@@ -241,6 +244,12 @@ def run(
         parallel = 0
     elif parallel < 0:
         parallel = os.cpu_count() or 1
+    # NOOD_0187 — Windows ProcessPoolExecutor hard-caps workers at 61, and
+    # behavex raises ValueError past it; -1 on a big box hit exactly that.
+    if os.name == "nt" and parallel > 60:
+        if not json_out:
+            typer.echo(f"  ⚠ --parallel {parallel} capped to 60 (Windows ProcessPoolExecutor limit)")
+        parallel = 60
     # Bug 2: reject mutually exclusive flags up front
     if headed and headless:
         raise typer.BadParameter(
@@ -341,7 +350,41 @@ def run(
             typer.echo("  ✅ No failed scenarios recorded in the last run — nothing to re-run.")
             raise typer.Exit(0)
         typer.echo(f"  🔁 Re-running {len(last_failed)} failed scenario(s) from the last run")
-        names += last_failed
+        # NOOD_0187 — behave matches --name as a REGEX: a scenario named
+        # "Add item (2 of 3)" or "Price is $5.00" re-ran the wrong set or
+        # aborted with re.error. Escape — these are literal names.
+        names += [re.escape(n) for n in last_failed]
+
+    # NOOD_0187 — wall-clock budget for the whole run. Without one, a wedged
+    # browser held the CI job to ITS timeout and lost every artifact with it.
+    if run_timeout is None:
+        run_timeout = int(os.getenv("NOODLE_RUN_TIMEOUT", "0") or "0")
+
+    # NOOD_0187 — --shard i/N: deterministic feature-file slices so a suite
+    # splits across machines with no scheduler (ADO/GHA matrix legs pass their
+    # own index). Sorted paths → every host partitions identically.
+    shard_include = None
+    if shard:
+        slice_rels = _shard_slice(cwd, path, shard)
+        if not slice_rels:
+            if json_out:
+                _json_out({"ok": True, "passed": 0, "failed": 0, "skipped": 0,
+                           "notes": [f"shard {shard}: 0 feature files in this slice"]})
+            else:
+                typer.echo(f"  🧩 shard {shard}: 0 feature files in this slice — nothing to run.")
+            raise typer.Exit(0)
+        if not json_out:
+            typer.echo(f"  🧩 shard {shard}: {len(slice_rels)} feature file(s)")
+        shard_include = "(" + "|".join(re.escape(p) + "$" for p in slice_rels) + ")"
+
+    # NOOD_0187 — --quiet works identically in both modes now: the parallel
+    # early-return used to skip the whole reporting tail (--json printed
+    # NOTHING on a parallel run, behavex streamed 1000s of scenarios into CI
+    # logs). One log path, one tail.
+    log_path = None
+    if quiet:
+        log_path = Path(cwd) / _paths.artifacts_root() / "run.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Parallel: behavex runs N behave workers, each writing to its own results
     # subdir (set in hooks.before_all). We clean once, run, flatten, report.
@@ -361,51 +404,88 @@ def run(
         if env.get("NOODLE_HEADLESS") != "true":
             typer.echo(f"  ⚠ --parallel {parallel} with a headed browser opens {parallel} "
                        "windows fighting for focus — add --headless.")
-        rc = _run_parallel(path, parallel, tag, env, cwd, parallel_scheme, names)
-        _log_run_end(str(Path(cwd) / _paths.artifacts_root() / "allure-results"), rc, _run_t0)
-        raise typer.Exit(rc)
-
-    # Bug 5: derive behave base from the passed path, not a hardcoded 'tests/'
-    if path.endswith(".feature"):
-        feature_path = (Path(cwd) / path).resolve()
-        base = _find_behave_base(feature_path)
-        # NOOD_0008: --include is a regex over the whole feature *path*, not just
-        # this file's stem — a bare stem (e.g. "login") also matches same-named
-        # files in unrelated app packages under the shared base. Anchor on the
-        # full relative path so only this file is selected.
-        rel = feature_path.relative_to(base.resolve())
-        include = re.escape(rel.as_posix()) + "$"
-        args = [*_BEHAVE_CMD, str(base), "--include", include, "--no-capture"]
+        rc, timed_out = _run_parallel(
+            path, parallel, tag, env, cwd, parallel_scheme, names,
+            shard_include=shard_include, timeout=run_timeout,
+            fail_fast=fail_fast, log_path=log_path)
     else:
-        args = [*_BEHAVE_CMD, path, "--no-capture"]
+        # Bug 5: derive behave base from the passed path, not a hardcoded 'tests/'
+        if path.endswith(".feature"):
+            feature_path = (Path(cwd) / path).resolve()
+            base = _find_behave_base(feature_path)
+            # NOOD_0008: --include is a regex over the whole feature *path*, not just
+            # this file's stem — a bare stem (e.g. "login") also matches same-named
+            # files in unrelated app packages under the shared base. Anchor on the
+            # full relative path so only this file is selected.
+            rel = feature_path.relative_to(base.resolve())
+            include = re.escape(rel.as_posix()) + "$"
+            args = [*_BEHAVE_CMD, str(base), "--include", include, "--no-capture"]
+        elif shard_include:
+            args = [*_BEHAVE_CMD, path, "--include", shard_include, "--no-capture"]
+        else:
+            args = [*_BEHAVE_CMD, path, "--no-capture"]
 
-    if tag:
-        args += ["--tags", tag]
-    for n in names:
-        args += ["--name", n]
+        if tag:
+            args += ["--tags", tag]
+        for n in names:
+            args += ["--name", n]
+        if fail_fast:
+            args += ["--stop"]
 
-    # NOOD_0116 --quiet: the biggest context-cost of an agent-driven run is
-    # the full behave console stream staying resident per LLM call. Divert it
-    # to <artifacts>/run.log and print only the summary below.
-    if quiet:
-        log_path = Path(cwd) / _paths.artifacts_root() / "run.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, "w") as lf:
-            result = subprocess.run(args, env=env, cwd=cwd,
-                                    stdout=lf, stderr=subprocess.STDOUT)
-    else:
-        result = subprocess.run(args, env=env, cwd=cwd)
-    rc = result.returncode
+        # NOOD_0116 --quiet: the biggest context-cost of an agent-driven run is
+        # the full behave console stream staying resident per LLM call. Divert it
+        # to <artifacts>/run.log and print only the summary below.
+        rc, timed_out = _run_behave(args, env, cwd, log_path=log_path,
+                                    timeout=run_timeout)
 
     results_root = str(Path(cwd) / _paths.artifacts_root() / "allure-results")
+    from noodle.reporting import summary as _summary
+    data = _summary.collect(results_root)
+
+    if timed_out and not json_out:
+        typer.echo(f"  ⏱ run killed after {run_timeout}s (--timeout) — "
+                   "reporting the partial results below")
+
+    # A sharded matrix leg legitimately can filter to zero scenarios, so
+    # --shard (and NOODLE_ALLOW_EMPTY=1) downgrade exit 3 to a warning.
+    allow_empty = bool(shard) or os.getenv(
+        "NOODLE_ALLOW_EMPTY", "").strip().lower() in ("1", "true", "yes", "on")
+    rc, rc_notes = _derive_exit_code(data, rc, timed_out, allow_empty)
+    if rc_notes:
+        # --json keeps its one-object stdout contract (NOOD_0131): the notes
+        # ride the payload instead of corrupting the stream.
+        data["notes"] = rc_notes
+        if not json_out:
+            for note in rc_notes:
+                typer.echo(f"  {note}")
+
     # @quarantine is non-blocking: if every failed scenario this run is tagged
     # @quarantine, don't fail the build — they still ran and report as failed.
+    # NOOD_0187 — unless NOODLE_STRICT_QUARANTINE says otherwise, and the
+    # override is recorded in last_run.json instead of vanishing into stdout.
     if rc != 0 and _all_failures_quarantined(results_root) is True:
-        if not json_out:
-            typer.echo("\n  🔶 Only @quarantine scenarios failed — not failing the build.")
-        rc = 0
+        if os.getenv("NOODLE_STRICT_QUARANTINE", "").strip().lower() in ("1", "true", "yes", "on"):
+            if not json_out:
+                typer.echo("  🔶 Only @quarantine scenarios failed — NOODLE_STRICT_QUARANTINE keeps the build red.")
+        else:
+            if not json_out:
+                typer.echo("\n  🔶 Only @quarantine scenarios failed — not failing the build.")
+            data["quarantine_overrode_exit"] = True
+            rc = 0
 
-    data = _write_last_run(results_root, rc, cwd)
+    if timed_out:
+        data["timed_out"] = True
+        if parallel == 0:
+            # The killed behave child never reached after_all — build the
+            # reports here off the partial per-scenario results on disk.
+            _summary.mark_flaky(results_root)
+            from noodle.reporting import rca_report as _rca_report
+            from noodle.reporting.builder import generate as _generate
+            reports_root = Path(cwd) / _paths.artifacts_root() / "reports"
+            _generate(results_root, str(reports_root / "allure-report"))
+            _rca_report.write_reports(results_root, str(reports_root))
+
+    data = _write_last_run(results_root, rc, cwd, data)
     _log_run_end(results_root, rc, _run_t0, data)   # NOOD_0173 — one run.end (json mode)
     # NOOD_0147 — engine-side failure-trigger detection: a fired trigger is
     # surfaced with the summary so the driving agent logs a session diagnostic
@@ -447,8 +527,13 @@ def run(
         if llm_cost := _cost.load_total(results_root):
             payload["llm_cost"] = llm_cost
         reports = _paths.last_run_root(cwd) / "reports"
-        payload["report"] = str(reports / "allure-report" / "index.html")
-        payload["rca_html"] = str(reports / "rca.html")
+        # NOOD_0187 — only advertise files that exist: a missing allure binary
+        # (or a killed run) used to hand agents an index.html path to nowhere —
+        # the phantom-success class NOOD_0055 fixed for `report generate`.
+        report_idx = reports / "allure-report" / "index.html"
+        rca_file = reports / "rca.html"
+        payload["report"] = str(report_idx) if report_idx.is_file() else None
+        payload["rca_html"] = str(rca_file) if rca_file.is_file() else None
         # NOOD_0156 — the compact RCA also rides a green-but-unverified run:
         # its passed-with-healing lines explain why verified is false.
         if rc != 0 or data.get("verified") is False:
@@ -461,14 +546,16 @@ def run(
     raise typer.Exit(rc)
 
 
-def _write_last_run(results_root: str, rc: int, cwd: str = ".") -> dict:
+def _write_last_run(results_root: str, rc: int, cwd: str = ".",
+                    data: dict | None = None) -> dict:
     """NOOD_0045 Phase 4 — persist the structured run outcome to
     artifacts/last_run.json so shell/CI agents get machine-readable results
     without re-parsing allure-results themselves. Returns the collected data
     (NOOD_0131) so the caller reuses one scan for the quiet summary and
-    --json payload instead of re-collecting per consumer."""
+    --json payload instead of re-collecting per consumer. `data` (NOOD_0187):
+    a dict collect() already produced, possibly annotated by the caller."""
     from noodle.reporting import summary as _summary
-    data = _summary.collect(results_root)
+    data = data if data is not None else _summary.collect(results_root)
     data["exit_code"] = rc
     data["at"] = datetime.now().astimezone().isoformat(timespec="seconds")
     out = Path(cwd) / _paths.artifacts_root() / "last_run.json"
@@ -485,18 +572,18 @@ def _all_failures_quarantined(results_dir: str):
       True  — there were failures and ALL are @quarantine
       False — at least one non-quarantine failure
       None  — nothing to judge (no results / reporting off / no failures)
+
+    NOOD_0187 — reads the historyId-deduped LAST attempt per scenario:
+    counting raw files meant a failed-then-retried-green scenario still
+    registered as a live failure here (and got re-run by --failed).
     """
-    d = Path(results_dir)
-    files = list(d.glob("*-result.json")) if d.is_dir() else []
-    if not files:
+    from noodle.reporting import summary as _summary
+    results = _summary.latest_results(results_dir)
+    if not results:
         return None
     failed = []
-    for f in files:
-        try:
-            r = json.loads(f.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
-        if r.get("status") == "failed":
+    for r in results:
+        if r.get("status") in ("failed", "broken"):
             tags = {lab.get("value") for lab in r.get("labels", []) if lab.get("name") == "tag"}
             failed.append("quarantine" in tags)
     if not failed:
@@ -508,22 +595,100 @@ def _failed_scenario_names(cwd: str = ".") -> list[str]:
     """NOOD_0183 — scenario names that failed in the last run, read from the
     allure results that run already wrote (no extra bookkeeping file to keep
     in sync). Works after a parallel run too — the merge flattens worker dirs
-    into this one before anything reads it."""
-    results = _paths.last_run_root(cwd) / "allure-results"
-    names = []
-    for f in results.glob("*-result.json"):
+    into this one before anything reads it. NOOD_0187 — last attempt only:
+    a retried-then-green scenario is not a failure to re-run."""
+    from noodle.reporting import summary as _summary
+    results = str(_paths.last_run_root(cwd) / "allure-results")
+    return sorted({r["name"] for r in _summary.latest_results(results)
+                   if r.get("status") in ("failed", "broken") and r.get("name")})
+
+
+def _shard_slice(cwd: str, path: str, shard: str) -> list[str]:
+    """NOOD_0187 — deterministic slice i of N of the .feature files under
+    `path`, sorted by relative path so every machine partitions the suite
+    identically. Returns base-relative posix paths for an --include regex."""
+    m = re.fullmatch(r"\s*(\d+)\s*/\s*(\d+)\s*", shard)
+    if not m:
+        raise typer.BadParameter("--shard must be i/N, e.g. 3/16", param_hint="'--shard'")
+    i, n = int(m.group(1)), int(m.group(2))
+    if not (1 <= i <= n):
+        raise typer.BadParameter(f"shard index {i} outside 1..{n}", param_hint="'--shard'")
+    base = Path(cwd) / path
+    if base.is_file():
+        raise typer.BadParameter(
+            "--shard slices a directory of .feature files, not a single file",
+            param_hint="'--shard'")
+    feats = sorted(p.relative_to(base).as_posix() for p in base.rglob("*.feature"))
+    return feats[i - 1::n]
+
+
+def _run_behave(args: list, env: dict, cwd: str, log_path=None,
+                timeout: int = 0) -> tuple[int, bool]:
+    """Run behave/behavex with an optional wall-clock budget (NOOD_0187).
+    On timeout the whole process GROUP is killed (behavex spawns workers,
+    workers spawn browsers) and rc is 124 — the per-scenario results already
+    on disk still feed the report tail. Returns (rc, timed_out). The
+    no-timeout path stays subprocess.run — it is the seam unit tests fake."""
+    kw: dict = {"env": env, "cwd": cwd}
+    lf = None
+    if log_path is not None:
+        lf = open(log_path, "w")
+        kw["stdout"] = lf
+        kw["stderr"] = subprocess.STDOUT
+    try:
+        if not timeout:
+            return subprocess.run(args, **kw).returncode, False
+        if os.name != "nt":
+            kw["start_new_session"] = True   # so the timeout can kill the group
+        proc = subprocess.Popen(args, **kw)
         try:
-            r = json.loads(f.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
-        if r.get("status") in ("failed", "broken") and r.get("name"):
-            names.append(r["name"])
-    return sorted(set(names))
+            return proc.wait(timeout=timeout), False
+        except subprocess.TimeoutExpired:
+            if os.name != "nt":
+                import signal
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    proc.kill()
+            else:
+                proc.kill()   # ponytail: no job objects — grandchildren may linger on Windows
+            proc.wait()
+            return 124, True
+    finally:
+        if lf is not None:
+            lf.close()
+
+
+def _derive_exit_code(data: dict, rc: int, timed_out: bool,
+                      allow_empty: bool) -> tuple[int, list[str]]:
+    """NOOD_0187 — the written results are the ground truth for the exit code
+    in BOTH modes: behave exits 0 on a soft-assert-only failure, and behavex
+    has been observed exiting 0 with failed scenarios in the workers. And a
+    run that executed NOTHING must not exit 0 — a typo'd --tag/--name/path
+    produced a green pipeline that tested nothing. Exit 3 is distinct from
+    behave's 1 and preflight's 2. Returns (rc, console notes)."""
+    notes = []
+    if data.get("failed", 0) > 0:
+        rc = rc or 1
+    ran = data.get("passed", 0) + data.get("failed", 0) + data.get("skipped", 0)
+    if ran == 0 and not timed_out:
+        if allow_empty:
+            notes.append("⚠ 0 scenarios ran in this slice")
+        else:
+            notes.append("✗ 0 scenarios ran — nothing was tested (bad path, "
+                         "--tag or --name?). Failing the run; "
+                         "NOODLE_ALLOW_EMPTY=1 overrides.")
+            rc = rc or 3
+    return rc, notes
 
 
 def _run_parallel(path: str, processes: int, tag: str, env: dict, cwd: str = ".",
-                  scheme: str = "feature", names: list[str] | None = None) -> int:
-    """Run feature files concurrently via behavex, then merge into one report."""
+                  scheme: str = "feature", names: list[str] | None = None,
+                  shard_include: str | None = None, timeout: int = 0,
+                  fail_fast: bool = False, log_path=None) -> tuple[int, bool]:
+    """Run feature files concurrently via behavex, then merge into one report.
+    Exit-code honesty, quarantine and last_run.json live in run()'s shared
+    tail (NOOD_0187) — this only runs, merges and builds the reports."""
     try:
         import behavex  # noqa: F401
     except ImportError:
@@ -533,45 +698,42 @@ def _run_parallel(path: str, processes: int, tag: str, env: dict, cwd: str = "."
         )
     results = Path(cwd) / _paths.artifacts_root() / "allure-results"
     _clean_results_root(results)            # workers skip the wipe in parallel mode
+    _paths.clean_worker_leaves(Path(cwd) / _paths.artifacts_root())
     # NOOD_0183 — clear locks/lanes left by a killed previous run, once, in the
     # parent. A worker must never do this: it would free a live sibling's lock.
     from noodle import runlock
-    _prev = os.getcwd()
-    try:
-        os.chdir(cwd)
-        runlock.reset_control_dir()
-    finally:
-        os.chdir(_prev)
+    runlock.reset_control_dir(cwd)
     env = {**env, "NOODLE_PARALLEL_WORKER": "1"}
     # Same PATH concern as _BEHAVE_CMD — resolve through this interpreter.
+    # NOOD_0187 — `-o` keeps behavex's own output out of ./output (two runs in
+    # one workspace clobbered it) and --no-report skips its duplicate HTML
+    # report: the Allure report built below is the one anybody reads.
     args = [sys.executable, "-m", "behavex", path,
             "--parallel-processes", str(processes),
-            "--parallel-scheme", scheme]
+            "--parallel-scheme", scheme,
+            "-o", str(Path(cwd) / _paths.artifacts_root() / "behavex"),
+            "--no-report"]
     if tag:
         args += ["--tags", tag]
     for n in names or []:
         args += ["--name", n]
-    rc = subprocess.run(args, env=env, cwd=cwd).returncode
+    if shard_include:
+        args += ["--include", shard_include]
+    if fail_fast:
+        args += ["--stop"]
+    rc, timed_out = _run_behave(args, env, cwd, log_path=log_path, timeout=timeout)
     _merge_worker_results(results)          # flatten p*/ so report + scan read one dir
 
-    # NOOD_0052 — don't trust behavex's exit code: it has been observed
-    # returning 0 with failed scenarios in the workers. The merged results
-    # are the ground truth — any non-quarantine failure fails the build.
-    quarantined = _all_failures_quarantined(str(results))
-    if quarantined is False:
-        rc = rc or 1
-    elif rc != 0 and quarantined is True:
-        typer.echo("\n  🔶 Only @quarantine scenarios failed — not failing the build.")
-        rc = 0
     from noodle.reporting import rca_report as _rca_report
+    from noodle.reporting import summary as _summary
     from noodle.reporting.builder import generate
+    _summary.mark_flaky(str(results))       # NOOD_0187 — stamp retried-green as flaky
     reports_root = Path(cwd) / _paths.artifacts_root() / "reports"
     generate(str(results), str(reports_root / "allure-report"))
     # NOOD_0082 — parallel runs get the same always-written rca.md/rca.html
     # tail the single-process hooks path writes (hooks skip it per-worker).
     _rca_report.write_reports(str(results), str(reports_root))
-    _write_last_run(str(results), rc, cwd)
-    return rc
+    return rc, timed_out
 
 
 def _clean_results_root(results: Path):
@@ -584,6 +746,12 @@ def _clean_results_root(results: Path):
     for f in results.glob("*-attachment.*"):
         f.unlink(missing_ok=True)
     (results / "junit.xml").unlink(missing_ok=True)
+    # NOOD_0187 — per-feature junit slices, healing slices and cost ledgers
+    # from the previous run: cost.load_total() rglobs llm_cost*.json, so a
+    # stale ledger inflated the next run's reported spend.
+    for f in (*results.glob("junit.*.xml"), *results.glob("llm_cost*.json"),
+              *results.glob("healing-report*.txt")):
+        f.unlink(missing_ok=True)
     for d in results.glob("p*"):
         if d.is_dir():
             shutil.rmtree(d, ignore_errors=True)
@@ -592,25 +760,69 @@ def _clean_results_root(results: Path):
 def _merge_worker_results(results: Path):
     """Flatten each worker dir into the shared dir so the existing report build +
     quarantine scan (both read the flat dir) work unchanged, then remove the now-
-    empty worker dirs. Per-worker junit files merge into one reports/junit.xml —
+    empty worker dirs. Per-worker junit slices merge into one reports/junit.xml —
     same artifact a single-process run produces. uuid filenames don't collide.
-    Cross-platform: pathlib rename + rmtree only."""
+
+    NOOD_0187 — three fixes: junit/healing files are per-FEATURE slices now
+    (behavex runs after_all once per feature, so fixed names kept only each
+    worker's last feature); fixed-name metadata (environment.properties,
+    categories.json) skips the move when the target exists instead of
+    crashing Windows (os.rename onto an existing dst raises there); and the
+    per-worker traces/network/screenshots/videos leaves flatten up too, so
+    the parent-rendered RCA (traces section, mutation classifier) actually
+    sees them — under --parallel it silently read empty dirs."""
     import shutil
 
     from noodle.reporting import junit as _junit
 
     worker_dirs = sorted(d for d in results.glob("p*") if d.is_dir())
-    junits = [d / "junit.xml" for d in worker_dirs]
+    junits = [j for d in worker_dirs for j in sorted(d.glob("junit*.xml"))]
+    healing_texts = []
     for d in worker_dirs:
-        for f in d.iterdir():
-            if f.is_file() and f.name != "junit.xml":
-                f.rename(results / f.name)
-    if any(j.is_file() for j in junits):
+        for f in sorted(d.iterdir()):
+            if not f.is_file() or f.name.startswith("junit"):
+                continue
+            if f.name.startswith("healing-report"):
+                try:
+                    healing_texts.append(f.read_text())
+                except OSError:
+                    pass
+                continue
+            target = results / f.name
+            if target.exists():
+                continue   # fixed-name metadata — first worker's copy wins
+            shutil.move(str(f), str(target))
+    if junits:
         # Merged junit lands OUTSIDE allure-results so allure generate doesn't
         # ingest scenarios twice (once from JSON, once from XML).
         _junit.merge_junits(junits, results.parent / "reports" / "junit.xml")
+    if healing_texts:
+        out = results.parent / "reports" / "healing-report.txt"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("\n".join(healing_texts))
     for d in worker_dirs:
         shutil.rmtree(d, ignore_errors=True)
+
+    # Flatten the per-worker artifact leaves (traces/network/…): the RCA and
+    # its mutation-aware classifier read the flat dirs. Name collisions get a
+    # worker prefix (two features CAN share a scenario name across apps).
+    root = results.parent
+    for sub in ("traces", "network", "screenshots", "videos"):
+        base = root / sub
+        if not base.is_dir():
+            continue
+        for wd in sorted(d for d in base.glob("p[0-9]*") if d.is_dir()):
+            for f in sorted(wd.iterdir()):
+                if not f.is_file():
+                    continue
+                target = base / f.name
+                if target.exists():
+                    target = base / f"{wd.name}-{f.name}"
+                try:
+                    shutil.move(str(f), str(target))
+                except OSError:
+                    pass
+            shutil.rmtree(wd, ignore_errors=True)
 
 
 _NOODLE_YAML = """\
@@ -660,7 +872,7 @@ _ENV_STUB_BASE = """\
 # PURPOSE: run-wide defaults the engine reads on every run.
 # YOU EDIT: uncomment / change values as needed.
 NOODLE_BROWSER=chromium         # chromium | firefox | webkit | safari | edge
-NOODLE_HEADLESS=false           # true in CI
+NOODLE_HEADLESS=false           # headed for a watching human — read by bare `behave` only; `noodle run` follows noodle.yaml (headless: true), CI passes --headless
 NOODLE_TIMEOUT=10000            # per-action timeout, milliseconds (clicks, page loads)
 #NOODLE_REST_TIMEOUT=30         # REST/API budget, SECONDS — a ceiling, not a wait: the step continues the instant the response lands. Slow report/batch/cold-start endpoint? raise it, e.g. 180. Per step: "... within 180 seconds"
 #NOODLE_FIND_TIMEOUT=120000     # element-find + page-load budget, ms — a CEILING, not a wait: steps proceed the instant the element appears. Slow internal site? raise it, e.g. 300000 (5 min)

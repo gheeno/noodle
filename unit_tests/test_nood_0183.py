@@ -307,28 +307,33 @@ def test_after_all_closes_every_cached_browser(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_sequential_beats_the_env_default(monkeypatch):
+def test_sequential_beats_the_env_default(monkeypatch, tmp_path):
     from typer.testing import CliRunner
 
     from noodle import cli
     seen = {}
     monkeypatch.setattr(cli, "_run_parallel",
-                        lambda path, n, tag, env, cwd=".", scheme="feature", names=None:
-                        seen.update(n=n) or 0)
+                        lambda *a, **k: seen.update(n=a[1]) or (0, False))
     monkeypatch.setattr(cli.subprocess, "run",
                         lambda *a, **k: type("R", (), {"returncode": 0})())
+    # NOOD_0187 — the run tail reads real results now; isolate from the repo's
+    # artifacts tree and opt out of the zero-scenarios guard (nothing runs here).
+    monkeypatch.setenv("NOODLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("NOODLE_ALLOW_EMPTY", "1")
     r = CliRunner().invoke(cli.app, ["run", "tests/", "--headless", "--sequential"],
                            env={"NOODLE_PARALLEL_PROCESSES": "4"})
     assert r.exit_code == 0
     assert "n" not in seen, "--sequential must override $NOODLE_PARALLEL_PROCESSES"
 
 
-def test_scenario_scheme_warns_that_it_splits_a_feature_file(monkeypatch):
+def test_scenario_scheme_warns_that_it_splits_a_feature_file(monkeypatch, tmp_path):
     from typer.testing import CliRunner
 
     from noodle import cli
     monkeypatch.setattr(cli, "_run_parallel",
-                        lambda *a, **k: 0)
+                        lambda *a, **k: (0, False))
+    monkeypatch.setenv("NOODLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("NOODLE_ALLOW_EMPTY", "1")
     r = CliRunner().invoke(cli.app, ["run", "tests/", "--headless",
                                      "--parallel", "2", "--parallel-scheme", "scenario"])
     assert "splits ONE feature file" in r.output

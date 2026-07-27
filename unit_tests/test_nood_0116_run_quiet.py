@@ -24,6 +24,9 @@ def _stub_run_env(monkeypatch, tmp_path, record):
     monkeypatch.setattr(cli, "_app_report_dir", lambda c, p: None)
     monkeypatch.setattr(cli._paths, "record_last_run_root", lambda c: None)
     monkeypatch.setattr(cli, "_write_last_run", lambda *a, **k: None)
+    # NOOD_0187 — the faked runner writes no results; without this the
+    # zero-scenarios guard (exit 3) fires and hides what's under test here.
+    monkeypatch.setenv("NOODLE_ALLOW_EMPTY", "1")
 
     def fake_run(args, **kw):
         record.update(kw)

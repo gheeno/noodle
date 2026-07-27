@@ -11,6 +11,58 @@ from pathlib import Path
 from noodle.reporting import paths as _paths
 
 
+def latest_results(results_dir: str = None) -> list[dict]:
+    """Last-attempt scenario results, deduplicated by historyId — auto-retry
+    writes one result per ATTEMPT, so any reader that counts raw files
+    double-counts retried scenarios (NOOD_0187: the quarantine exit-code scan
+    and --failed re-run both did). Single source for that dedupe."""
+    d = Path(results_dir or _paths.results_dir())
+    files = sorted(d.glob("*-result.json")) if d.is_dir() else []
+    latest: dict = {}
+    for f in files:
+        try:
+            r = json.loads(f.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        key = r.get("historyId") or r.get("fullName") or f.name
+        prev = latest.get(key)
+        if prev is None or r.get("stop", 0) >= prev.get("stop", 0):
+            latest[key] = r
+    return list(latest.values())
+
+
+def mark_flaky(results_dir: str = None) -> int:
+    """NOOD_0187 — stamp Allure's statusDetails.flaky on the FINAL attempt of
+    every scenario that failed and then passed via auto-retry, so the report
+    shows the retry instead of an indistinguishable clean green. Runs before
+    the report build; returns how many results were stamped."""
+    d = Path(results_dir or _paths.results_dir())
+    files = sorted(d.glob("*-result.json")) if d.is_dir() else []
+    groups: dict = {}
+    for f in files:
+        try:
+            r = json.loads(f.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        key = r.get("historyId") or r.get("fullName") or f.name
+        groups.setdefault(key, []).append((r.get("stop", 0), f, r))
+    stamped = 0
+    for attempts in groups.values():
+        if len(attempts) < 2:
+            continue
+        _, path, final = max(attempts, key=lambda a: a[0])
+        if final.get("status") != "passed" or final.get(
+                "statusDetails", {}).get("flaky"):
+            continue
+        final.setdefault("statusDetails", {})["flaky"] = True
+        try:
+            path.write_text(json.dumps(final, indent=2))
+            stamped += 1
+        except OSError:
+            continue
+    return stamped
+
+
 def collect(results_dir: str = None) -> dict:
     """Aggregate result JSON into counts, failures, and total wall time."""
     from noodle import counters
@@ -18,13 +70,16 @@ def collect(results_dir: str = None) -> dict:
     results_dir = results_dir or str(_paths.results_dir())
     d = Path(results_dir)
     files = sorted(d.glob("*-result.json")) if d.is_dir() else []
-    passed = failed = 0
+    passed = failed = skipped = 0
     failures = []
     starts, stops = [], []
     # Auto-retry writes one result per ATTEMPT — de-duplicate by historyId
     # (fullName/filename fallback), keeping the last attempt, so counts match
     # Behave and Allure instead of double-counting retried failures.
+    # NOOD_0187 — attempts per key are kept so a retried-then-green scenario
+    # surfaces as flaky instead of disappearing into the pass count.
     latest: dict = {}
+    attempts: dict = {}
     for f in files:
         try:
             r = json.loads(f.read_text())
@@ -35,6 +90,7 @@ def collect(results_dir: str = None) -> dict:
         if "stop" in r:
             stops.append(r["stop"])
         key = r.get("historyId") or r.get("fullName") or f.name
+        attempts[key] = attempts.get(key, 0) + 1
         prev = latest.get(key)
         if prev is None or r.get("stop", 0) >= prev.get("stop", 0):
             latest[key] = r
@@ -48,8 +104,14 @@ def collect(results_dir: str = None) -> dict:
     # requested behavior passed.
     from noodle import healing as _healing
     warnings_out, healing_events, evidence_out, reasons = [], [], [], []
-    for r in latest.values():
+    flaky = []
+    for key, r in latest.items():
         scenario = r.get("name", "")
+        # NOOD_0187 — retried-then-green is a pass, but a visible one: the only
+        # prior signal was a stdout line that --quiet (the CI/agent default)
+        # diverted into run.log.
+        if attempts.get(key, 1) > 1 and r.get("status") == "passed":
+            flaky.append({"scenario": scenario, "attempts": attempts[key]})
         for s in r.get("steps", []):
             sd = s.get("statusDetails", {}) or {}
             for w in sd.get("warnings") or []:
@@ -82,7 +144,9 @@ def collect(results_dir: str = None) -> dict:
                                    "(center-scroll failed)")
         if r.get("status") == "passed":
             passed += 1
-        elif r.get("status") == "failed":
+        elif r.get("status") == "skipped":
+            skipped += 1
+        elif r.get("status") in ("failed", "broken"):
             failed += 1
             step = next((s["name"] for s in r.get("steps", [])
                          if s.get("status") == "failed"), "")
@@ -94,8 +158,8 @@ def collect(results_dir: str = None) -> dict:
     if failed:
         reasons.append(f"{failed} scenario(s) failed")
     secs = round((max(stops) - min(starts)) / 1000) if starts and stops else 0
-    return {"passed": passed, "failed": failed, "failures": failures,
-            "seconds": secs,
+    return {"passed": passed, "failed": failed, "skipped": skipped,
+            "failures": failures, "seconds": secs, "flaky": flaky,
             "verified": not reasons, "unverified_reasons": reasons,
             "warnings": warnings_out, "healing_events": healing_events,
             "evidence": evidence_out}
@@ -110,6 +174,13 @@ def render(results_dir: str = None, report_dir: str = None,
     lines = [f"Run summary — {date.today().isoformat()}",
              f"✅  {s['passed']} passed",
              f"❌  {s['failed']} failed"]
+    # NOOD_0187 — skips and retried-passes exist in the glance too, not only
+    # in the result files: silence here is how a gated-off suite reads green.
+    if s.get("skipped"):
+        lines.append(f"⏭️  {s['skipped']} skipped")
+    for fk in s.get("flaky") or []:
+        lines.append(f"🔁  flaky: {fk['scenario']} (passed after "
+                     f"{fk['attempts']} attempts)")
     for fl in s["failures"]:
         at = f"  failed at: {fl['step']}" if fl["step"] else ""
         lines.append(f"   • {fl['feature']} > {fl['scenario']}{at}")

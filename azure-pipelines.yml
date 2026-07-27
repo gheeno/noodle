@@ -91,10 +91,16 @@ variables:
     ${{ else }}:
       value: '--headed'
   - name: tagFlag
+    # NOOD_0187 — the tag rides inside single quotes so a tag with a space
+    # survives the shell's word split of $(tagFlag) (blank stays blank).
     ${{ if ne(parameters.testTag, '') }}:
-      value: '--tag ${{ parameters.testTag }}'
+      value: "--tag '${{ parameters.testTag }}'"
     ${{ else }}:
       value: ''
+  # NOOD_0187 — cacheable browser install path (see the Cache@2 task in the
+  # tests job): every shard used to re-download chromium on every run.
+  - name: PLAYWRIGHT_BROWSERS_PATH
+    value: $(Pipeline.Workspace)/pw-browsers
 
 # Parallelism via file-level sharding (Phase E). The `discover` job lists every
 # WEB .feature file (in this repo's sample_feature_tests/, or an external tests repo — see
@@ -124,7 +130,10 @@ jobs:
           # NOOD_0181 — the OCR bridge test needs the tesseract binary (the
           # `tests` job below already installs it for the real suites).
           sudo apt-get update && sudo apt-get install -y tesseract-ocr
-          pip install -e ".[all,llm]"
+          # NOOD_0187 — constraints.txt (exported from uv.lock, `make
+          # constraints`) pins every transitive dep: an unpinned resolve let a
+          # random Playwright/litellm minor bump break pipelines nobody touched.
+          pip install -e ".[all,llm]" -c constraints.txt
           # NOOD_0181 — the touch-gesture tests need a real browser (see the
           # note in .github/workflows/tests.yml); they skip without it, so the
           # gate would go green having proved nothing. Headless shell only.
@@ -155,9 +164,19 @@ jobs:
         inputs:
           versionSpec: '3.11'
 
+      # NOOD_0187 — chromium download cache: keyed on constraints.txt (the
+      # Playwright version is pinned there), so a shard only re-downloads
+      # browsers when the pin moves. --with-deps still apt-installs OS libs.
+      - task: Cache@2
+        inputs:
+          key: '"pw-browsers" | constraints.txt'
+          path: $(Pipeline.Workspace)/pw-browsers
+        displayName: 'Restore Playwright browsers cache'
+
       - script: |
           sudo apt-get update && sudo apt-get install -y tesseract-ocr
-          pip install -e ".[all,llm]"
+          # NOOD_0187 — pinned transitive deps (uv.lock → constraints.txt).
+          pip install -e ".[all,llm]" -c constraints.txt
           playwright install chromium --with-deps
           # NOOD_0039 — Allure 3 CLI (npm package `allure`, replaces the Java
           # allure-commandline 2.x). Reads our allure2-format result JSON as-is.
@@ -190,6 +209,17 @@ jobs:
         displayName: 'Start BusterBlock test app'
         workingDirectory: $(Build.SourcesDirectory)
 
+      # NOOD_0187 — BusterBlock's demo credentials live in a gitignored
+      # secrets file, so a fresh agent checkout has only the .example and
+      # preflight refuses to launch (exit 2). Seed it; `-n` never clobbers and
+      # variable-group/Key Vault env still outranks the file (NOOD_0133), so a
+      # real secret store is unaffected.
+      - script: |
+          cp -n sample_feature_tests/web/busterblock/resources/busterblock_secrets.env.example \
+                sample_feature_tests/web/busterblock/resources/busterblock_secrets.env || true
+        displayName: 'Seed BusterBlock demo credentials (if absent)'
+        workingDirectory: $(Build.SourcesDirectory)
+
       # NOOD_0039 — Allure 3 trend history. Allure 3 stores history as one
       # JSONL file (reports/allure-history/history.jsonl); carry it between
       # pipeline runs with the pipeline cache so the report's History/Trend
@@ -218,6 +248,11 @@ jobs:
         displayName: 'Run tests — $(featurePath)'
         env:
           NOODLE_ARTIFACTS_DIR: artifacts
+          # NOOD_0187 — `noodle run` now exits 3 when 0 scenarios ran (the
+          # silent-green fix). A matrix leg IS a slice: a $(tagFlag) filter can
+          # legitimately zero one shard while others run, so shards opt out.
+          # The suite report still shows the true total.
+          NOODLE_ALLOW_EMPTY: "1"
           BASE_URL: $(BASE_URL)
           MY_EMAIL: $(MY_EMAIL)
           MY_CARD: $(MY_CARD)

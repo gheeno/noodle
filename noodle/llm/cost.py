@@ -89,15 +89,21 @@ def format_line(s: dict | None = None) -> str:
             + f" | model {s['model']}")
 
 
-def write_json(results_dir) -> None:
+def write_json(results_dir, suffix: str | None = None) -> None:
     """Persist the ledger next to the run results (no-op when no calls).
     Parallel workers get a per-pid filename so the CLI's flatten-merge
-    doesn't clobber one worker's ledger with another's."""
+    doesn't clobber one worker's ledger with another's. NOOD_0187 — `suffix`
+    adds a per-feature slice id too: behavex resets and re-writes the ledger
+    once per FEATURE in a reused worker process, so the pid alone kept only
+    the last feature's spend."""
     s = summary()
     if not s:
         return
-    name = (f"llm_cost.p{os.getpid()}.json"
-            if os.getenv("NOODLE_PARALLEL_WORKER") == "1" else "llm_cost.json")
+    if os.getenv("NOODLE_PARALLEL_WORKER") == "1":
+        name = (f"llm_cost.p{os.getpid()}.{suffix}.json" if suffix
+                else f"llm_cost.p{os.getpid()}.json")
+    else:
+        name = "llm_cost.json"
     d = Path(results_dir)
     d.mkdir(parents=True, exist_ok=True)
     (d / name).write_text(json.dumps(s, indent=2))

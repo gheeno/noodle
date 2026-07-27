@@ -221,6 +221,16 @@ def warn_if_stale(echo) -> None:
     """One loud non-fatal line from `noodle init`/`noodle run` when the
     running build can't track the source. Diagnose and continue."""
     if is_editable() is False:
+        # NOOD_0187 — off a TTY this advice is wrong: CI/container jobs
+        # install from a wheel DELIBERATELY, and "run `noodle update`" on
+        # every pipeline log line trains readers to ignore warnings. The
+        # version-mismatch warning below stays — that one is legit anywhere.
+        import sys
+        try:
+            if not sys.stdout.isatty():
+                return
+        except (AttributeError, ValueError):
+            pass
         echo(f"  ⚠️ non-editable noodle install at {package_dir()} — a git pull/"
              "re-clone won't update the CLI. Run `noodle update` (or `noodle doctor` "
              "for the full diagnosis).")

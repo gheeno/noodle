@@ -71,6 +71,11 @@ Ceiling accounting (moved verbatim from the retired test asserts):
   read the doc that explains it. The rationale (what brief keeps, what it
   drops, when to use it) did move: docs/llm-performance.md §4. What each
   surface buys is one clause naming the flag.
+- NOOD_0187: `noodle run --help` 5120 → 5504 (+384). Three flags joined run
+  — --shard i/N, --timeout, --fail-fast (the scale batch: split across
+  machines, wall-clock budget, stop-on-first-red). Same NOOD_0179 rule: a
+  flag's existence is routing, and each carries a one-line help; the
+  rationale lives in docs/cli-reference.md. 5321 B used at the bump.
 """
 from __future__ import annotations
 
@@ -88,7 +93,7 @@ CEILINGS: dict[str, int] = {
     "copilot-digest (.github/copilot-instructions.md)": 7168,
     "hot-tool-docstrings (probe/author/run_and_report/run)": 6400,
     "cli-help (noodle probe --help)": 6400,
-    "cli-help (noodle run --help)": 5120,
+    "cli-help (noodle run --help)": 5504,
 }
 
 
