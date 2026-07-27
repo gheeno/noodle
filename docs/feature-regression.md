@@ -64,7 +64,7 @@ what they cost — any pair works for a demo.
 | `elapsed_s` | Wall clock from starting the TC to its served green report. |
 | `run_s` | The generated test's own execution time — the `run.seconds` field of the author call's JSON. |
 | `development_s` | **Derived by the scorer:** `elapsed_s − run_s` — how long the LLM/agent spent *developing* the test case (prompt → authored `.feature`). This is what the time budget applies to. |
-| `aic` | The **driving agent's own** billed interactions/credits for that TC — host-reported; the engine cannot see it. Absolute AIC is not portable across host models ([llm-performance.md §7](llm-performance.md)) — compare same host to same host. |
+| `tokens` / `aic` | The **driving agent's own** cost for that TC, **in the unit its host actually bills** (NOOD_0188) — host-reported; the engine cannot see the driving agent. `host` selects it: a `claude…` host is scored on `tokens` (input+output for that TC — Claude Code reports session usage via `/cost`, take the delta across the TC), a `copilot…` host on `aic` (premium requests). Fill the one that matches, leave the other `null`; the scorer flags the missing one as an unmeasured field. Scoring a Claude run in Copilot's unit (or vice-versa) made the cost half of the verdict meaningless on whichever host you weren't using. Absolute cost is not portable across hosts ([llm-performance.md §7](llm-performance.md)) — compare same host to same host. |
 | `corrections` | Accuracy proxy: every re-probe / re-author / re-run needed **after** the first `author --prompt --run` call. 0 is the expectation; a couple is tolerable; more means the engine sent the agent chasing. |
 | `green` / `verified` | The run contract: `failed == 0` **and** `verified: true`. A pass held up by fuzzy healing or lenient matching is not a pass. |
 | `engine_cost` | Noodle's own `NOODLE_MODEL` spend (`noodle cost --json`), separate from the host's AIC. |
@@ -78,13 +78,21 @@ assert what was asked, nothing invented.
 | Ceiling | Default | Env override |
 |---|---|---|
 | Per-TC **development time** (`elapsed_s − run_s`) | 120 s | `NOODLE_REG_MAX_ELAPSED_S` |
-| Per-TC host AIC | 10 | `NOODLE_REG_MAX_AIC` |
-| Cross-TC AIC average | 10 | `NOODLE_REG_MAX_AVG_AIC` |
+| Per-TC host cost — **Copilot** (AIC) | 10 | `NOODLE_REG_MAX_AIC` |
+| Cross-TC AIC average — **Copilot** | 10 | `NOODLE_REG_MAX_AVG_AIC` |
+| Per-TC host cost — **Claude** (tokens) | 120 000 | `NOODLE_REG_MAX_TOKENS` |
+| Cross-TC token average — **Claude** | 120 000 | `NOODLE_REG_MAX_AVG_TOKENS` |
 | Per-TC corrections | 2 | `NOODLE_REG_MAX_CORRECTIONS` |
 
-Rationale: a super-easy test case should average ~10 AIC end to end
-(NOOD_0156's acceptance line). Overrides exist for deliberately
-slower/cheaper host models — set them in the shell, not in code.
+Only the ceiling for **this run's host unit** is enforced (NOOD_0188) — the
+other is ignored, so a Claude run is never judged against a premium-request
+budget it doesn't spend.
+
+Rationale: a super-easy test case should cost about one turn's worth of
+context end to end — ~10 AIC on Copilot (NOOD_0156's acceptance line), or a
+low-six-figure token count on Claude, where a single tool round-trip re-sends
+the conversation. Overrides exist for deliberately slower/cheaper host models
+— set them in the shell, not in code.
 
 ## Reading the verdict
 

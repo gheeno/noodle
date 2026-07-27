@@ -1852,7 +1852,10 @@ def feature_regression(
     if score_file is None:
         typer.echo(regression.runbook())
         return
-    verdict = regression.score(json.loads(Path(score_file).read_text()))
+    # NOOD_0188 — score against the workspace holding the run's artifacts, so
+    # the audit can cross-check the green/verified claims against last_run.json.
+    verdict = regression.score(json.loads(Path(score_file).read_text()),
+                               workspace=str(Path(score_file).parent))
     saved = Path(score_file).with_name("verdict.json")
     saved.write_text(json.dumps(verdict, indent=2))
     verdict["saved"] = str(saved)

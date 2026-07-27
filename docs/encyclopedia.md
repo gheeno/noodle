@@ -168,6 +168,14 @@ NOODLE_AUTO_DISMISS=true       # auto-close overlays that block a click + RCA wa
 NOODLE_STRICT_LOCATOR=false    # true = ambiguous locators FAIL (recommended in CI)
 NOODLE_RETRIES=1               # re-run a failed scenario N extra times (flaky guard)
 NOODLE_PIXEL_THRESHOLD=0.01    # max fraction of changed pixels for "match the baseline"
+NOODLE_PROBE_CACHE_TTL=0       # NOOD_0188: seconds an authoring probe may be REUSED on a
+                               # repair lap of the same feature. 0 (default) = always
+                               # re-probe. Set it (e.g. 120) while iterating on a GOAL
+                               # against a slow, static site — each lap then skips a
+                               # browser launch + page load + scan. Leave it off while
+                               # fixing the APP itself: a reused probe answers with a page
+                               # state the engine hasn't looked at. Reuse is always
+                               # disclosed (log line + probe_reused in the payload)
 NOODLE_LOG_LEVEL=INFO          # DEBUG | INFO | WARNING | ERROR
 ```
 

@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -796,11 +797,43 @@ def _pixel_diff_ratio(base, current, tol: int = 30):
     return changed / total if total else 0.0
 
 
-def pixel_baseline(page: Page, name: str):
+def _mask_regions(img, page: Page, ignore: list[str]):
+    """NOOD_0188 — paint every `ignore` element's box flat black on a COPY, so
+    volatile content (a clock, an avatar, an ad slot, a session id) can't fail
+    a pixel baseline. Both images get the same treatment, so a masked region
+    always compares equal. Elements that can't be resolved are skipped — a
+    mask is a tolerance, never an assertion."""
+    from PIL import ImageDraw
+    masked = img.convert("RGB")
+    draw = ImageDraw.Draw(masked)
+    painted = []
+    for phrase in ignore:
+        try:
+            loc = find(page, phrase)
+            box = loc.bounding_box() if loc is not None else None
+        except Exception:
+            box = None
+        if not box or not box.get("width") or not box.get("height"):
+            continue
+        draw.rectangle(
+            [box["x"], box["y"], box["x"] + box["width"], box["y"] + box["height"]],
+            fill=(0, 0, 0))
+        painted.append(phrase)
+    if painted:
+        logger.info(f"\n  🩹 Masked {len(painted)} region(s): {', '.join(painted)}")
+    return masked
+
+
+def pixel_baseline(page: Page, name: str, ignore: list[str] = None):
     """Deterministic visual regression — pixel diff, no LLM. First run captures
     baselines/<name>.png; later runs compare and fail if more than
     NOODLE_PIXEL_THRESHOLD (default 1%) of pixels changed, saving a diff
-    image as evidence."""
+    image as evidence.
+
+    NOOD_0188 — `ignore` masks named regions before comparing. Without it any
+    clock, avatar or ad made a baseline permanently red, which is how visual
+    tests get switched off. (The LLM baseline path already took `ignore`; the
+    deterministic one didn't.)"""
     import io
     from pathlib import Path
 
@@ -810,14 +843,18 @@ def pixel_baseline(page: Page, name: str):
     safe = name.replace(" ", "_").replace("/", "_")
     path = Path(f"baselines/{safe}.png")
     shot = page.screenshot(full_page=True)
+    current = Image.open(io.BytesIO(shot))
+    if ignore:
+        current = _mask_regions(current, page, ignore)
 
     if not path.exists():
-        path.write_bytes(shot)
+        # Store the MASKED baseline so both sides always match on the ignored
+        # regions, however the live content changes.
+        current.save(path)
         logger.info(f"\n  📐 Pixel baseline captured: {path}")
         return
 
     base = Image.open(path)
-    current = Image.open(io.BytesIO(shot))
     ratio = _pixel_diff_ratio(base, current)
     threshold = float(os.getenv("NOODLE_PIXEL_THRESHOLD", "0.01"))
 
@@ -1697,18 +1734,88 @@ def get_attribute_value(page: Page, locator_text: str, attribute: str) -> str:
 # Phase D — network mocking, API setup/teardown, test-data fixtures
 # ---------------------------------------------------------------------------
 
-def mock_route(page: Page, url: str, status: int, body: str = None):
+def _content_type_for(body: str, path: Path | None = None) -> str:
+    """Best-effort MIME for a mocked body. NOOD_0188 — mock_route used to
+    hardcode application/json, so mocking an HTML fragment or a CSV export
+    served it with a lying content-type and the page parsed it wrong."""
+    if path is not None:
+        import mimetypes
+        guessed, _ = mimetypes.guess_type(path.name)
+        if guessed:
+            return guessed
+    sample = (body or "").lstrip()[:1]
+    if sample in ("{", "["):
+        return "application/json"
+    if sample == "<":
+        return "text/html"
+    return "text/plain"
+
+
+def mock_route(page: Page, url: str, status: int, body: str = None,
+               headers: dict = None, method: str = None, delay_ms: int = 0,
+               content_type: str = None, fixture: str = None):
     """Intercept requests matching `url` (glob) and return a canned response —
-    decouples a test from a flaky/slow/absent backend."""
-    page.route(url, lambda route: route.fulfill(
-        status=status, body=body or "", content_type="application/json"))
-    logger.info(f"\n  🔌 Mocking {url} → {status}")
+    decouples a test from a flaky/slow/absent backend.
+
+    NOOD_0188 — status+body was the whole surface, which made the daily-driver
+    cases unreachable: a mock needs response HEADERS (auth, pagination,
+    CORS), a body big enough to live in a FIXTURE file rather than a Gherkin
+    string, METHOD scoping (mock the POST, let the GET through), and injected
+    LATENCY to exercise spinners/timeouts.
+    """
+    payload = body or ""
+    src = None
+    if fixture:
+        src = Path(fixture)
+        payload = src.read_text()
+    ctype = content_type or _content_type_for(payload, src)
+
+    def _handler(route):
+        if method and route.request.method.upper() != method.upper():
+            route.fallback()          # not our verb — let it continue
+            return
+        if delay_ms:
+            time.sleep(delay_ms / 1000)
+        route.fulfill(status=status, body=payload, content_type=ctype,
+                      headers=headers or {})
+
+    page.route(url, _handler)
+    detail = f" {method}" if method else ""
+    detail += f" +{delay_ms}ms" if delay_ms else ""
+    detail += f" from {src.name}" if src else ""
+    logger.info(f"\n  🔌 Mocking{detail} {url} → {status} ({ctype})")
 
 
 def block_route(page: Page, url: str):
     """Abort requests matching `url` (glob) — kill analytics/ads/3rd-party noise."""
     page.route(url, lambda route: route.abort())
     logger.info(f"\n  🚫 Blocking {url}")
+
+
+def route_from_har(page: Page, har_path: str, url: str = None,
+                   update: bool = False):
+    """NOOD_0188 — serve responses from a recorded HAR (or record one).
+
+    The NOOD_0183 audit declined HAR replay on the grounds that mock_route
+    covers it. It doesn't: mock_route fulfils ONE glob per step, so pinning a
+    third-party-dependent page means hand-writing a mock per request. A HAR
+    pins the whole session in one line — the standard way to make a suite
+    that depends on someone else's API deterministic.
+
+    update=True records instead of replaying, so the same step both captures
+    the fixture (once, against the live site) and replays it forever after.
+    """
+    p = Path(har_path)
+    if not update and not p.is_file():
+        raise AssertionError(
+            f"HAR file not found: {p}. Record it first with the same step in "
+            f"recording mode (\"...and records it\"), which writes the file "
+            f"from a live run.")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    page.route_from_har(str(p), url=url, update=update,
+                        not_found="abort" if not update else "fallback")
+    logger.info(f"\n  🎬 {'Recording' if update else 'Replaying'} HAR {p}"
+                + (f" (urls matching {url})" if url else ""))
 
 
 def api_call(page: Page, method: str, url: str, body: str = None,
@@ -2875,38 +2982,43 @@ def assert_download_content(page: Page, downloads: list, needle: str | None = No
     The Download object (and so the file on disk) was already captured; only
     `suggested_filename` was ever exposed, so report/export testing — a
     top-tier enterprise use case — had no way to check what was inside."""
-    from pathlib import Path
     dl = _latest_download(downloads)
     path = dl.path()
     if path is None:
         raise AssertionError(
             f"'{dl.suggested_filename}' has no local path — the download was "
             f"cancelled or the browser context closed before it finished.")
-    raw = Path(path).read_bytes()
+    # NOOD_0188 — xlsx/docx/pptx/pdf are read through noodle.docparse (stdlib
+    # zip/zlib), so an exported REPORT can be asserted on, not just its
+    # filename. Everything else keeps the plain UTF-8 read.
+    from noodle import docparse
+    name = dl.suggested_filename
+    try:
+        text = docparse.text_of(path, name)
+    except (OSError, ValueError, zipfile.BadZipFile) as e:
+        raise AssertionError(
+            f"Could not read '{name}' to check its contents ({e.__class__.__name__}: "
+            f"{e}). If the format is exotic, assert the filename instead.")
     if needle is not None:
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            raise AssertionError(
-                f"'{dl.suggested_filename}' is not UTF-8 text ({len(raw)} bytes), "
-                f"so it can't be searched for {needle!r}. Binary formats (xlsx, "
-                f"pdf) need a parser — assert the filename instead.")
         if needle not in text:
+            where = " (extracted text)" if docparse.is_binary_doc(name) else ""
             raise AssertionError(
-                f"Downloaded '{dl.suggested_filename}' does not contain {needle!r}."
+                f"Downloaded '{name}' does not contain {needle!r}{where}."
                 f"\nFirst 300 chars: {text[:300]!r}")
-        logger.info(f"\n  📄 '{dl.suggested_filename}' contains {needle!r}")
+        logger.info(f"\n  📄 '{name}' contains {needle!r}")
     if rows is not None:
-        text = raw.decode("utf-8", errors="replace")
-        # Count non-empty lines, minus the header — what "10 rows" means to a
-        # tester looking at a CSV export.
-        lines = [ln for ln in text.splitlines() if ln.strip()]
-        actual = max(0, len(lines) - 1)
+        # xlsx counts real <row> elements; everything else counts non-empty
+        # lines — both excluding the header, which is what "10 rows" means to
+        # a tester looking at an export.
+        actual = docparse.row_count(path, name)
+        if actual is None:
+            lines = [ln for ln in text.splitlines() if ln.strip()]
+            actual = max(0, len(lines) - 1)
         if actual != rows:
             raise AssertionError(
-                f"Downloaded '{dl.suggested_filename}' has {actual} data row(s) "
+                f"Downloaded '{name}' has {actual} data row(s) "
                 f"(excluding the header), expected {rows}.")
-        logger.info(f"\n  📄 '{dl.suggested_filename}' has {rows} data row(s)")
+        logger.info(f"\n  📄 '{name}' has {rows} data row(s)")
 
 
 def switch_frame_chain(page: Page, names: list[str]):
@@ -3027,6 +3139,72 @@ def assert_ws_message(page: Page | None, frames: list, contains: str,
         f"No websocket message{want} containing {contains!r} was observed "
         f"({len(frames)} frame(s) captured)"
     )
+
+
+def mock_websocket(page: Page, url: str = "**/*"):
+    """NOOD_0188 — take over the page's WebSocket so a test can PUSH frames.
+
+    Capture was observation-only, so a live-update UI (ticker, chat, order
+    status, notification badge) could be watched but never DRIVEN: there was
+    no way to make the server "say" something and assert the UI reacted.
+
+    Playwright's routing intercepts the socket the PAGE opens; the browser has
+    no API to inject into an already-open one. So this must be armed BEFORE
+    the navigation/action that opens the socket — same arm-first contract as
+    the JS dialog steps. Frames the page sends are recorded for assertions and
+    NOT forwarded (there is no real server behind a mocked socket).
+    """
+    sent: list = []
+    sockets: list = []
+
+    def _on_ws(ws):
+        sockets.append(ws)
+        ws.on_message(lambda message: sent.append(message))
+
+    page.route_web_socket(url, _on_ws)
+    page._noodle_ws_mock = {"sockets": sockets, "sent": sent}
+    logger.info(f"\n  🔀 Mocking websocket {url} — arm before the step that opens it")
+
+
+def send_ws_message(page: Page, message: str):
+    """Push a frame from the mocked server to the page (see mock_websocket)."""
+    mock = getattr(page, "_noodle_ws_mock", None)
+    if mock is None:
+        raise AssertionError(
+            "No mocked websocket — add a step that mocks the websocket BEFORE "
+            "the action that opens it (routing can't attach to an open socket).")
+    deadline = time.time() + int(os.getenv("NOODLE_TIMEOUT", "10000")) / 1000
+    while not mock["sockets"] and time.time() < deadline:
+        page.wait_for_timeout(200)      # the page may still be connecting
+    if not mock["sockets"]:
+        raise AssertionError(
+            "The page never opened a websocket matching the mocked pattern, so "
+            "there is nothing to send to.")
+    mock["sockets"][-1].send(message)
+    logger.info(f"\n  📡 Sent websocket frame: {message[:80]}")
+
+
+def assert_ws_sent(page: Page, contains: str):
+    """A frame the PAGE sent to the mocked socket contained `contains` —
+    proves the UI actually published what it claims (subscribe, ack, chat)."""
+    mock = getattr(page, "_noodle_ws_mock", None)
+    if mock is None:
+        raise AssertionError(
+            "No mocked websocket — this step reads frames the page sent to a "
+            "MOCKED socket; add the mock step before the socket opens.")
+    deadline = time.time() + int(os.getenv("NOODLE_TIMEOUT", "10000")) / 1000
+    while True:
+        for m in mock["sent"]:
+            if isinstance(m, bytes):
+                m = m.decode("utf-8", errors="replace")
+            if contains in str(m):
+                return
+        if time.time() > deadline:
+            break
+        page.wait_for_timeout(200)
+    raise AssertionError(
+        f"The page never sent a websocket frame containing {contains!r} "
+        f"({len(mock['sent'])} frame(s) sent)")
 
 
 def emulate_media(page: Page, media: str):

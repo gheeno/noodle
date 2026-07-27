@@ -287,9 +287,11 @@ site, a product, or a vocabulary. Any app, any domain, any action mix.
 
 Every key: `scenario` (required), `navigation` (every requested URL, in
 order — one `{env:}` Given each), `actions`
-(`search|suggest|pick|add_to|click|enter|select`, each with `id?` +
-`term`/`target`/`value`/`option`), `checks`
-(`see|count|any_of|field|item_in_destination`, plus `min?`, `value?`,
+(`search|suggest|pick|add_to|click|enter|select|check|uncheck|hover|`
+`upload|press_key|pick_date|go_back`, each with `id?` +
+`term`/`target`/`value`/`option`/`file`/`key`/`date`), `checks`
+(`see|not_see|count|any_of|field|item_in_destination|url_contains`, plus
+`min?`, `value?`,
 `expected_from?`, `evidence: screenshot?`, `after?`), `dismissals`
 (`popups|location_prompt|notifications_prompt`), `probe: {discover}`, and
 `allow_no_assertion`. Loose dismissal wording is canonicalized for you and
