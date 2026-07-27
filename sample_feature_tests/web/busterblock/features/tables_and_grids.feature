@@ -121,9 +121,13 @@ Feature: Tables & Grids — cells, headers, rows, columns and scrollbars
   Scenario: Token-guarded api_call — bearer token applies to setup calls
     # Fetch a real JWT from the login API, then hit a protected endpoint with
     # the quick api_call step — the bearer token set for REST guards it too.
+    # movieId 2 (Star Wars), NOT 1: carts are per-user and parallel-safe, but
+    # movie STOCK is global app state, and run_custom_script.feature's
+    # seed_out_of_stock.py zeroes movie 1. Under --parallel that seed lands in
+    # another worker mid-scenario and /api/cart answers 400 Out of stock.
     Given sets {var:REST_BASE_URL} to '{env:BUSTERBLOCK}'
     When performs a POST call at '/api/auth/login' with body '{"username": "{env:BB_USER}", "password": "{env:BB_PASS}"}'
     Then the response status should be 200
     When extracts 'token' from the response storing in {var:TOKEN}
     And sets the bearer token to '{var:TOKEN}'
-    And User calls POST '{env:BUSTERBLOCK}/api/cart' with body '{"movieId": 1, "qty": 1}'
+    And User calls POST '{env:BUSTERBLOCK}/api/cart' with body '{"movieId": 2, "qty": 1}'

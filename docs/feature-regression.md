@@ -1,51 +1,77 @@
 # Feature-generation regression benchmark (NOOD_0185)
 
 Not a unit test. An end-to-end "is the core product still good" check:
-two fixed plain-English prompts → `noodle author --prompt … --run` →
-authored `.feature` files → green verified runs — measured on **time**,
-**cost**, and **accuracy**, per test case and on average. It exists so that
-after new engine capabilities land, one command tells you whether the thing
-Noodle is actually for — cheap, fast, correct test generation — regressed.
+two fixed plain-English prompts → authored `.feature` files → green verified
+runs — measured on **time**, **accuracy** and **size**, per test case and on
+average. It exists so that after new engine capabilities land, one command
+tells you whether the thing Noodle is actually for — fast, correct test
+generation — regressed.
 
-It runs **only when a human asks for it** ("run the feature regression").
-Nothing schedules it; CI does not run it (it drives a live site and bills a
-host model).
+It runs **only when a human asks for it** ("run feature-regression").
+Nothing schedules it; CI does not run it (it drives a live site).
 
 Works on any OS and under any driving agent (Claude, Copilot, a plain
-terminal) as long as `noodle` is installed: the whole protocol is printed by
-one command, no MCP or skill file required.
+terminal) as long as `noodle` is installed — it is **one command** that does
+the whole benchmark itself, so there is nothing for an agent to improvise.
 
 ## The flow
 
 ```
-noodle feature-regression            # prints the runbook, exits 2 — it is NOT a run
-noodle feature-regression --init     # fresh per-build workspace (see below)
-noodle feature-regression --score results.json   # verdict, exit 1 = REGRESSED
+noodle feature-regression            # RUNS it: generate → run → serve → table
+noodle feature-regression --json     # one bounded payload instead of the table
+noodle feature-regression --init     # only scaffold the fresh workspace, don't run
+noodle feature-regression --score results.json   # re-score an existing run
 ```
+
+Exit **0 = PASS, 1 = REGRESSED**. One call from anywhere — a bare terminal,
+Claude Code, Copilot CLI — does the whole thing: scaffolds a fresh workspace,
+authors and runs both canonical prompts, runs them again combined onto one
+Allure + RCA, scores, serves, prints the table.
+
+```
+🧪 feature-regression — noodle 1.0.0a6
+   workspace: /…/regression_runs/20260727-101500_1.0.0a6_6859c75
+
+   TEST CASE                  GENERATE    RUN   CORR  LINES  GREEN  VERIFIED
+   tc1_search_suggestion             9s     7s      1      8  ✅     ✅
+   tc2_account_textboxes            11s    12s      0     12  ✅     ✅
+   ────────────────────────────────────────────────────────────────────────
+   average                          10s   9.5s    0.5     10
+
+   VERDICT: PASS
+
+   📊 http://127.0.0.1:PORT/verdict.html
+      http://127.0.0.1:PORT/allure-report/index.html
+      http://127.0.0.1:PORT/rca.html
+```
+
+**Nothing is hand-measured.** Before NOOD_0190 this command printed a 10-step
+protocol and exited 2, so every driving agent improvised it: read docs, guessed
+flags, hand-wrote `results.json`, and — on a host with no billing API — went
+digging through session telemetry to invent a cost number. That improvisation
+was the entire cost of running the benchmark, and it produced verdicts whose
+deciding number was a guess. Now the engine writes `results.json` from the
+payload `author_test(run_after_author=True)` already returns.
 
 ## One folder per build
 
-`--init` scaffolds `regression_runs/<YYYYmmdd-HHMMSS>_<version>_<gitsha>/` —
+The command scaffolds `<clone>/regression_runs/<YYYYmmdd-HHMMSS>_<version>_<gitsha>/` —
 a **new** workspace every run, never reused (a reused workspace inherits the
 previous build's features and POMs and stops measuring generation). It runs
 the **real `noodle init`** into that folder — the same scaffold every user
 gets — so the benchmark covers the full end-to-end flow:
-`update → init → prompt → authored .feature/POM → headless run → served
-Allure + RCA + verdict`. A broken scaffold fails the very next step, so
-init regressions surface immediately. The
-folder is gitignored and self-contained: the generated features, the Allure
-and RCA reports, `results.json` and the `verdict.json` written by `--score`
-all live inside it, so comparing this build against the last one is just
-opening two sibling folders.
+`init → prompt → authored .feature/POM → headless run → served Allure + RCA +
+verdict`. A broken scaffold fails the very next step, so init regressions
+surface immediately. The folder is anchored to the engine **clone** (where
+`regression_runs/` is gitignored), not the cwd, so invoking from a
+subdirectory can't scatter un-gitignored run folders; it is self-contained —
+generated features, Allure and RCA reports, `results.json`, `verdict.json`
+and `verdict.html` all live inside it, so comparing this build against the
+last one is just opening two sibling folders.
 
-The runbook in short: `noodle update`, `noodle init` a **fresh** directory,
-then per test case — timed and reported **separately, never combined** — one
-`noodle author … --run --json -w .` call (each TC states its mode: `--prompt`
-for the numbered plain-English case, `--spec` for the goal case), count every
-correction after it, capture the host's own AIC for the TC and
-`noodle cost --json` for the engine side. Then one combined
-`noodle run … --headless --retries 0 --json --serve` so **both** test cases
-land on the same served Allure + RCA report. Fill `results.json`, score it.
+A stale install still refuses up front (`run \`noodle update\` first`): the
+folder is stamped with the **checkout's** version, so measuring a lagging
+install would file the results under code that never ran.
 
 The test cases live in `noodle/regression.py` (`PROMPTS`): **both are
 numbered plain-English prompts** — the benchmark must generate the way a
@@ -59,55 +85,63 @@ what they cost — any pair works for a demo.
 
 ## What each measurement means
 
-| Field | Meaning |
-|---|---|
-| `elapsed_s` | Wall clock from starting the TC to its served green report. |
-| `run_s` | The generated test's own execution time — the `run.seconds` field of the author call's JSON. |
-| `development_s` | **Derived by the scorer:** `elapsed_s − run_s` — how long the LLM/agent spent *developing* the test case (prompt → authored `.feature`). This is what the time budget applies to. |
-| `tokens` / `aic` | The **driving agent's own** cost for that TC, **in the unit its host actually bills** (NOOD_0188) — host-reported; the engine cannot see the driving agent. `host` selects it: a `claude…` host is scored on `tokens` (input+output for that TC — Claude Code reports session usage via `/cost`, take the delta across the TC), a `copilot…` host on `aic` (premium requests). Fill the one that matches, leave the other `null`; the scorer flags the missing one as an unmeasured field. Scoring a Claude run in Copilot's unit (or vice-versa) made the cost half of the verdict meaningless on whichever host you weren't using. Absolute cost is not portable across hosts ([llm-performance.md §7](llm-performance.md)) — compare same host to same host. |
-| `cost_basis` | How the host cost was obtained: `"host-reported"` or `"measured: <what>"`. NOOD_0189: a cost of **0** is rejected as "unmeasured cost" unless `cost_basis` starts with `host-reported` — a driving agent always bills something, so a zero placeholder is not a measurement (it used to slip past the `> cap` check while `null` failed loudly). |
-| `corrections` | Accuracy proxy: every re-probe / re-author / re-run needed **after** the first `author --prompt --run` call. 0 is the expectation; a couple is tolerable; more means the engine sent the agent chasing. |
-| `green` / `verified` | The run contract: `failed == 0` **and** `verified: true`. A pass held up by fuzzy healing or lenient matching is not a pass. |
-| `engine_cost` | Noodle's own `NOODLE_MODEL` spend (`noodle cost --json`), separate from the host's AIC. |
+Every one is read out of the author/run payload — none is reported by the
+driving agent.
+
+| Field | Where it comes from | Meaning |
+|---|---|---|
+| `elapsed_s` | wall clock around the `author_test` call | The whole test case: generate + run. |
+| `run_s` | `run.seconds` | The generated test's own execution time. |
+| `development_s` | **derived:** `elapsed_s − run_s` | How long *generation* took. This is what the time budget applies to. |
+| `corrections` | `run.healing_events` + `run.flaky` + re-author passes | The engine's own repair signals: a locator that needed self-healing, a scenario that needed a retry, a re-author because `ready` came back false. Never a self-report — last session tc1 claimed `corrections: 0` while the run log recorded a real heal (`locator 'search', strategy visible-filter, multiple matches, exactly one visible`). The engine knew; the old protocol never asked. |
+| `lines` | `author.compiled.feature` + `author.compiled.pom` line count | The simplicity signal: *are we still generating simple `.feature` files*. Reported, not gated — if generation starts padding features with extra steps or POM entries, this moves. Stdlib `splitlines()`, zero dependencies, always present. |
+| `green` / `verified` | `run.failed`, `run.verified`, `author.intent_verified` | The run contract: `failed == 0` **and** `verified: true` **and** the intent contract held. A pass held up by fuzzy healing or lenient matching is not a pass. |
 
 Accuracy has a human half too: the HIL (or a reviewing agent) reads the
 generated `.feature` against the prompt — steps match the intent, assertions
 assert what was asked, nothing invented.
+
+### One re-author, then red
+
+`execute()` re-authors a case **once** (with `overwrite=True`) when
+`author.ready` comes back false, and counts that as one correction — that is
+what a real user does. Still not ready → the case is red and the verdict is
+REGRESSED. The correction budget (2) bounds it either way.
+
+### No cost column
+
+NOOD_0190 removed the host AIC/token accounting **and** the engine LLM
+ledger. The host figure measured how lost the *driving agent* got, not
+whether the engine regressed, and on a host with no billing API it could only
+be guessed. The engine figure read `none` every run — the deterministic fast
+path makes zero model calls (`translation_mode: deterministic-fast-path`,
+`interpretation_model_calls: 0`). Generated line count is the size signal
+that actually moves. If you want to compare *agent* cost across hosts, that
+is [llm-performance.md §7](llm-performance.md), not this benchmark.
 
 ## Budget
 
 | Ceiling | Default | Env override |
 |---|---|---|
 | Per-TC **development time** (`elapsed_s − run_s`) | 120 s | `NOODLE_REG_MAX_ELAPSED_S` |
-| Per-TC host cost — **Copilot** (AIC) | 10 | `NOODLE_REG_MAX_AIC` |
-| Cross-TC AIC average — **Copilot** | 10 | `NOODLE_REG_MAX_AVG_AIC` |
-| Per-TC host cost — **Claude** (tokens) | 120 000 | `NOODLE_REG_MAX_TOKENS` |
-| Cross-TC token average — **Claude** | 120 000 | `NOODLE_REG_MAX_AVG_TOKENS` |
 | Per-TC corrections | 2 | `NOODLE_REG_MAX_CORRECTIONS` |
 
-Only the ceiling for **this run's host unit** is enforced (NOOD_0188) — the
-other is ignored, so a Claude run is never judged against a premium-request
-budget it doesn't spend.
-
-Rationale: a super-easy test case should cost about one turn's worth of
-context end to end — ~10 AIC on Copilot (NOOD_0156's acceptance line), or a
-low-six-figure token count on Claude, where a single tool round-trip re-sends
-the conversation. Overrides exist for deliberately slower/cheaper host models
-— set them in the shell, not in code.
+Overrides exist for a deliberately slower machine or site — set them in the
+shell, not in code.
 
 ## Reading the verdict
 
-`--score` prints per-TC pass/fail with one reason line per breach
-("slow: …", "over budget: …", "inaccurate: …", "final run not green",
-"passed but unverified"), the averages (AIC, seconds, engine USD), and
-`verdict: PASS | REGRESSED`. Exit code 1 on REGRESSED, so it slots into any
-script.
+The table above is the whole report: per-TC pass/fail, the averages, and
+`VERDICT: PASS | REGRESSED`, with one reason line per breach ("slow
+development: …", "inaccurate: …", "final run not green", "passed but
+unverified"). Exit code 1 on REGRESSED, so it slots into any script.
+`--json` gives the same thing as one bounded payload.
 
-It also renders the same scorecard as **`verdict.html`** — written next to
-`results.json` *and* into the run's served reports directory, so the three
-acceptance criteria (time per TC, cost per TC, accuracy) are reviewable in
-the browser at `/verdict.html`, right beside `/allure-report/index.html` and
-`/rca.html`, and stay in the build folder for build-vs-build comparison.
+The same scorecard renders as **`verdict.html`**, written into the build
+folder *and* into the run's served reports directory — so the acceptance
+criteria are reviewable in the browser at `/verdict.html`, right beside
+`/allure-report/index.html` and `/rca.html`, and stay in the build folder for
+build-vs-build comparison.
 
 ## Bisecting a regression
 
@@ -115,12 +149,12 @@ A REGRESSED verdict says the *current checkout* is worse — not which commit
 did it. Confirm before blaming:
 
 1. `git checkout main` (or the last known-good SHA) && `noodle update`
-2. Rerun the benchmark in a **new** fresh workspace, same host model.
-3. Baseline also REGRESSED → the site or the host changed, not the engine.
-   Baseline PASS → walk the suspect commits (`git checkout <sha>` +
-   `noodle update` each time) until the verdict flips.
+2. `noodle feature-regression` again — it scaffolds its own fresh workspace.
+3. Baseline also REGRESSED → the site changed, not the engine. Baseline PASS
+   → walk the suspect commits (`git checkout <sha>` + `noodle update` each
+   time) until the verdict flips.
 
-If numbers look absurd (huge AIC, old behavior), first suspect a stale
+If numbers look absurd or the behavior looks old, first suspect a stale
 install shadowing the checkout — `noodle doctor`.
 
 ## Live drill — the original retail-site pair

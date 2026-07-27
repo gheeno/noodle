@@ -98,6 +98,10 @@ tests or start test apps unless also asked.
    flags them in RCA warnings (check those after green runs). App-
    specific python scripts live in that app's `resources/scripts/`.
 
+9. **"run feature-regression"** → `noodle feature-regression`. ONE call:
+   generates both test cases, runs, serves, prints the table. Never
+   hand-build `results.json` or read host telemetry.
+
 ## Edge cases (playbook §8 has the full list)
 
 - Artifacts are wiped on every `noodle run` — `noodle archive` first if you

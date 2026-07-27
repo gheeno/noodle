@@ -1,15 +1,23 @@
 """Feature-generation regression benchmark (NOOD_0185).
 
-Runs ONLY when a human asks for it ("run the feature regression"). The
-benchmark itself is executed by whatever agent drives noodle — Claude,
-Copilot, a human at a terminal — on any OS; this module only holds the
-fixed prompts, the budget, and the pure scoring function, so every host
-measures against the same yardstick. The prose (what "regressed" means,
-HIL review, bisecting a regression to a commit) lives in
-docs/feature-regression.md.
+Runs ONLY when a human asks for it ("run the feature regression"), and
+NOOD_0190 makes `noodle feature-regression` actually run it: `execute()`
+authors + runs both canonical prompts, one combined run serves the
+reports, `score()` returns the verdict. Every measurement comes out of
+the payload `author_test(run_after_author=True)` already hands back — an
+agent never hand-copies JSON it was given, and never reports a number it
+guessed. The prose (what "regressed" means, HIL review, bisecting a
+regression to a commit) lives in docs/feature-regression.md.
+
+NOOD_0190 dropped the host AIC/token accounting and the engine LLM
+ledger: the first measured how lost the DRIVING AGENT got (and on a host
+with no billing API could only be guessed), the second read "none" every
+run because the engine takes the deterministic fast path. The benchmark
+measures the engine. Generated line count is the size signal that moves.
 """
 import json
 import os
+import time
 from pathlib import Path
 
 # The canonical "super easy" test cases, one per authoring mode. A live but
@@ -38,56 +46,73 @@ PROMPTS = [
 6. Verify "Email address\""""},
 ]
 
-# Per-test-case ceilings + the cross-case average — the definition of "not
-# regressed": on time, on budget, accurate. Each is overridable with its env
-# var when a deliberately slower/cheaper host model is driving (absolute AIC
-# is not portable across hosts — docs/llm-performance.md §7).
+# Per-test-case ceilings — the definition of "not regressed": on time and
+# accurate. Each is overridable with its env var when a deliberately slower
+# machine or site is in play.
 _DEFAULTS = {
     "max_elapsed_s": ("NOODLE_REG_MAX_ELAPSED_S", 120),
-    "max_aic": ("NOODLE_REG_MAX_AIC", 10),
-    "max_avg_aic": ("NOODLE_REG_MAX_AVG_AIC", 10),
     "max_corrections": ("NOODLE_REG_MAX_CORRECTIONS", 2),
-    # NOOD_0188 — Claude bills TOKENS, Copilot bills premium requests (AIC).
-    # Scoring one benchmark in the other's unit made the cost half of the
-    # verdict meaningless on whichever host you weren't using.
-    "max_tokens": ("NOODLE_REG_MAX_TOKENS", 120_000),
-    "max_avg_tokens": ("NOODLE_REG_MAX_AVG_TOKENS", 120_000),
 }
-
-# The two supported driving hosts and the unit each actually charges in.
-# `host` in results.json selects one; anything else falls back to AIC with a
-# note, since an unknown host's billing unit is exactly what we can't assume.
-_HOST_UNITS = {"claude": "tokens", "copilot": "aic"}
-
-
-def host_unit(host: str | None) -> str:
-    """Which cost unit this run is measured in. Substring match so
-    'claude-sonnet-5' / 'Copilot CLI (GPT-5)' both resolve."""
-    h = (host or "").casefold()
-    for name, unit in _HOST_UNITS.items():
-        if name in h:
-            return unit
-    return "aic"
-
-_SCHEMA_EXAMPLE = """\
-{
-  "host": "claude-sonnet-5",          // 'claude…' -> tokens | 'copilot…' -> aic
-  "engine": "<the `noodle --version` line>",
-  "report_urls": ["<served Allure URL>", "<served RCA URL>"],
-  "test_cases": [
-    {"id": "tc1_search_suggestion", "elapsed_s": 20, "run_s": 14,
-     "tokens": 18000,                 // Claude hosts: input+output for THIS TC
-     "aic": null,                     // Copilot hosts: premium requests instead
-     "cost_basis": "host-reported",   // or "measured: <what>" — say which, so a
-                                      // floor is never read as full spend
-     "corrections": 0, "green": true, "verified": true,
-     "engine_cost": {"input_tokens": 0, "output_tokens": 0, "usd": null}}
-  ]
-}"""
 
 
 def budget() -> dict:
     return {k: float(os.getenv(env, d)) for k, (env, d) in _DEFAULTS.items()}
+
+
+def _case(prompt: dict, workspace: str) -> dict:
+    """Author + run ONE canonical prompt and measure it from the payload.
+
+    Corrections are the ENGINE's own repair signals, never a self-report:
+    a locator that needed self-healing, a scenario that needed a retry, and
+    a re-author pass when `ready` came back false. One re-author is allowed
+    (that is what a real user does); still not ready → the case stays red.
+    """
+    from noodle.repl import core
+    t0 = time.monotonic()
+    kw = {"prompt": prompt["content"], "run_after_author": True,
+          "workspace": workspace}
+    res = core.author_test(**kw)
+    reauthors = 0
+    if not (res.get("author") or {}).get("ready"):
+        reauthors = 1
+        res = core.author_test(**kw, overwrite=True)
+    elapsed = time.monotonic() - t0
+    author, run = res.get("author") or {}, res.get("run") or {}
+    compiled = author.get("compiled") or {}
+    feature, pom = compiled.get("feature") or "", compiled.get("pom") or ""
+    return {"id": prompt["id"], "elapsed_s": round(elapsed, 1),
+            "run_s": run.get("seconds"),
+            "corrections": reauthors + len(run.get("healing_events") or [])
+                           + len(run.get("flaky") or []),
+            "lines": len(feature.splitlines()) + len(pom.splitlines()),
+            "green": bool(res.get("ok")) and not run.get("failed"),
+            "verified": run.get("verified") is True
+                        and author.get("intent_verified") is True,
+            "feature": author.get("feature"),
+            "error": res.get("error") or run.get("skipped")}
+
+
+def execute(workspace: str) -> dict:
+    """Run the whole benchmark in this (freshly scaffolded) workspace:
+    each canonical prompt authored + run and measured, then ONE combined run
+    so both test cases land on the same served Allure + RCA report. Returns
+    the results dict score() takes — nothing to fill in by hand."""
+    from noodle.repl import core
+    cases = [_case(p, workspace) for p in PROMPTS]
+    feats = [c.pop("feature") for c in cases]
+    urls = []
+    if paths := [f for f in feats if f]:
+        combined = core.run_and_report(
+            os.path.commonpath(paths) if len(paths) > 1 else paths[0],
+            workspace=workspace, headless=True, retries=0, serve_reports=True)
+        served = combined.get("served") or {}
+        urls = served.get("urls") or []
+        if served.get("port"):
+            # The scorecard leads: the server hosts the whole reports root, and
+            # the CLI drops verdict.html in there before printing these.
+            urls = [f"http://{served.get('host', '127.0.0.1')}:"
+                    f"{served['port']}/verdict.html"] + urls
+    return {"workspace": workspace, "report_urls": urls, "test_cases": cases}
 
 
 def audit(results: dict, workspace: str) -> list[str]:
@@ -140,26 +165,19 @@ def audit(results: dict, workspace: str) -> list[str]:
 
 
 def score(results: dict, workspace: str | None = None) -> dict:
-    """Pure verdict over agent-reported measurements (schema: runbook()).
-    PASS = every canonical test case measured, green AND verified, within
-    the per-case budget, and the cross-case AIC average holds; anything
-    else is REGRESSED, with one reason line per breach.
+    """Pure verdict over the measurements execute() produced. PASS = every
+    canonical test case measured, green AND verified, within the per-case
+    budget; anything else is REGRESSED, with one reason line per breach.
 
     NOOD_0188 — pass `workspace` (the CLI passes the results file's own
     directory) to also cross-check the green/verified claims against the
     run's `last_run.json`: a benchmark that takes its subject's word for
     the headline result isn't a measurement. Omitted → pure, no disk read."""
     b = budget()
-    # NOOD_0188 — cost is measured in the unit the HOST actually bills:
-    # tokens on Claude, premium requests (AIC) on Copilot.
-    unit = host_unit(results.get("host"))
-    cost_field = "tokens" if unit == "tokens" else "aic"
-    cost_cap = b["max_tokens"] if unit == "tokens" else b["max_aic"]
-    avg_cap = b["max_avg_tokens"] if unit == "tokens" else b["max_avg_aic"]
     tcs, regressions = [], []
     for i, tc in enumerate(results.get("test_cases") or []):
         fails = []
-        for field in ("elapsed_s", cost_field, "corrections", "green", "verified"):
+        for field in ("elapsed_s", "corrections", "green", "verified"):
             if tc.get(field) is None:
                 fails.append(f"missing measurement: {field}")
         # TEST DEVELOPMENT TIME — what the budget measures: how long the
@@ -170,20 +188,6 @@ def score(results: dict, workspace: str | None = None) -> dict:
         if dev is not None and dev > b["max_elapsed_s"]:
             fails.append(f"slow development: {dev:.0f}s > "
                          f"{b['max_elapsed_s']:.0f}s (run time excluded)")
-        if tc.get(cost_field) is not None and tc[cost_field] > cost_cap:
-            label = "tokens" if unit == "tokens" else "AIC"
-            fails.append(f"over budget: {tc[cost_field]:,} {label} > "
-                         f"{cost_cap:,.0f}")
-        # NOOD_0189 — a driving agent always bills something; cost_field == 0
-        # is a placeholder, and the > cap check waves it through while `null`
-        # would have failed as a missing measurement. Zero is only credible
-        # when the host actually reported it.
-        if tc.get(cost_field) == 0 and not str(
-                tc.get("cost_basis") or "").startswith("host-reported"):
-            fails.append(
-                f"unmeasured cost: {cost_field} = 0 with cost_basis "
-                f"{tc.get('cost_basis') or 'missing'!r} — a placeholder is not "
-                "a measurement (runbook step 7: report what YOUR host billed)")
         if tc.get("corrections") is not None and tc["corrections"] > b["max_corrections"]:
             fails.append(f"inaccurate: {tc['corrections']} corrections > {b['max_corrections']:.0f}")
         if tc.get("green") is False:
@@ -192,9 +196,9 @@ def score(results: dict, workspace: str | None = None) -> dict:
             fails.append("passed but unverified (healing/lenient matches behind the pass)")
         tcs.append({"id": tc.get("id", f"tc{i + 1}"), "pass": not fails, "failures": fails,
                     "development_s": dev,
-                    **{k: tc.get(k) for k in ("elapsed_s", "run_s", "aic", "tokens",
-                                              "cost_basis", "corrections", "green",
-                                              "verified", "engine_cost")}})
+                    **{k: tc.get(k) for k in ("elapsed_s", "run_s", "corrections",
+                                              "lines", "green", "verified",
+                                              "error")}})
         regressions += [f"{tcs[-1]['id']}: {f}" for f in fails]
     if len(tcs) < len(PROMPTS):
         regressions.append(f"only {len(tcs)} of {len(PROMPTS)} canonical test cases measured")
@@ -203,22 +207,16 @@ def score(results: dict, workspace: str | None = None) -> dict:
         vals = [t[key] for t in tcs if isinstance(t.get(key), (int, float))]
         return round(sum(vals) / len(vals), 2) if vals else None
 
-    usds = [t["engine_cost"]["usd"] for t in tcs
-            if isinstance(t.get("engine_cost"), dict)
-            and isinstance(t["engine_cost"].get("usd"), (int, float))]
-    average = {"aic": _avg("aic"), "tokens": _avg("tokens"),
-               "development_s": _avg("development_s"),
-               "run_s": _avg("run_s"), "elapsed_s": _avg("elapsed_s"),
-               "engine_usd": round(sum(usds) / len(usds), 4) if usds else None}
-    if average[cost_field] is not None and average[cost_field] > avg_cap:
-        label = "tokens" if unit == "tokens" else "AIC"
-        regressions.append(f"average {average[cost_field]:,} {label} per test "
-                           f"case > {avg_cap:,.0f}")
+    average = {"development_s": _avg("development_s"), "run_s": _avg("run_s"),
+               "elapsed_s": _avg("elapsed_s"), "corrections": _avg("corrections"),
+               "lines": _avg("lines")}
     # NOOD_0188 — the artifacts get the last word on the pass claims.
     audit_notes = audit(results, workspace) if workspace is not None else []
     regressions += [n for n in audit_notes if n.startswith("self-report")]
     return {"verdict": "PASS" if not regressions else "REGRESSED",
-            "budget": b, "host": results.get("host"), "cost_unit": unit,
+            "budget": b, "engine": results.get("engine"),
+            "workspace": results.get("workspace"),
+            "report_urls": results.get("report_urls") or [],
             "test_cases": tcs, "average": average,
             "audit": audit_notes, "regressions": regressions,
             "next": ("no regression — ship it" if not regressions else
@@ -233,47 +231,34 @@ def render_html(verdict: dict) -> str:
     are reviewable per build in a browser, not just as raw JSON."""
     v = verdict
     color = "#1a7f37" if v["verdict"] == "PASS" else "#cf222e"
-    # NOOD_0188 — the host cost column shows the unit that host actually bills.
-    unit = v.get("cost_unit", "aic")
-    host_col = "tokens (Claude)" if unit == "tokens" else "AIC (Copilot)"
     rows = ""
     for t in v["test_cases"]:
-        cost = t.get("engine_cost") or {}
-        host_val = t.get("tokens") if unit == "tokens" else t.get("aic")
-        basis = t.get("cost_basis")
         rows += (
             "<tr><td>{id}</td><td>{ok}</td><td><b>{dev}</b></td><td>{run}</td>"
-            "<td>{host}</td><td>{tok}</td><td>{corr}</td><td>{fails}</td></tr>".format(
+            "<td>{corr}</td><td>{lines}</td><td>{fails}</td></tr>".format(
                 id=t["id"], ok="✅" if t["pass"] else "❌",
                 dev=f"{t['development_s']}s" if t.get("development_s") is not None else "—",
                 run=f"{t['run_s']}s" if t.get("run_s") is not None else "—",
-                host=(f"{host_val:,}" if isinstance(host_val, (int, float)) else "—")
-                     + (f'<br><span style="color:#57606a;font-size:.85em">{basis}</span>'
-                        if basis else ""),
-                tok=(f"{cost.get('input_tokens', 0)}/{cost.get('output_tokens', 0)} tok"
-                     + (f" ${cost['usd']}" if cost.get("usd") else "")) if cost else "—",
-                corr=t.get("corrections", "—"),
+                corr=t.get("corrections", "—"), lines=t.get("lines", "—"),
                 fails="; ".join(t["failures"]) or "—"))
     b = v["budget"]
-    host_cap = b["max_tokens"] if unit == "tokens" else b["max_aic"]
     return f"""<!doctype html><meta charset="utf-8">
 <title>feature-regression verdict</title>
 <style>body{{font:15px/1.5 system-ui;margin:2rem auto;max-width:64rem;padding:0 1rem}}
 table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #d0d7de;padding:.4rem .6rem;text-align:left}}
 .v{{color:#fff;background:{color};display:inline-block;padding:.2rem .8rem;border-radius:.4rem}}</style>
 <h1>Feature-generation regression — <span class="v">{v["verdict"]}</span></h1>
-<p>Host: <b>{v.get("host") or "unknown"}</b> — billed in <b>{host_col}</b>.
-Acceptance criteria per test case — <b>development time</b> (how long the
-LLM/agent took to develop the TC: total wall clock minus the generated
-test's own run time), <b>cost</b> (the driving host's own unit + engine
-tokens/$), <b>accuracy</b> (corrections needed + green&amp;verified run):</p>
+<p>Engine: <b>{v.get("engine") or "unknown"}</b>. Acceptance criteria per test
+case — <b>development time</b> (how long generation took: total wall clock
+minus the generated test's own run time), <b>accuracy</b> (engine corrections
+needed + green&amp;verified run), <b>size</b> (generated .feature + POM
+lines — is the engine still generating simple tests):</p>
 <table><tr><th>test case</th><th>pass</th><th>development</th><th>run</th>
-<th>{host_col}</th><th>engine cost</th><th>corrections</th><th>why not</th></tr>{rows}</table>
+<th>corrections</th><th>lines</th><th>why not</th></tr>{rows}</table>
 <p><b>Averages:</b> {v["average"]["development_s"]}s development,
-{v["average"]["run_s"]}s run,
-{v["average"][ "tokens" if unit == "tokens" else "aic"]} {host_col} per test case,
-engine ${v["average"]["engine_usd"] or 0}.
-<b>Budget:</b> ≤{b["max_elapsed_s"]:.0f}s development, ≤{host_cap:,.0f} {"tokens" if unit == "tokens" else "AIC"},
+{v["average"]["run_s"]}s run, {v["average"]["corrections"]} corrections,
+{v["average"]["lines"]} generated lines per test case.
+<b>Budget:</b> ≤{b["max_elapsed_s"]:.0f}s development,
 ≤{b["max_corrections"]:.0f} corrections per TC.</p>
 {"".join(f"<p>⚠ {r}</p>" for r in v["regressions"])}
 {"".join(f'<p style="color:#57606a">🔎 audit: {a}</p>' for a in v.get("audit") or [])}
@@ -281,87 +266,46 @@ engine ${v["average"]["engine_usd"] or 0}.
 <p style="color:#57606a">{v["next"]}</p>"""
 
 
-def runbook() -> str:
-    """The protocol an agent follows, printed by `noodle feature-regression`.
-    Self-sufficient on any host — no MCP, no skill file needed."""
-    b = budget()
-    lines = [
-        "Noodle feature-generation regression benchmark (NOOD_0185)",
-        "Proves prompt → .feature generation is still fast, cheap and accurate",
-        "after engine changes. Prose + triage: `noodle docs feature-regression`.",
-        "",
-        "Setup",
-        "  1. noodle update                    # sync the install with the checkout under test",
-        "     — not optional: step 2 refuses to scaffold while the install lags,",
-        "     since the folder is named after the checkout's version",
-        "  2. noodle feature-regression --init # fresh regression_runs/<stamp>_<build>/ workspace",
-        "     — runs the REAL `noodle init` into a NEW folder every run (gitignored),",
-        "     so workspace scaffolding is part of the flow under test; everything for",
-        "     this build (features, Allure + RCA reports, results.json, verdict.json)",
-        "     lives there",
-        "  3. cd <the printed workspace path>",
-        "",
-        "Per test case — measure each SEPARATELY, never combined:",
-        "  4. Record wall-clock start.",
-        "  5. ONE call, by the test case's mode (content below):",
-        '     prompt:  noodle author --prompt "<content>" --run --json -w .',
-        "     spec:    save content as tcN_spec.yaml, then",
-        "              noodle author --spec tcN_spec.yaml --run --json -w .",
-        "     (authors the .feature, runs it headless retries=0, serves reports)",
-        "  6. corrections = every re-probe / re-author / re-run you needed after",
-        "     that first call. 0 is the expectation.",
-        "  7. Record wall-clock end → elapsed_s (whole TC), and run_s = the",
-        "     `run.seconds` field of that call's JSON (the generated test's own",
-        "     execution time). The scorer derives TEST DEVELOPMENT TIME =",
-        "     elapsed_s − run_s — that is what the time budget applies to.",
-        "     Record what YOUR host billed for this test case, in ITS unit",
-        "     (host-reported — the engine cannot see the driving agent):",
-        "       Claude  → `tokens`: input+output for THIS test case. Claude",
-        "                 Code reports session usage with /cost; take the",
-        "                 delta across the TC (or the API usage totals).",
-        "       Copilot → `aic`: premium requests consumed by THIS test case.",
-        "     The scorer picks the unit from `host`, so fill the one that",
-        "     matches and leave the other null.",
-        "  8. noodle cost --json -w .          # engine-side spend → engine_cost",
-        "",
-        "Combined report — both test cases on ONE Allure + RCA:",
-        "  9. noodle run noodle_tests/web/en_wikipedia_org -w . --headless --retries 0 --json --serve",
-        "     Keep the served URLs for the results file.",
-        "",
-        "Score:",
-        " 10. Fill results.json in the workspace root (schema below), then:",
-        "     noodle feature-regression --score results.json    # exit 1 = REGRESSED",
-        "     Writes verdict.json + verdict.html next to it AND into the served",
-        "     reports dir — the ACs (time, cost, accuracy) live at /verdict.html",
-        "     beside the Allure and RCA reports.",
-        "",
-        f"Budget (each overridable, see docs): ≤{b['max_elapsed_s']:.0f}s development time "
-        f"and ≤{b['max_corrections']:.0f} corrections per test case; every run green AND "
-        "verified. Cost ceiling depends on the host's unit — "
-        f"Claude ≤{b['max_tokens']:,.0f} tokens, Copilot ≤{b['max_aic']:.0f} AIC per "
-        "test case (absolute cost is not portable across hosts; compare like "
-        "for like — docs/llm-performance.md §7).",
-        "",
-        "results.json schema:",
-        _SCHEMA_EXAMPLE,
-    ]
-    for p in PROMPTS:
-        lines += ["", f"--- {p['id']} ({p['mode']}) ---", p["content"]]
-    lines += [
-        "",
-        "This is the protocol, NOT a run — nothing above has executed yet. "
-        "Steps 1-10 are yours to perform; this command exits non-zero so a "
-        "printed runbook can never be reported as a completed benchmark.",
-    ]
-    return "\n".join(lines)
+def render_table(verdict: dict) -> str:
+    """The benchmark as a terminal table — what `noodle feature-regression`
+    prints. Plain f-strings on purpose: no rich, no tabulate, no dependency
+    for six columns."""
+    v = verdict
+    def _s(x):
+        return "—" if x is None else f"{x:g}s"
+
+    def _n(x):
+        return "—" if x is None else f"{x:g}"
+    rows = [f"🧪 feature-regression — noodle {v.get('engine') or 'unknown'}",
+            f"   workspace: {v.get('workspace') or '—'}", "",
+            f"   {'TEST CASE':<26}{'GENERATE':>9}{'RUN':>7}{'CORR':>7}"
+            f"{'LINES':>7}  {'GREEN':<7}{'VERIFIED'}"]
+    for t in v["test_cases"]:
+        rows.append(
+            f"   {t['id']:<26}{_s(t.get('development_s')):>9}"
+            f"{_s(t.get('run_s')):>7}{_n(t.get('corrections')):>7}"
+            f"{_n(t.get('lines')):>7}"
+            f"  {'✅' if t.get('green') else '❌':<6}{'✅' if t.get('verified') else '❌'}")
+    a = v["average"]
+    rows += ["   " + "─" * 72,
+             f"   {'average':<26}{_s(a['development_s']):>9}{_s(a['run_s']):>7}"
+             f"{_n(a['corrections']):>7}{_n(a['lines']):>7}",
+             "", f"   VERDICT: {v['verdict']}"]
+    rows += [f"   ⚠ {r}" for r in v["regressions"]]
+    rows += [f"   🔎 audit: {n}" for n in v.get("audit") or []]
+    if urls := v.get("report_urls"):
+        rows += [""] + [f"   {'📊 ' if i == 0 else '   '}{u}"
+                        for i, u in enumerate(urls)]
+    return "\n".join(rows)
 
 
 if __name__ == "__main__":  # ponytail: the one runnable check — no test framework
-    good = {"test_cases": [{"id": p["id"], "elapsed_s": 20, "run_s": 14, "aic": 3,
+    good = {"test_cases": [{"id": p["id"], "elapsed_s": 20, "run_s": 14, "lines": 9,
                             "corrections": 0, "green": True, "verified": True}
                            for p in PROMPTS]}
     assert score(good)["verdict"] == "PASS"
-    bad = {"test_cases": [dict(good["test_cases"][0], aic=40, corrections=5)]}
+    bad = {"test_cases": [dict(good["test_cases"][0], corrections=5, green=False)]}
     v = score(bad)
-    assert v["verdict"] == "REGRESSED" and len(v["regressions"]) >= 4
+    assert v["verdict"] == "REGRESSED" and len(v["regressions"]) >= 3
+    assert "VERDICT: REGRESSED" in render_table(v)
     print("regression.score self-check OK")

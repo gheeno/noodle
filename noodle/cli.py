@@ -1802,81 +1802,105 @@ def cost(
                f"model {est['model']}")
 
 
-@app.command("feature-regression")
-def feature_regression(
-    score_file: str = typer.Option(None, "--score", help="Filled results JSON — prints the per-TC breakdown + averages + PASS/REGRESSED verdict (exit 1 on REGRESSED) and writes verdict.json next to it"),
-    init_ws: bool = typer.Option(False, "--init", help="Scaffold a fresh benchmark workspace under ./regression_runs/<stamp>_<build>/ — a NEW folder every run, so builds stay comparable side by side"),
-):
-    """Core-product regression benchmark (NOOD_0185): prove prompt → .feature
-    generation is still fast, cheap and accurate after engine changes. Not a
-    unit test — the driving agent (Claude, Copilot, a human) executes it, on
-    any OS, whenever asked; never runs on its own.
-
-    No args → the runbook: setup (`noodle update` + `--init`), the fixed
-    benchmark test cases, the per-test-case measurement protocol (time, host
-    AIC, corrections, engine cost — each TC reported separately), the
-    combined-report step, and the results.json schema. --init → the fresh
-    per-build workspace (never reused; features, Allure + RCA reports,
-    results.json and verdict.json all live inside that one folder). --score
-    results.json → the verdict. Triage prose: `noodle docs
-    feature-regression`."""
-    from noodle import regression
-    if init_ws:
-        # One folder per benchmark run, named by time + engine build, so
-        # regression_runs/ reads as a history: this build vs the last one.
-        from noodle import install_check
-        vr = install_check.version_report()
-        # The folder is stamped with the CHECKOUT's version below, so a stale
-        # install would file its results under code it never ran. Runbook step 1
-        # (`noodle update`) is the fix — refuse to mislabel a build.
-        if vr.get("mismatch"):
-            typer.echo(f"Install records {vr['installed']} but this checkout is "
-                       f"{vr['source']} — run `noodle update` first, else the "
-                       "benchmark measures the old build under the new name.")
-            raise typer.Exit(1)
-        build = vr.get("source") or vr.get("installed") or "unknown"
-        sha = (install_check.git_sha() or "nogit")[:7]
-        base = f"{datetime.now():%Y%m%d-%H%M%S}_{build}_{sha}"
-        ws, n = Path("regression_runs") / base, 1
-        while True:
-            try:
-                ws.mkdir(parents=True)   # mkdir IS the claim — atomic, so two
-                break                    # same-second runs can't share a folder
-            except FileExistsError:
-                n += 1
-                ws = Path("regression_runs") / f"{base}_{n}"
+def _regression_workspace(quiet: bool = False) -> Path:
+    """A fresh gitignored `regression_runs/<stamp>_<build>_<sha>/` in the
+    engine CLONE (NOOD_0190 — it used to resolve against cwd and drop an
+    un-gitignored folder wherever you happened to stand), scaffolded by the
+    real `noodle init`. New folder every run: a reused workspace inherits the
+    previous build's features and stops measuring generation."""
+    from noodle import install_check
+    vr = install_check.version_report()
+    # The folder is stamped with the CHECKOUT's version, so a stale install
+    # would file its results under code it never ran.
+    if vr.get("mismatch"):
+        typer.echo(f"Install records {vr['installed']} but this checkout is "
+                   f"{vr['source']} — run `noodle update` first, else the "
+                   "benchmark measures the old build under the new name.")
+        raise typer.Exit(1)
+    build = vr.get("source") or vr.get("installed") or "unknown"
+    sha = (install_check.git_sha() or "nogit")[:7]
+    root = (install_check.clone_root() or Path.cwd()) / "regression_runs"
+    base = f"{datetime.now():%Y%m%d-%H%M%S}_{build}_{sha}"
+    ws, n = root / base, 1
+    while True:
+        try:
+            ws.mkdir(parents=True)   # mkdir IS the claim — atomic, so two
+            break                    # same-second runs can't share a folder
+        except FileExistsError:
+            n += 1
+            ws = root / f"{base}_{n}"
+    if quiet:
+        # The benchmark table is the output. `noodle init` prints ~30 lines of
+        # scaffold inventory — evidence when you asked for a workspace
+        # (--init), noise in front of the numbers you actually asked for.
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()):
+            init(path=str(ws))
+    else:
         init(path=str(ws))
-        typer.echo(f"\n  🧪 benchmark workspace: {ws} — new folder every run; "
-                   "features, reports, results.json and verdict.json all stay here")
-        return
-    if score_file is None:
-        typer.echo(regression.runbook())
-        # NOOD_0189 — exit 0 let an agent report the printed protocol as a
-        # completed benchmark. This command has no execute mode; the runbook
-        # is an instruction to the caller, never a result. Exit 2, not 1:
-        # 1 already means REGRESSED (--score) / stale install (--init).
-        raise typer.Exit(2)
-    # NOOD_0188 — score against the workspace holding the run's artifacts, so
-    # the audit can cross-check the green/verified claims against last_run.json.
-    verdict = regression.score(json.loads(Path(score_file).read_text()),
-                               workspace=str(Path(score_file).parent))
-    saved = Path(score_file).with_name("verdict.json")
-    saved.write_text(json.dumps(verdict, indent=2))
-    verdict["saved"] = str(saved)
-    # NOOD_0185 follow-up — the three ACs (time, cost, accuracy) must be
-    # reviewable in a browser next to Allure/RCA, not only as raw JSON: drop
-    # verdict.html into the last run's served reports dir (the report server
-    # hosts whatever sits there, so it appears at /verdict.html).
+    return ws
+
+
+def _write_verdict(verdict: dict, workspace: Path) -> dict:
+    """verdict.json + verdict.html in the build folder, and verdict.html into
+    the served reports dir too — so the ACs live at /verdict.html beside
+    /allure-report/index.html and /rca.html."""
+    from noodle import regression
+    (workspace / "verdict.json").write_text(json.dumps(verdict, indent=2))
     html = regression.render_html(verdict)
-    saved.with_name("verdict.html").write_text(html)
+    (workspace / "verdict.html").write_text(html)
+    verdict["saved"] = str(workspace / "verdict.json")
     try:
-        reports = _paths.last_run_root(str(Path(score_file).resolve().parent)) / "reports"
+        reports = _paths.last_run_root(str(workspace.resolve())) / "reports"
         if reports.is_dir():
             (reports / "verdict.html").write_text(html)
             verdict["served"] = str(reports / "verdict.html")
     except Exception:
         pass  # results file outside a workspace — the local verdict.html stands
-    _json_out(verdict)
+    return verdict
+
+
+@app.command("feature-regression")
+def feature_regression(
+    score_file: str = typer.Option(None, "--score", help="Re-score an existing run's results JSON instead of running the benchmark — prints the table and writes verdict.json/html next to it"),
+    init_ws: bool = typer.Option(False, "--init", help="Only scaffold the fresh benchmark workspace under <clone>/regression_runs/<stamp>_<build>_<sha>/ and stop — don't run the benchmark"),
+    as_json: bool = typer.Option(False, "--json", help="One bounded JSON payload instead of the table"),
+):
+    """Core-product regression benchmark (NOOD_0185): prove prompt → .feature
+    generation is still fast and accurate after engine changes. Runs only when
+    asked; nothing schedules it.
+
+    No args → it RUNS (NOOD_0190): fresh workspace, both canonical prompts
+    authored + run, one combined Allure + RCA + verdict served, benchmark
+    table printed. Exit 0 = PASS, 1 = REGRESSED. Every number comes from the
+    engine's own payload — generation time, run time, corrections (self-heal
+    events, flaky retries, re-author passes), generated feature+POM lines.
+    --init scaffolds the workspace without running; --score re-scores an
+    existing results.json. Triage prose: `noodle docs feature-regression`."""
+    from noodle import regression
+    if score_file:
+        # NOOD_0188 — score against the workspace holding the run's artifacts,
+        # so the audit can cross-check green/verified against last_run.json.
+        ws = Path(score_file).resolve().parent
+        verdict = regression.score(json.loads(Path(score_file).read_text()),
+                                   workspace=str(ws))
+    else:
+        ws = _regression_workspace(quiet=not init_ws)
+        if init_ws:
+            typer.echo(f"\n  🧪 benchmark workspace: {ws} — new folder every "
+                       "run; features, reports and verdicts all stay here")
+            return
+        from noodle import install_check
+        results = {**regression.execute(str(ws)),
+                   "engine": install_check.version_report().get("source")}
+        (ws / "results.json").write_text(json.dumps(results, indent=2))
+        verdict = regression.score(results, workspace=str(ws))
+    _write_verdict(verdict, ws)
+    if as_json:
+        _json_out(verdict)
+    else:
+        typer.echo(regression.render_table(verdict))
     raise typer.Exit(0 if verdict["verdict"] == "PASS" else 1)
 
 

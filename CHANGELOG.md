@@ -4,6 +4,63 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a6] — 2026-07-27
+
+**NOOD_0190** — feature: `noodle feature-regression` runs the benchmark in one
+command.
+
+The command printed a 10-step manual protocol and exited 2. There was no
+execute mode, so every driving agent improvised the protocol — read docs,
+guessed flags, hand-wrote `results.json`, and on a host with no billing API
+went digging through session telemetry to invent a cost number. That
+improvisation was the entire cost: ~28 AIC to produce a REGRESSED verdict
+whose deciding number was a guessed timestamp, against an engine that made
+zero LLM calls and ran both tests in 7s and 12s.
+
+- **The bare command runs it:** fresh workspace → both canonical prompts
+  authored + run → one combined Allure + RCA → scored → served → benchmark
+  table. Exit codes collapse to **0 = PASS, 1 = REGRESSED**. `--json` for
+  machines, `--init` to scaffold only, `--score` to re-score an existing run.
+- **No new measurements were needed** — `regression.execute()` writes
+  `results.json` from the payload `author_test(run_after_author=True)` already
+  hands back (`elapsed − run.seconds`, `run.failed`, `run.verified`,
+  `author.intent_verified`).
+- **Corrections are measured, not self-reported:** `run.healing_events` +
+  `run.flaky` + re-author passes. `execute()` re-authors once on
+  `ready: false` and counts it; still not ready → red. The old integer was
+  an agent's memory — last session tc1 reported `corrections: 0` beside a run
+  log recording a real heal (`locator 'search', strategy visible-filter`).
+- **Generated size:** `.feature` + POM line count from `author.compiled`,
+  stdlib `splitlines()`. Reported, not gated — the signal for "are we still
+  generating simple tests". (Not an estimated token count: that needs
+  `litellm`, an optional extra this repo doesn't install, so the column would
+  read `null` in practice.)
+- **Removed the host-cost machinery and the engine LLM ledger** — `aic`,
+  `tokens`, `max_aic`/`max_avg_aic`/`max_tokens`/`max_avg_tokens`, `host`,
+  `host_unit()`, `cost_basis`, `engine_cost`, and the NOOD_0188/0189
+  unit-selection and zero-guard logic. The host figure measured how lost the
+  driving agent got, not whether the engine regressed, and could only be
+  guessed on a host with no billing API; the engine figure read `none` every
+  run (deterministic fast path, zero model calls). **The benchmark measures
+  the engine.**
+- **Deleted `runbook()`** — it existed only to tell an agent how to do this by
+  hand. Prose for humans stays at `noodle docs feature-regression`.
+- `verdict.html` leads the served URLs, beside Allure and RCA.
+- `regression_runs/` is anchored to `install_check.clone_root()` instead of
+  cwd — invoking from a subdirectory used to drop an un-gitignored folder
+  wherever you stood.
+- **Unrelated CI fix, found by this branch's e2e run:** the `Token-guarded
+  api_call` sample scenario POSTed movie 1 to `/api/cart`, the same movie
+  `run_custom_script.feature`'s `seed_out_of_stock.py` zeroes. Carts are
+  per-user and parallel-safe; movie **stock is global**, so under `--parallel`
+  that seed lands in another worker mid-scenario and the cart answers
+  `400 Out of stock`. Now uses movie 2, which nothing seeds.
+- Both skill cards + `.github/copilot-instructions.md` learn the one-command
+  path, so Copilot CLI, Claude Code and a bare terminal behave identically.
+  Instruction-budget ceilings: copilot skill card 5888 → 6144, copilot digest
+  7168 → 7424 (+256 each, 189 B used; the Claude card absorbed it inside its
+  cap).
+
 ## [1.0.0a5] — 2026-07-27
 
 **NOOD_0189** — fix: the regression benchmark's cost AC is now falsifiable.
