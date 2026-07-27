@@ -54,7 +54,15 @@ def _claim(path: Path) -> bool:
     except FileExistsError:
         try:
             if time.time() - path.stat().st_mtime > _ttl():
-                path.rmdir()                      # crashed holder — reclaim
+                # NOOD_0187 — break the stale dir by RENAMING it first: rename
+                # is atomic, so exactly one process wins the break. The old
+                # rmdir+mkdir pair let two workers both pass the staleness
+                # check, and the slower one rmdir'd the winner's fresh lock —
+                # two holders of the same @serial lock, precisely under the
+                # crashed-worker load the TTL exists for.
+                stale = path.with_name(f"{path.name}.stale.{os.getpid()}")
+                path.rename(stale)                # only one renamer succeeds
+                stale.rmdir()
                 path.mkdir(parents=True)
                 logger.warning(f"\n  🔓 Broke stale lock '{path.name}' (older than {_ttl():.0f}s)")
                 return True
@@ -136,6 +144,18 @@ def worker_index() -> int:
     return _my_index
 
 
+def touch_worker_lane() -> None:
+    """NOOD_0187 — refresh this worker's lane mtime (called once per scenario).
+    Lanes are claimed once per process, but _claim's TTL reads an old mtime as
+    a crashed holder — so a feature file running past NOODLE_LOCK_TTL had its
+    lane stolen and two workers resolved the same per-lane credentials."""
+    if _my_index is not None and os.getenv("NOODLE_PARALLEL_WORKER") == "1":
+        try:
+            os.utime(_CONTROL / "workers" / str(_my_index))
+        except OSError:
+            pass
+
+
 def release_worker_index() -> None:
     global _my_index
     if _my_index is not None and os.getenv("NOODLE_PARALLEL_WORKER") == "1":
@@ -146,12 +166,14 @@ def release_worker_index() -> None:
     _my_index = None
 
 
-def reset_control_dir() -> None:
+def reset_control_dir(workspace: str = ".") -> None:
     """Clear leftover locks/lanes before spawning workers — called once by the
-    CLI parent, never by a worker."""
+    CLI parent, never by a worker. Takes the workspace root (NOOD_0187) so the
+    parent doesn't have to chdir into it first — every other primitive here
+    stays cwd-relative because workers always run with cwd=workspace."""
     import shutil
     for sub in ("locks", "workers"):
-        shutil.rmtree(_CONTROL / sub, ignore_errors=True)
+        shutil.rmtree(Path(workspace) / _CONTROL / sub, ignore_errors=True)
 
 
 if __name__ == "__main__":   # ponytail: the one runnable check for the lock

@@ -91,3 +91,19 @@ def network_dir() -> Path:
 
 def logs_dir() -> Path:
     return artifacts_root() / "logs"
+
+
+def clean_worker_leaves(root: Path | None = None) -> None:
+    """NOOD_0187 — delete per-pid worker leaves (p<pid>/) from previous runs.
+    Pids never repeat across runs, so a reused CI workspace accumulated
+    screenshot/trace/video/network dirs forever, and stale llm_cost.p*.json
+    files under allure-results inflated cost.load_total()'s rglob sum."""
+    import shutil
+    root = Path(root) if root is not None else artifacts_root()
+    for sub in ("screenshots", "traces", "videos", "network"):
+        base = root / sub
+        if not base.is_dir():
+            continue
+        for d in base.glob("p[0-9]*"):
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)

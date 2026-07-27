@@ -78,10 +78,15 @@ def main(argv=None):
     args = ap.parse_args(argv)
     paths = discover(args.root)
     if not paths:
+        # NOOD_0187 — fail, don't emit {}: an empty matrix made the tests job
+        # a no-op and the pipeline went green having discovered nothing (a
+        # wrong --root did exactly this).
         sys.stderr.write(f"no web .feature files under {args.root!r}\n")
+        return 1
     out = paths if args.format == "list" else to_matrix(paths)
     print(json.dumps(out))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -119,13 +119,22 @@ def test_noneditable_install_check_fails_with_remediation(monkeypatch):
 
 
 def test_warn_if_stale_silent_when_editable(monkeypatch):
+    import sys
     out = []
     monkeypatch.setattr(install_check, "is_editable", lambda: True)
     install_check.warn_if_stale(out.append)
     assert out == []
+    # NOOD_0187 — the non-editable warning is TTY-only now: a wheel install in
+    # CI is deliberate, and `noodle update` advice on every pipeline line was
+    # noise that trained readers to skip warnings.
     monkeypatch.setattr(install_check, "is_editable", lambda: False)
+    monkeypatch.setattr(sys, "stdout", type("T", (), {"isatty": lambda self: True})())
     install_check.warn_if_stale(out.append)
     assert len(out) == 1 and "non-editable" in out[0]
+    out.clear()
+    monkeypatch.setattr(sys, "stdout", type("T", (), {"isatty": lambda self: False})())
+    install_check.warn_if_stale(out.append)
+    assert out == []
 
 
 # --- CLI surfaces ---

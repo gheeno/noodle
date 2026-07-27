@@ -66,6 +66,13 @@ class ScenarioResult:
 
     def add_step(self, step, status, attachment_path=None, warnings=None,
                  attachment_name=None, healing=None, evidence_meta=None):
+        # NOOD_0187 — real durations: this runs in after_step, so start is
+        # stop minus behave's measured step.duration. start == stop rendered
+        # every step as 0 ms and made the Allure timeline meaningless.
+        now = time.time()
+        duration = getattr(step, "duration", 0)
+        if not isinstance(duration, (int, float)):
+            duration = 0
         entry = {
             # NOOD_0177 — redact the step NAME too. A step written with a
             # literal credential ("enters 'hunter2' in the password field")
@@ -73,8 +80,8 @@ class ScenarioResult:
             # failure message exists to scrub.
             "name": _redact(f"{step.keyword} {step.name}"),
             "status": status,
-            "start": int(time.time() * 1000),
-            "stop": int(time.time() * 1000),
+            "start": int((now - duration) * 1000),
+            "stop": int(now * 1000),
         }
         if status == "failed":
             # NOOD_0177 — redact BOTH fields. log.redact() masks by secret VALUE,
@@ -111,6 +118,17 @@ class ScenarioResult:
             entry.setdefault("statusDetails", {})["evidence"] = evidence_meta
         self.result["steps"].append(entry)
 
+    def add_failure(self, name: str, message: str):
+        """NOOD_0187 — a failure with no failing behave step behind it (soft-
+        assert collection is the caller today): record it as a synthetic failed
+        step so finish() and every result reader agree with behave's verdict
+        instead of writing a green result next to a red exit code."""
+        now = int(time.time() * 1000)
+        self.result["steps"].append({
+            "name": _redact(name), "status": "failed", "start": now, "stop": now,
+            "statusDetails": {"message": _redact(message)},
+        })
+
     def finish(self, scenario):
         self.result["stop"] = int(time.time() * 1000)
         # Determine overall status from steps
@@ -122,8 +140,56 @@ class ScenarioResult:
                 if s["status"] == "failed" and "statusDetails" in s:
                     self.result["statusDetails"] = s["statusDetails"]
                     break
+        elif (reason := _scenario_failure(scenario, statuses)) is not None:
+            # NOOD_0187 — no recorded step failed, but behave's own verdict
+            # says the scenario did: an undefined step (behave never fires
+            # after_step for it) or a setup hook/precondition error (no step
+            # ever ran). Reading steps only wrote these as "passed" — a green
+            # Allure/junit/last_run row contradicting the red exit code.
+            self.result["status"] = "failed"
+            self.result["statusDetails"] = {"message": _redact(reason)}
         else:
             self.result["status"] = "passed"
+
+
+def _scenario_failure(scenario, recorded_statuses) -> str | None:
+    """Why behave considers `scenario` failed when no recorded step is, or
+    None if it genuinely passed. Best-effort: unit-test doubles that don't
+    behave like behave objects read as passed, same as before."""
+    try:
+        status = getattr(scenario, "status", None)
+        name = getattr(status, "name", None)
+        name = name if isinstance(name, str) else str(status or "")
+        undefined = []
+        for s in list(getattr(scenario, "steps", None) or []):
+            st = getattr(s, "status", None)
+            st_name = getattr(st, "name", None)
+            st_name = st_name if isinstance(st_name, str) else str(st or "")
+            if st_name == "undefined":
+                undefined.append(str(getattr(s, "name", "?")))
+        if undefined:
+            return "undefined step (no matching implementation): " + "; ".join(undefined)
+        if getattr(scenario, "hook_failed", False) is True and not recorded_statuses:
+            return ("scenario setup hook/precondition failed before any step "
+                    "ran — see run.log")
+        if name in ("failed", "error", "hook_error", "cleanup_error", "undefined"):
+            return (f"scenario finished '{name}' with no failing step "
+                    "recorded — see run.log")
+    except Exception:
+        return None
+    return None
+
+
+def write_skip_result(scenario, reason: str):
+    """NOOD_0187 — a gated skip (@live off, missing OCR/Appium/NOODLE_MODEL)
+    used to leave NO result at all: the scenario vanished from Allure, junit
+    and the summary, so a suite that skipped everything still read as a clean
+    run. Returns the written path and the ScenarioResult."""
+    r = ScenarioResult(scenario)
+    r.result["status"] = "skipped"
+    r.result["stop"] = r.result["start"]
+    r.result["statusDetails"] = {"message": _redact(reason)}
+    return write_result(r), r
 
 
 def _image_mime(path: str) -> str:

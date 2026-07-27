@@ -1361,11 +1361,17 @@ scenarios are unaffected.
 Then no console errors should be logged
 Then no uncaught JS errors should occur
 Then no network requests should fail
+Then no server errors should occur
 Then a request to '**/api/cart*' should have been made
 ```
 
 The last step matches observed request URLs by substring, or as a glob when
 the text contains `*`/`?`.
+
+`no server errors should occur` (also: `no HTTP errors should have occurred`)
+fails on any HTTP 4xx/5xx response in the page's own traffic — distinct from
+`no network requests should fail`, which only sees transport-level aborts: a
+500 completes "fine" as a request, so a page full of server errors passed it.
 
 ---
 

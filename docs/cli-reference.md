@@ -59,14 +59,27 @@ and over MCP by passing the app dir as `workspace`.
 | `--parallel` | `0` (off) | Run N feature files at once via behavex; `-1` = one worker per CPU core | Large web suites in `--headless` mode; needs `pip install -e ".[parallel]"`. Falls back to `$NOODLE_PARALLEL_PROCESSES` if unset. See [manual.md § Running a suite in parallel without collisions](manual.md#running-a-suite-in-parallel-without-collisions). |
 | `--sequential` | off | Force one process, overriding `$NOODLE_PARALLEL_PROCESSES` and any `--parallel` | NOOD_0183: debugging a workspace that turns parallelism on in `.env`, without editing config. |
 | `--parallel-scheme` | `feature` | With `--parallel`: shard by `feature` or `scenario` | Leave on `feature` — it keeps every scenario in one file sequential and in order on one worker, which is what makes a file that shares a login safe. `scenario` splits a single file across workers and warns that it does; only use it when every scenario in every file is genuinely independent. |
-| `--quiet`, `-q` | off | Suppress the live behave console stream — full output still goes to `<artifacts>/run.log`, stdout gets just the run summary | Agent/CI-driven runs (NOOD_0116): the live stream is the single largest blob an agent's context holds resident per tool call across a multi-step fix loop. Single-process runs only; ignored with `--parallel`. NOOD_0117: automatic when stdout isn't a TTY (agent/CI); `NOODLE_QUIET=0` forces the stream back, `NOODLE_QUIET=1` forces quiet. |
+| `--quiet`, `-q` | off | Suppress the live behave console stream — full output still goes to `<artifacts>/run.log`, stdout gets just the run summary | Agent/CI-driven runs (NOOD_0116): the live stream is the single largest blob an agent's context holds resident per tool call across a multi-step fix loop. NOOD_0187: works with `--parallel` too (behavex's stream diverts to the same `run.log`). NOOD_0117: automatic when stdout isn't a TTY (agent/CI); `NOODLE_QUIET=0` forces the stream back, `NOODLE_QUIET=1` forces quiet. |
 | `--preflight` / `--no-preflight` | **on** | Before launching a browser, check every `{env:KEY}` the target references resolves to a real value (not missing, empty, or `CHANGE_ME`) | NOOD_0128/0130: a missing credential aborts the run with exit 2 instead of failing 50s later at the login step — a doomed login run is the most expensive way to learn a secret is a placeholder. `--no-preflight` is the explicit escape hatch. |
 | `--serve` | off | After the run, host the Allure + RCA reports on localhost and print the URLs (same as `noodle report serve`) | NOOD_0128: one command instead of run → generate → serve. The server is a detached child, so the URL outlives the run (NOOD_0161). |
-| `--json` | off | Emit one bounded JSON payload — pass/fail summary, failing step, report paths, compact RCA on red, served URLs — instead of the human summary | NOOD_0128: CLI parity with the `run_and_report` MCP tool. NOOD_0156: also carries `verified` / `unverified_reasons` / `warnings` / `healing_events` / `evidence` — success means `failed == 0` **and** `verified: true`, and the compact RCA rides along whenever `verified` is false. Implies `--quiet` (the live stream would corrupt the single object on stdout). |
+| `--json` | off | Emit one bounded JSON payload — pass/fail summary, failing step, report paths, compact RCA on red, served URLs — instead of the human summary | NOOD_0128: CLI parity with the `run_and_report` MCP tool. NOOD_0156: also carries `verified` / `unverified_reasons` / `warnings` / `healing_events` / `evidence` — success means `failed == 0` **and** `verified: true`, and the compact RCA rides along whenever `verified` is false. Implies `--quiet` (the live stream would corrupt the single object on stdout). NOOD_0187: works under `--parallel` too (it used to print nothing), and `report`/`rca_html` are `null` when the file doesn't exist. |
+| `--shard` | none | `i/N` — run the i-th of N deterministic feature-file slices (sorted by path, `files[i-1::N]`) | NOOD_0187: splitting one suite across MACHINES — each CI matrix leg passes its own index; every host partitions identically, results merge in the report job. An empty slice prints a note and exits 0; a shard leg also implies `NOODLE_ALLOW_EMPTY` (a tag filter can legitimately zero one slice). Composes with `--parallel` for multi-process within the slice. |
+| `--timeout` | off (`$NOODLE_RUN_TIMEOUT`) | Kill the whole run (process group) after N seconds, exit 124 | NOOD_0187: one wedged browser used to hold the CI job to ITS timeout and lose every artifact. The per-scenario results already on disk still feed junit/Allure/RCA — a timed-out run reports what it managed to prove. |
+| `--fail-fast` | off | Stop at the first failure (behave `--stop`; per-worker under `--parallel`) | A broken deploy shouldn't burn 1000 browser scenarios before anyone sees red. |
 
 Runs overwrite `artifacts/` in place (NOOD_0093) — the Allure trend history is
 preserved across the wipe, so trends carry forward without archiving. To stash
 a specific run's full tree on demand, use `noodle archive`.
+
+**Exit codes (NOOD_0187 — the code never lies):** `0` pass · `1` failures (derived
+from the written results, so a soft-assert-only failure or a lying behavex 0 still
+reds the build) · `2` preflight refused (missing `{env:}` value) · `3` zero
+scenarios ran (bad path/`--tag`/`--name`; `NOODLE_ALLOW_EMPTY=1` or `--shard`
+downgrade it to a warning) · `124` `--timeout` killed the run. `@quarantine`-only
+failures still rewrite the exit to 0 — `NOODLE_STRICT_QUARANTINE=1` disables the
+rewrite, and `last_run.json` records `quarantine_overrode_exit: true` either way.
+Custom-hook errors are logged but non-fatal; `NOODLE_STRICT_HOOKS=1` makes them
+raise.
 
 Sample:
 ```

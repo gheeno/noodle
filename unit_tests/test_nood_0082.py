@@ -29,8 +29,15 @@ def _make_ws(tmp_path: Path, with_allure: bool = True) -> Path:
 # --- both reports, every run -------------------------------------------------
 
 def test_write_reports_always_writes_both_even_when_green(tmp_path):
+    import json as _json
     results = tmp_path / "allure-results"
     results.mkdir()
+    # NOOD_0187 — a GREEN run means something ran; an empty dir now renders
+    # the "0 scenarios ran" warning instead (see test_rca_report).
+    (results / "u1-result.json").write_text(_json.dumps(
+        {"uuid": "u1", "historyId": "h1", "name": "s", "fullName": "F: s",
+         "labels": [{"name": "feature", "value": "F"}],
+         "steps": [], "status": "passed", "stop": 1}))
     out = rca_report.write_reports(str(results), str(tmp_path / "reports"))
     assert Path(out["rca_md"]).is_file()
     html = Path(out["rca_html"]).read_text()

@@ -448,9 +448,22 @@ def _new_named_context(context, name: str):
         raise AssertionError(
             "Named browser contexts need a browser — not available in @api/@appium scenarios"
         )
-    bctx = browser.new_context()
+    # NOOD_0187 — inherit the scenario's context options (cert policy,
+    # emulation) and wire the same capture listeners as the primary page: a
+    # bare new_context() gave the second user no console/network capture, so
+    # its failures debugged blind and traffic assertions silently saw nothing.
+    opts = ctx_get(context, "_named_ctx_opts") or {}
+    bctx = browser.new_context(**opts)
     page = bctx.new_page()
     page.set_default_timeout(int(os.getenv("NOODLE_TIMEOUT", "10000")))
+    try:
+        from noodle import hooks as _hooks
+        _hooks.attach_capture_listeners(context, page)
+        downloads = ctx_get(context, "_downloads")
+        if isinstance(downloads, list):
+            page.on("download", lambda d: downloads.append(d))
+    except Exception:
+        pass   # capture is passive — never fail the step over it
     if ctx_get(context, "_named_bctxs") is None:
         context._named_bctxs, context._named_contexts = {}, {}
     context._named_bctxs[name] = bctx
@@ -1139,6 +1152,8 @@ def execute_step(step_text: str, context):
         actions.assert_no_page_errors(page, ctx_get(context, '_page_errors', []))
     elif t == 'assert_no_failed_requests':
         actions.assert_no_failed_requests(page, ctx_get(context, '_failed_requests', []))
+    elif t == 'assert_no_server_errors':
+        actions.assert_no_server_errors(page, ctx_get(context, '_failed_responses', []))
     elif t == 'assert_request_made':
         actions.assert_request_made(page, ctx_get(context, '_requests', []), action['url'])
     elif t == 'assert_request_count':

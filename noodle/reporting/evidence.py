@@ -203,8 +203,11 @@ def capture(page, step_name: str, fresh_match: bool = True) -> str | None:
 
     if box and box.get("width") and box.get("height"):
         try:
+            # NOOD_0187 — redact before the label becomes pixels (the
+            # filename above is already scrubbed; the drawn caption was not).
+            from noodle import log as _log
             from noodle.reporting import annotate as _annotate
-            _annotate.draw_evidence(path, step_name[:60], box,
+            _annotate.draw_evidence(path, _log.redact(step_name)[:60], box,
                                     page.viewport_size)
         except Exception:
             pass

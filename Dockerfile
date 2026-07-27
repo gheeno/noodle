@@ -6,7 +6,11 @@ FROM mcr.microsoft.com/playwright/python:v1.49.0-noble
 WORKDIR /app
 COPY . .
 
-RUN pip install --no-cache-dir -e ".[all]" && playwright install chromium
+# NOOD_0187 — same pins as CI (constraints.txt, exported from uv.lock): an
+# unpinned resolve here meant the container could ship a different dependency
+# tree than the pipeline that validated it. Markers in the export cover the
+# base image's Python version.
+RUN pip install --no-cache-dir -e ".[all]" -c constraints.txt && playwright install chromium
 
 # NOOD_0177 — drop root. The base image ships `pwuser` with the browser deps
 # already usable by it; without this the Chromium process, the test run, and

@@ -9,6 +9,7 @@ def write_junit(results: list, path: str = None):
     """Write JUnit XML from a list of ScenarioResult objects."""
     total = len(results)
     failures = sum(1 for r in results if r.result.get("status") == "failed")
+    skipped = sum(1 for r in results if r.result.get("status") == "skipped")
 
     total_ms = sum(
         (r.result.get("stop", 0) - r.result.get("start", 0)) for r in results
@@ -19,6 +20,7 @@ def write_junit(results: list, path: str = None):
         "name": "Noodle",
         "tests": str(total),
         "failures": str(failures),
+        "skipped": str(skipped),
         "time": str(total_secs),
     })
 
@@ -45,6 +47,9 @@ def write_junit(results: list, path: str = None):
             trace = details.get("trace", "")
             failure = ET.SubElement(tc, "failure", {"message": msg})
             failure.text = trace
+        elif res.get("status") == "skipped":
+            ET.SubElement(tc, "skipped", {
+                "message": res.get("statusDetails", {}).get("message", "skipped")})
 
     tree = ET.ElementTree(suite)
     ET.indent(tree, space="  ")

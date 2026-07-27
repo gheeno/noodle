@@ -141,8 +141,19 @@ def test_collect_dedupes_retries_keeping_latest(tmp_path):
 
 
 def test_render_markdown_no_failures(tmp_path):
+    # NOOD_0187 — "no failures" needs at least one scenario to have RUN: a
+    # green run renders the green page, an EMPTY run renders a warning.
+    _write_result(tmp_path, uuid="u1", status="passed",
+                  steps=[{"name": "Then ok", "status": "passed",
+                          "statusDetails": {}}])
     md = rr.render_markdown(str(tmp_path))
     assert "No failed or errored scenarios" in md
+
+
+def test_render_markdown_empty_run_is_a_warning(tmp_path):
+    md = rr.render_markdown(str(tmp_path))
+    assert "0 scenarios ran" in md
+    assert "No failed or errored scenarios" not in md
 
 
 def test_collect_warnings_reads_passed_scenarios_only(tmp_path):

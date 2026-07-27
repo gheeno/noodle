@@ -1405,6 +1405,11 @@ PATTERNS = [
     (r'^no (?:uncaught )?(?:js|javascript|page) errors? should occur$',
                                                    'assert_no_page_errors',    lambda m: {}),
     (r'^no network requests? should fail$',        'assert_no_failed_requests', lambda m: {}),
+    # NOOD_0187 — HTTP 4xx/5xx on the page's own traffic. Distinct from the
+    # transport-level check above: a 500 completes "fine" as a request, so
+    # "no network requests should fail" passed a page full of server errors.
+    (r'^no (?:server|http) errors? should (?:have )?occur(?:red)?$',
+                                                   'assert_no_server_errors', lambda m: {}),
 
     # --- Phase L — network request assertion (observed real traffic) ----------
     (r'^a request to ["\'](.+?)["\'] should (?:have been|be) made$',

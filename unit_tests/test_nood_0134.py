@@ -157,6 +157,8 @@ def test_run_serve_uses_detached_child_not_inprocess_thread(tmp_path, monkeypatc
     monkeypatch.setattr(cli.subprocess, "run",
                         lambda *a, **k: MagicMock(returncode=0))
     monkeypatch.setenv("NOODLE_ARTIFACTS_DIR", str(tmp_path / "arts"))
+    # NOOD_0187 — faked behave writes no results; skip the exit-3 empty guard.
+    monkeypatch.setenv("NOODLE_ALLOW_EMPTY", "1")
     ws = tmp_path / "ws"
     feats = ws / "noodle_tests" / "web" / "shop" / "features"
     (feats / "steps").mkdir(parents=True)

@@ -58,7 +58,11 @@ def _base_urls() -> dict:
 
 
 def write_environment(results_dir: Path) -> Path:
-    """environment.properties — browser/headless/timeouts + app base URLs."""
+    """environment.properties — browser/headless/timeouts + app base URLs.
+
+    NOOD_0187 — plus what it takes to REPRODUCE the verdict: noodle version +
+    engine git SHA, Playwright version, run id and timestamp. A report whose
+    environment can't be pinned to a build is a verdict nobody can re-check."""
     props = {
         "noodle.browser": os.getenv("NOODLE_BROWSER", "chromium"),
         "noodle.headless": os.getenv("NOODLE_HEADLESS", "false"),
@@ -67,6 +71,19 @@ def write_environment(results_dir: Path) -> Path:
         "platform": platform.platform(),
         "python": platform.python_version(),
     }
+    try:
+        from datetime import datetime
+
+        from noodle import install_check
+        props["noodle.version"] = install_check.source_version() or ""
+        props["noodle.engine.sha"] = install_check.git_sha() or ""
+        props["noodle.run.id"] = os.getenv("NOODLE_RUN_ID", "")
+        props["noodle.run.at"] = datetime.now().astimezone().isoformat(
+            timespec="seconds")
+        import importlib.metadata
+        props["playwright.version"] = importlib.metadata.version("playwright")
+    except Exception:
+        pass   # provenance is best-effort — never fail the report over it
     if os.getenv("NOODLE_MODEL"):
         props["noodle.llm.model"] = os.environ["NOODLE_MODEL"]
     for app, url in _base_urls().items():

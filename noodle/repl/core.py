@@ -1128,7 +1128,12 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         # the explicit expert override — autonomous agents must not set it.
         contracts = load_state(workspace).get("intent_contracts") or {}
         contract = contracts.get(rel(feat_dest)) or contracts.get(f"app:{app}")
-        if contract:
+        # NOOD_0187 — only a BLOCKED contract refuses the auto-run. The gate
+        # exists to stop hand-authoring AROUND a failed/blocked goal; a
+        # successfully goal-authored feature used to freeze its whole app
+        # package (any contract, feature- or app-level, tripped this), which
+        # dead-ended autonomous agents on every later manual feature.
+        if contract and contract.get("blocked"):
             return {"ok": False, "author": result,
                     "next_action": "fix_blocked_goal",
                     "run": {"skipped": (
@@ -1270,9 +1275,14 @@ def write_feature(path: str, content: str, *, overwrite: bool = False,
             rel = str(dest.relative_to(Path(workspace).resolve()))
         except ValueError:
             rel = path
-        if (load_state(workspace).get("intent_contracts") or {}).get(rel):
+        # NOOD_0187 — blocked contracts only (same scoping as author_test's
+        # manual gate): a feature whose goal authored CLEAN can be hand-tuned
+        # (a tag, an extra step) without the expert override; the refusal is
+        # for writing Gherkin around a goal the engine refused to verify.
+        entry = (load_state(workspace).get("intent_contracts") or {}).get(rel)
+        if entry and entry.get("blocked"):
             return {"ok": False, "next_action": "fix_blocked_goal",
-                    "error": "a structured intent contract exists for this "
+                    "error": "a BLOCKED intent contract exists for this "
                     "feature — hand-edited Gherkin has no source or probe "
                     "provenance and cannot replace it; repair the goal via "
                     "author_test(goal/prompt) instead (expert override: "

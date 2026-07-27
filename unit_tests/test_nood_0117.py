@@ -85,6 +85,9 @@ def _stub_run_env(monkeypatch, tmp_path, record):
     monkeypatch.setattr(cli, "_app_report_dir", lambda c, p: None)
     monkeypatch.setattr(cli._paths, "record_last_run_root", lambda c: None)
     monkeypatch.setattr(cli, "_write_last_run", lambda *a, **k: None)
+    # NOOD_0187 — the faked runner writes no results; without this the
+    # zero-scenarios guard (exit 3) fires and hides what's under test here.
+    monkeypatch.setenv("NOODLE_ALLOW_EMPTY", "1")
 
     def fake_run(args, **kw):
         record.update(kw)
@@ -115,15 +118,22 @@ def test_run_env_forces_the_stream_back(monkeypatch, tmp_path):
     assert not (ws / cli._paths.artifacts_root() / "run.log").exists()
 
 
-def test_run_parallel_ignores_auto_quiet(monkeypatch, tmp_path):
-    """--parallel branches off before the quiet plumbing — documented
-    limitation, must exit cleanly, not crash."""
+def test_run_parallel_honors_quiet(monkeypatch, tmp_path):
+    """NOOD_0187 — --parallel goes through the same quiet/reporting tail as
+    sequential now (it used to branch off before the quiet plumbing entirely)."""
     monkeypatch.delenv("NOODLE_QUIET", raising=False)
     ws = _stub_run_env(monkeypatch, tmp_path, {})
-    monkeypatch.setattr(cli, "_run_parallel", lambda *a, **k: 0)
+    seen = {}
+
+    def fake_parallel(*a, **k):
+        seen["log_path"] = k.get("log_path")
+        return 0, False
+
+    monkeypatch.setattr(cli, "_run_parallel", fake_parallel)
     result = runner.invoke(
         cli.app, ["run", "tests", "-w", str(ws), "--parallel", "2", "--quiet"])
     assert result.exit_code == 0
+    assert seen["log_path"] is not None      # behavex stream diverts to run.log
 
 
 # --- D2: compact probe output ------------------------------------------------

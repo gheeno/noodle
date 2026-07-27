@@ -296,6 +296,9 @@ def test_cli_run_json_emits_exactly_one_object(tmp_path, monkeypatch):
     (ws / "noodle_tests" / "web" / "shop" / "features" / "steps").mkdir(
         parents=True, exist_ok=True)
     monkeypatch.setenv("NOODLE_ARTIFACTS_DIR", str(tmp_path / "arts"))
+    # NOOD_0187 — the faked behave writes no results; opt out of the
+    # zero-scenarios exit-3 guard so the single-object contract stays the test.
+    monkeypatch.setenv("NOODLE_ALLOW_EMPTY", "1")
     monkeypatch.setattr(cli.subprocess, "run",
                         lambda *a, **k: MagicMock(returncode=0))
     # NOOD_0134 — run --serve spawns a detached child (URLs must outlive the

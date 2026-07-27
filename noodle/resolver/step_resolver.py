@@ -234,6 +234,7 @@ VALID_TYPES = frozenset({
     # Phases M–S (2026-07) — console/network health, emulation, offline &
     # throttling, a11y, clipboard, websockets, print/PDF
     'assert_no_console_errors', 'assert_no_page_errors', 'assert_no_failed_requests',
+    'assert_no_server_errors',   # NOOD_0187 — HTTP 4xx/5xx page traffic
     'set_geolocation', 'grant_permissions', 'dismiss_permission_prompt',
     'set_offline', 'throttle_network',
     'assert_a11y', 'write_clipboard', 'assert_clipboard', 'assert_ws_message',

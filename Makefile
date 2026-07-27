@@ -1,4 +1,10 @@
-.PHONY: test test-wok-web test-wok-mobile test-wok-desktop test-wok-performance lint vsix install-ext clean
+.PHONY: test test-wok-web test-wok-mobile test-wok-desktop test-wok-performance lint vsix install-ext clean constraints
+
+# NOOD_0187 — regenerate the CI dependency pins from uv.lock. Run after any
+# dependency change; the GitHub Actions gate diffs this file against the lock.
+constraints:
+	uv export --frozen --no-emit-project --all-extras --no-hashes \
+	  --format requirements-txt -o constraints.txt
 
 # Run all tests (no browser required)
 test:

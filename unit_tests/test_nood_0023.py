@@ -217,10 +217,17 @@ def test_after_all_writes_rca_even_when_nothing_failed(tmp_path, monkeypatch):
     from noodle.reporting import allure_meta
     monkeypatch.setattr(allure_meta, "write_meta", lambda *a, **k: None)
     monkeypatch.delenv("NOODLE_PARALLEL_WORKER", raising=False)
+    # NOOD_0187 — a green run means a result was WRITTEN; an empty results
+    # dir renders the "0 scenarios ran" warning page instead.
+    from noodle.reporting import paths
+    paths.results_dir().mkdir(parents=True, exist_ok=True)
+    (paths.results_dir() / "u1-result.json").write_text(json.dumps(
+        {"uuid": "u1", "historyId": "h1", "name": "s", "fullName": "F: s",
+         "labels": [{"name": "feature", "value": "F"}],
+         "steps": [], "status": "passed", "stop": 1}))
 
     hooks.after_all(object())
 
-    from noodle.reporting import paths
     assert (paths.reports_dir() / "rca.md").is_file()
     assert "No failed or errored scenarios" in (paths.reports_dir() / "rca.html").read_text()
 
