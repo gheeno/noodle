@@ -235,6 +235,8 @@ VALID_TYPES = frozenset({
     # throttling, a11y, clipboard, websockets, print/PDF
     'assert_no_console_errors', 'assert_no_page_errors', 'assert_no_failed_requests',
     'assert_no_server_errors',   # NOOD_0187 — HTTP 4xx/5xx page traffic
+    # NOOD_0188 — HAR replay/record + driven websockets
+    'route_from_har', 'mock_websocket', 'send_ws_message', 'assert_ws_sent',
     'set_geolocation', 'grant_permissions', 'dismiss_permission_prompt',
     'set_offline', 'throttle_network',
     'assert_a11y', 'write_clipboard', 'assert_clipboard', 'assert_ws_message',

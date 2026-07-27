@@ -317,11 +317,13 @@ def author_test(app_name: str | None = None, base_url: str | None = None,
 
     ELSE prefer `goal` (mutually exclusive w/ feature_content): {scenario,
     navigation?: [ordered URLs, an {env:} Given each],
-    actions: [{do: search|suggest|pick|add_to|click|enter|select, id?,
-    term/target/value/option; pick binds 'any matching result' to ONE
+    actions: [{do: search|suggest|pick|add_to|click|enter|select|check|
+    uncheck|hover|upload|press_key|pick_date|go_back, id?, term/target/
+    value/option/file/key/date; pick binds 'any matching result' to ONE
     probed result item; add_to = {item_from: pick-id, destination},
     engine-lowered to observed controls; never invent surface steps}],
-    checks: [{see|count|any_of|field|item_in_destination, min?, value?,
+    checks: [{see|not_see|count|any_of|field|item_in_destination|
+    url_contains, min?, value?,
     expected_from?: pick-id, evidence?: screenshot, after?: action-id}],
     dismissals?, probe?: {discover}}. item_in_destination re-asserts the
     bound caption (identity, not count). ONE goal-scoped probe,

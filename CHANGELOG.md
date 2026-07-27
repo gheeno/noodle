@@ -4,6 +4,103 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a4] — 2026-07-27
+
+**NOOD_0188** — feature: the NOOD_0187 deferred batch — goal-grammar growth,
+probe reuse, richer mocking/HAR, driven websockets, binary downloads, pixel
+masks, benchmark self-report audit, Node 24 CI.
+
+The NOOD_0187 audit deferred seven items as "features, not lies". This is
+them.
+
+- **Goal grammar doubles: 7 → 14 actions, 5 → 7 check kinds.** The cheap
+  deterministic authoring path reached 7 verbs while the runtime had 169
+  action types, so any test with a checkbox, an upload, a hover menu, a date
+  picker, an Enter press or a back-navigation dropped to hand-written Gherkin
+  — which is never intent-verified. Added `check`, `uncheck`, `hover`,
+  `upload`, `press_key`, `pick_date`, `go_back` plus the `not_see` (absence —
+  the empty-state/removal half of a journey) and `url_contains` (the flow
+  landed where it should) checks. The runtime steps already existed since
+  NOOD_0186; this is the wiring, reachable from plain English too
+  (`Check the "Terms" checkbox`, `Verify "Error" is not visible`).
+  Two silent-fallthrough traps are closed with it: `_action_step` used to end
+  in an unguarded `select` and `_check_step` in an unguarded `any_of`, so a
+  table-only addition compiled a *plausible but wrong* step that still matched
+  the pattern table — both now raise. The check-kind tuple, hand-repeated in
+  three places, is now one constant.
+- **Probe reuse between repair laps** (`NOODLE_PROBE_CACHE_TTL`, **default
+  off**). Keyed on the feature + URLs + every probe argument, so only an
+  identical question about the same feature is ever reused. Deliberately
+  opt-in: the commonest reason to re-author is that someone just CHANGED the
+  app, and answering from cache would describe a page the engine hasn't
+  looked at. On, it saves a browser launch + page load + scan per lap while
+  iterating on a goal against a static site; reuse is always disclosed (log
+  line + `probe_reused` in the payload).
+- **Richer network mocking**: response headers (via a step table), fixture-file
+  bodies (`with the fixture 'orders.json'`, resolved from the app's
+  `resources/`), method scoping (`mocks POST '…'` — other verbs fall through),
+  injected latency (`after 3 seconds`), and a guessed content type instead of
+  a hardcoded `application/json` that served mocked HTML/CSV under a lying
+  MIME. Plus **HAR replay/record** (`replays 'checkout.har'` /
+  `records 'checkout.har' for '**/api/**'`) — NOOD_0183 declined it on the
+  grounds mock_route covers it; it doesn't, because mock_route fulfils one
+  glob per step and a HAR pins a whole third-party session in one line.
+- **Websockets can be driven, not just watched**: `mocks the websocket` +
+  `the server sends '…'` + `the page should have sent '…'`. Capture alone
+  meant a live-update UI (ticker, chat, order status) could never be tested,
+  because nothing could make the server say anything. Arm-first (routing
+  attaches to a socket opened after the mock), same contract as the JS dialog
+  steps.
+- **Binary downloads are assertable**: xlsx/docx/pptx/pdf are read by the new
+  `noodle.docparse` (stdlib `zipfile`/`zlib` — Office files are zipped XML, a
+  generated PDF's text is in its content streams). The enterprise export case
+  could previously assert only the filename; a refusal message told you so.
+  No new dependency; `.xlsx` row counts use real `<row>` elements.
+- **Pixel baselines take masks**: `ignoring the clock and the avatar` paints
+  those boxes flat black on both sides before diffing. Any moving pixel used
+  to make a pixel baseline permanently red, which is how visual tests get
+  switched off. Masks are a tolerance, never an assertion — an unresolvable
+  one is skipped.
+- **The regression benchmark now audits its own subject.** `green`/`verified`
+  were typed into `results.json` by the driving agent and nothing read the
+  run's `last_run.json`, making the headline verdict of the "is the product
+  still good" benchmark unfalsifiable self-report. `score()` stays pure by
+  default; given a workspace it cross-checks, and a claim contradicting the
+  artifacts is a REGRESSION. Missing artifacts stay advisory (a fresh
+  workspace isn't a regression).
+- **CI is off Node 20**: checkout v7, setup-python v6, setup-node v6,
+  upload-artifact v6, cache v5, github-script v8 — each verified as
+  `using: node24` at the pinned major tag rather than assumed.
+
+Three bugs the live run of the new steps caught, fixed here:
+
+- **A local dev server couldn't be authored against** (pre-existing, since the
+  prompt path shipped): `_URLISH` required a dot and rejected a port, so every
+  `http://localhost:3333` / `http://127.0.0.1:8080` prompt failed with "no URL
+  in the prompt" — the cheap authoring path could not target the app you are
+  actually developing. An explicit scheme now accepts any host and a port; a
+  dotless bare word without a scheme still routes to a CLICK (`go to the
+  cart`), which is what that rule was protecting.
+- **Control-free actions crashed authoring**: `press_key`/`go_back` name no
+  control, but `evidence()`'s generic path keys on `a["target"]` — `KeyError`
+  mid-author. They are skipped there now.
+- **…and reported themselves unproven**: `intent_trace` keyed them on the same
+  missing target, so any goal using one came back `intent_verified: false` — a
+  false negative on the signal agents are told to trust. They now trace as
+  `deterministic:no-control`, which is what they are.
+- `mocks GET '…' with the fixture '…'` (method + fixture together) didn't
+  parse, though it's the natural phrasing.
+
+**Benchmark cost is measured in the unit the host actually bills.** AIC was
+the only cost metric, so a Claude-driven run was scored in premium requests
+it never spends — the cost half of the verdict was meaningless on whichever
+host you weren't using. `host` now selects it: `claude…` is scored on
+`tokens` (`NOODLE_REG_MAX_TOKENS`, default 120 000), `copilot…` on `aic`
+(`NOODLE_REG_MAX_AIC`, unchanged); only that host's ceiling is enforced, and
+the host's own unit is a required measurement. An optional `cost_basis`
+string rides through to `verdict.html` so a measured FLOOR can never be
+misread as full billed spend.
+
 ## [1.0.0a3] — 2026-07-27
 
 **NOOD_0187** — fix: the framework never lies — report integrity, parallel

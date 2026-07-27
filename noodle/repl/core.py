@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
@@ -550,6 +551,75 @@ def _model_configured(workspace: str) -> bool:
     return False
 
 
+def _probe_cache_ttl() -> float:
+    """Seconds a cached probe stays usable. **Default 0 — OFF.**
+
+    Reusing a probe means answering with a page state the engine has not
+    looked at, and the commonest reason to re-author is that someone just
+    CHANGED the app. On by default, the repair lap after a fix would be told
+    about the old page — a confident, stale answer, which is the one thing
+    this engine refuses to do. So the speed-up is opt-in:
+
+        NOODLE_PROBE_CACHE_TTL=120   # iterating on the GOAL, app untouched
+
+    Worth setting while shaping a goal against a slow, static site (each lap
+    saves a browser launch + page load + scan); leave it off while fixing the
+    app itself. Reuse is always disclosed — a log line and `probe_reused` in
+    the payload — so a surprising verdict is traceable to it.
+
+    ponytail: a time bound is the honest ceiling — validating the cache would
+    cost the very page load it saves.
+    """
+    try:
+        return float(os.getenv("NOODLE_PROBE_CACHE_TTL", "0"))
+    except ValueError:
+        return 0.0
+
+
+def _cached_probe(workspace: str, urls: str, act_on: str, args: dict,
+                  feature: str, run):
+    """NOOD_0188 — memoize one probe transaction on disk for TTL seconds.
+
+    Returns (result, cache_hit). The key covers the target FEATURE, the URLs,
+    the act_on mode and every probe argument, so a reuse only ever happens on
+    a repair lap of the same feature asking the same question. Authoring a
+    different feature — or changing anything the goal asks for — always
+    re-probes: serving a neighbouring feature's evidence would be exactly the
+    stale-answer failure this engine refuses elsewhere.
+
+    Best-effort throughout: a cache that can't be read or written just means a
+    fresh probe, never an error. A `discover` probe is never cached (it exists
+    to find what the author doesn't know yet, so a stale answer is worse than
+    none).
+    """
+    import hashlib
+    ttl = _probe_cache_ttl()
+    if ttl <= 0 or args.get("discover"):
+        return run(), False
+    key_src = json.dumps({"feature": feature, "urls": urls,
+                          "act_on": act_on, "args": args},
+                         sort_keys=True, default=str)
+    key = hashlib.sha256(key_src.encode()).hexdigest()[:16]
+    path = (Path(workspace) / _paths.artifacts_root() / "probe_cache"
+            / f"{key}.json")
+    try:
+        if path.is_file() and (time.time() - path.stat().st_mtime) < ttl:
+            cached = json.loads(path.read_text())
+            from noodle.log import logger
+            logger.info("\n  ♻️  Reusing the probe from this lap "
+                        f"(same transaction, <{ttl:.0f}s old)")
+            return cached, True
+    except (OSError, json.JSONDecodeError):
+        pass
+    result = run()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(result, indent=2, default=str))
+    except (OSError, TypeError, ValueError):
+        pass
+    return result, False
+
+
 def _planner_verdict(result: dict, model_calls: int) -> dict:
     """NOOD_0169 — the bounded planner's typed terminal outcome for a prompt
     flow, derived from the one author/probe/run transaction (the state
@@ -758,9 +828,16 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         # — earlier URLs are setup navigation, not action pages.
         nav_env = goal_mod.navigation_env(goal, app)
         probe_urls = " ".join(u for _, u in nav_env) if nav_env else base_url
-        probe_result = probe_page(
-            probe_urls, act_on="last" if len(nav_env) > 1 else "each",
-            **goal_mod.probe_args(goal))
+        p_args = goal_mod.probe_args(goal)
+        act_on = "last" if len(nav_env) > 1 else "each"
+        # NOOD_0188 — reuse the probe of an identical transaction on a REPAIR
+        # LAP of the same feature. A blocked author leaves its files in place
+        # for a fix-in-place retry, so the retry re-probed the SAME url with
+        # the SAME transaction: a full browser launch + page load + scan, per
+        # lap, for evidence the engine had just written to disk.
+        probe_result, cache_hit = _cached_probe(
+            workspace, probe_urls, act_on, p_args, str(feat_dest),
+            lambda: probe_page(probe_urls, act_on=act_on, **p_args))
         # Raw snapshot goes to artifacts/debug, never the model-visible payload.
         dbg = Path(workspace) / _paths.artifacts_root() / "probe_goal.json"
         try:
@@ -1081,6 +1158,11 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         if goal_ev.get("navigation_health"):
             result["evidence"]["navigation_health"] = \
                 goal_ev["navigation_health"]
+        if cache_hit:
+            # NOOD_0188 — say so. Reused evidence is still evidence, but an
+            # agent debugging "why didn't my page change take effect" must be
+            # able to see that this lap didn't re-open the browser.
+            result["evidence"]["probe_reused"] = True
         if goal_ev.get("bound_targets"):
             result["evidence"]["bound_targets"] = goal_ev["bound_targets"]
         # NOOD_0156 — intent provenance: what the user asked for, what got

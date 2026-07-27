@@ -731,7 +731,7 @@ def execute_step(step_text: str, context):
     elif t == 'visual_baseline':
         actions.visual_baseline(page, action['name'], action.get('ignore'))
     elif t == 'pixel_baseline':
-        actions.pixel_baseline(page, action['name'])
+        actions.pixel_baseline(page, action['name'], action.get('ignore'))
     elif t == 'screenshot':
         # NOOD_0153 — remember the path so hooks.after_step attaches the
         # explicit "takes a screenshot" shot to the Allure/RCA reports too
@@ -908,9 +908,35 @@ def execute_step(step_text: str, context):
         actions.assert_compare(action['left'], action['op'], action['right'])
     # --- Phase D ---
     elif t == 'mock_route':
-        actions.mock_route(page, action['url'], action['status'], action.get('body'))
+        # NOOD_0188 — a fixture body resolves like every other fixture (the
+        # app's resources/), and an optional table carries response headers:
+        #   | header        | value            |
+        #   | X-Total-Count | 42               |
+        fixture = action.get('fixture')
+        headers = None
+        table = ctx_get(context, 'table', None)
+        if table is not None:
+            headers = {substitute(_row_get(row, 'header') or row.cells[0], context._vars):
+                       substitute(_row_get(row, 'value') or row.cells[-1], context._vars)
+                       for row in table}
+        actions.mock_route(
+            page, action['url'], action['status'], action.get('body'),
+            headers=headers, method=action.get('method'),
+            delay_ms=action.get('delay_ms') or 0,
+            content_type=action.get('content_type'),
+            fixture=_resources_path(context, fixture) if fixture else None)
     elif t == 'block_route':
         actions.block_route(page, action['url'])
+    elif t == 'route_from_har':
+        actions.route_from_har(page, _resources_path(context, action['har']),
+                               url=action.get('url'),
+                               update=bool(action.get('update')))
+    elif t == 'mock_websocket':
+        actions.mock_websocket(page, action.get('url') or '**/*')
+    elif t == 'send_ws_message':
+        actions.send_ws_message(page, action['message'])
+    elif t == 'assert_ws_sent':
+        actions.assert_ws_sent(page, action['contains'])
     elif t == 'api_call':
         # NOOD_0011 — carry the REST auth headers so "sets the bearer token"
         # guards api_call too (Graph/OData-style data setup + verification).

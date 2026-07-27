@@ -29,6 +29,18 @@ def _ms(raw: str | None) -> int | None:
     return int(float(raw) * 1000) if raw else None
 
 
+def _ignore_list(raw: str | None) -> list[str]:
+    """NOOD_0188 — "the clock, the avatar and the ad banner" → three locator
+    phrases to mask before a pixel diff. Quotes are optional; `and`/commas both
+    separate, which is how a tester writes the tail without thinking about it."""
+    if not raw:
+        return []
+    parts = re.split(r'\s*,\s*|\s+and\s+', raw.strip())
+    # Each part sheds its own leading article — the pattern only strips the
+    # first one, so "the clock and the avatar" would keep "the avatar".
+    return [_q(re.sub(r'^the\s+', '', p.strip())) for p in parts if p.strip()]
+
+
 # NOOD_0152 — direction words → pixel deltas, for the mouse-level drags.
 _DIRECTION_DELTA = {'right': (1, 0), 'left': (-1, 0), 'down': (0, 1), 'up': (0, -1)}
 
@@ -562,9 +574,27 @@ PATTERNS = [
                                                    '_reject',        lambda m: _no_native_dialog('file')),
 
     # --- Phase D: network mocking, API setup/teardown, test data -------------
+    # NOOD_0188 — richer mocks. status+body alone couldn't express the daily
+    # cases: a body too big for a Gherkin string (fixture file), mocking ONE
+    # verb while the others pass through (method), or injected latency to
+    # exercise a spinner/timeout. Response headers ride an optional table.
+    # Order: the more specific forms MUST precede the bare status form.
+    (r'^mocks? (?:(GET|POST|PUT|DELETE|PATCH) )?["\'](.+?)["\'] with (?:the )?(?:fixture|payload|file) ["\'](.+?)["\'](?: and status (\d+))?$',
+                                                   'mock_route',     lambda m: {'method': (m.group(1) or '').upper() or None, 'url': _q(m.group(2)), 'fixture': _q(m.group(3)), 'status': int(m.group(4) or 200)}),
+    (r'^mocks? (GET|POST|PUT|DELETE|PATCH) ["\'](.+?)["\'] with status (\d+)(?: and body ["\'](.+?)["\'])?$',
+                                                   'mock_route',     lambda m: {'method': m.group(1).upper(), 'url': _q(m.group(2)), 'status': int(m.group(3)), 'body': m.group(4)}),
+    (r'^mocks? ["\'](.+?)["\'] with status (\d+)(?: and body ["\'](.+?)["\'])? after ([\d.]+) seconds?$',
+                                                   'mock_route',     lambda m: {'url': _q(m.group(1)), 'status': int(m.group(2)), 'body': m.group(3), 'delay_ms': _ms(m.group(4))}),
     # Mock a network response (Playwright route.fulfill).
     (r'^mocks? ["\'](.+?)["\'] with status (\d+)(?: and body ["\'](.+?)["\'])?$',
                                                    'mock_route',     lambda m: {'url': _q(m.group(1)), 'status': int(m.group(2)), 'body': m.group(3)}),
+    # NOOD_0188 — HAR replay: pin a whole third-party-dependent session with
+    # one line instead of a mock per request. The recording form writes the
+    # file from a live run, so the same step captures then replays forever.
+    (r'^(?:replays?|serves?) (?:the )?(?:network |traffic )?(?:from )?["\'](.+?\.har)["\'](?: for ["\'](.+?)["\'])?$',
+                                                   'route_from_har', lambda m: {'har': _q(m.group(1)), 'url': _q(m.group(2)) if m.group(2) else None, 'update': False}),
+    (r'^records? (?:the )?(?:network |traffic )?(?:to )?["\'](.+?\.har)["\'](?: for ["\'](.+?)["\'])?$',
+                                                   'route_from_har', lambda m: {'har': _q(m.group(1)), 'url': _q(m.group(2)) if m.group(2) else None, 'update': True}),
     # Block requests to a URL glob (route.abort) — e.g. analytics/ads.
     (r'^blocks? requests? to ["\'](.+?)["\']$',    'block_route',    lambda m: {'url': _q(m.group(1))}),
     # API setup/teardown — call an endpoint directly (no browser nav).
@@ -1477,6 +1507,17 @@ PATTERNS = [
                                                    'assert_clipboard', lambda m: {'text': _q(m.group(1))}),
 
     # --- Phase R (F13) — WebSocket observation ----------------------------------
+    # NOOD_0188 — and DRIVING, not just watching: capture alone meant a
+    # live-update UI (ticker, chat, order status) could never be tested,
+    # because nothing could make the server "say" something. Routing attaches
+    # only to a socket the page opens AFTER the mock, hence arm-first — same
+    # contract as the JS dialog steps.
+    (r'^mocks? the websocket(?: ["\'](.+?)["\'])?$',
+                                                   'mock_websocket',   lambda m: {'url': _q(m.group(1)) if m.group(1) else None}),
+    (r'^the (?:websocket |mocked )?server sends? ["\'](.+?)["\']$',
+                                                   'send_ws_message',  lambda m: {'message': _q(m.group(1))}),
+    (r'^(?:the )?(?:page|app|client) should have sent ["\'](.+?)["\'](?: (?:over|on) the websocket)?$',
+                                                   'assert_ws_sent',   lambda m: {'contains': _q(m.group(1))}),
     (r'^a websocket message containing ["\'](.+?)["\'] should (?:be|have been) (sent|received)$',
                                                    'assert_ws_message', lambda m: {'contains': _q(m.group(1)), 'direction': m.group(2).lower()}),
     (r'^a websocket message containing ["\'](.+?)["\'] should (?:be|have been) (?:seen|observed)$',
@@ -1559,6 +1600,13 @@ PATTERNS = [
 
     # Deterministic pixel baseline (no LLM) — MUST precede the LLM visual_baseline
     # so "should match the baseline" routes to the pixel diff, not the model.
+    # NOOD_0188 — the `ignoring X and Y` tail masks volatile regions (a clock,
+    # an avatar, an ad slot) before the diff; without it any moving pixel made
+    # a baseline permanently red, which is how visual tests get switched off.
+    (r'^the screen should match (?:the )?(?:pixel )?baseline ignoring (?:the )?(.+)$',
+                                                   'pixel_baseline', lambda m: {'name': 'default', 'ignore': _ignore_list(m.group(1))}),
+    (r'^the ["\'](.+?)["\'] screen should match (?:the )?(?:pixel )?baseline ignoring (?:the )?(.+)$',
+                                                   'pixel_baseline', lambda m: {'name': _q(m.group(1)), 'ignore': _ignore_list(m.group(2))}),
     (r'^the screen should match (?:the )?(?:pixel )?baseline$',
                                                    'pixel_baseline', lambda m: {'name': 'default'}),
     (r'^the ["\'](.+?)["\'] screen should match (?:the )?(?:pixel )?baseline$',

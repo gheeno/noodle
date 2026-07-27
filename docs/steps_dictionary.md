@@ -998,9 +998,18 @@ When User takes a screenshot
 When User takes a screenshot 'checkout-complete'
 Then the screen should match the pixel baseline
 Then the 'header' screen should match the pixel baseline
+Then the screen should match the baseline ignoring the clock and the avatar
 Then the screen should look the same as before
 Then the screen should look the same as before ignoring the banner
 ```
+
+**Masking volatile regions (NOOD_0188).** `ignoring <a>, <b> and <c>` paints
+each named element's box flat black on *both* sides before the diff, so a
+clock, an avatar, an ad slot or a session id can't fail the baseline —
+previously any moving pixel made a pixel baseline permanently red, which is
+how visual tests get switched off. The mask is a tolerance, never an
+assertion: an element that can't be resolved is skipped, not failed. The
+stored baseline is masked too, so the ignored regions always compare equal.
 
 ### Evidence screenshots (NOOD_0153)
 
@@ -1282,6 +1291,48 @@ When User mocks '/api/auth' with status 401
 When User blocks requests to '**/analytics/**'
 ```
 
+### Fixtures, methods, latency, headers (NOOD_0188)
+
+Status + body alone couldn't express the everyday cases: a body too big for a
+Gherkin string, mocking one verb while the rest pass through, or a slow
+response to exercise a spinner.
+
+```gherkin
+When User mocks '**/api/orders' with the fixture 'orders.json'
+When User mocks '**/api/orders' with the fixture 'orders.json' and status 201
+When User mocks POST '**/api/cart' with status 500
+When User mocks '**/api/slow' with status 200 after 3 seconds
+```
+
+* **fixture** — resolved from the app's `resources/` like every other fixture;
+  the content type is guessed from the file extension (JSON/HTML/CSV), so a
+  mocked HTML fragment is no longer served as `application/json`.
+* **method** — only that verb is intercepted; others fall through to the real
+  backend.
+* **after N seconds** — injected latency.
+* **response headers** ride an optional table on the step:
+
+```gherkin
+When User mocks '**/api/orders' with status 200 and body '[]'
+  | header        | value |
+  | X-Total-Count | 42    |
+```
+
+### HAR replay (NOOD_0188)
+
+One line pins a whole third-party-dependent session, instead of a mock per
+request. Record once against the live site, replay forever after:
+
+```gherkin
+Given User records 'checkout.har' for '**/api/**'
+Given User replays 'checkout.har'
+Given User replays 'checkout.har' for '**/api/**'
+```
+
+The `.har` path resolves from the app's `resources/`. Replaying a file that
+doesn't exist fails naming the recording step, rather than silently passing
+requests through.
+
 ---
 
 ## Test Data
@@ -1554,6 +1605,27 @@ Then a websocket message containing 'order_filled' should be received
 Then a websocket message containing 'subscribe' should be sent
 Then a websocket message containing 'heartbeat' should be observed
 ```
+
+### Driving a socket, not just watching it (NOOD_0188)
+
+Observation alone meant a live-update UI (ticker, chat, order status,
+notification badge) could be watched but never *driven* — nothing could make
+the server "say" something. Mocking the socket lets the test push frames:
+
+```gherkin
+Given User mocks the websocket
+When User goes to "{env:APP}/orders"
+When the server sends '{"status": "shipped"}'
+Then the user sees "Shipped"
+Then the page should have sent 'subscribe'
+```
+
+**Arm it first.** Routing attaches to a socket the page opens *after* the mock
+step — the browser has no API to inject into an already-open one — so the mock
+must precede the navigation/action that connects. Same arm-first contract as
+the JS dialog steps. While mocked there is no real server behind the socket,
+so frames the page sends are recorded for `should have sent` rather than
+forwarded.
 
 ---
 
@@ -1906,8 +1978,8 @@ ready.
 | `the number in 'amount' should be between 10 and 20` | Inclusive range |
 | `the page should have at most 3 serious accessibility violations` | Impact + budget together — the shape a real a11y gate takes. Impacts: minor/moderate/serious/critical |
 | `the page should make fewer than 50 requests` | Page-weight budget |
-| `the downloaded file should contain 'Invoice #123'` | Reads the file off disk. Binary formats (xlsx/pdf) are refused with an explanation, not a confusing red |
-| `the downloaded csv should have 10 rows` | Non-empty lines minus the header |
+| `the downloaded file should contain 'Invoice #123'` | Reads the file off disk — including **xlsx/docx/pptx/pdf** (NOOD_0188), so an exported report is assertable, not just its filename. Office files are read as the zipped XML they are; PDF text comes out of the content streams. Stdlib only, no new dependency; a file with no extractable text fails saying the text was *extracted*, so the reason is never ambiguous |
+| `the downloaded csv should have 10 rows` | Non-empty lines minus the header. For `.xlsx` it counts real `<row>` elements, same header-excluded convention |
 
 ### Other
 

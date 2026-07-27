@@ -22,8 +22,8 @@ jobs:
   lint-and-unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: pip
@@ -69,12 +69,12 @@ jobs:
     env:
       PLAYWRIGHT_BROWSERS_PATH: ~/pw-browsers
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: pip
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ~/pw-browsers
           key: pw-browsers-${{ hashFiles('constraints.txt') }}
@@ -84,7 +84,7 @@ jobs:
       # Allure 3 CLI, pinned exact — same rationale as azure-pipelines.yml.
       - run: sudo npm install -g allure@3.14.1
       # BusterBlock — the bundled Node/Express test app the web suite targets.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '18'
       - run: |
@@ -116,7 +116,7 @@ jobs:
       - run: noodle run sample_feature_tests/web/busterblock --headless --parallel 2 --timeout 1800
         env:
           NOODLE_ARTIFACTS_DIR: artifacts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: noodle-test-artifacts
@@ -131,5 +131,5 @@ jobs:
     needs: lint-and-unit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker build -t noodle .

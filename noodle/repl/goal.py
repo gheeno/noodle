@@ -51,12 +51,35 @@ _ACTION_KEYS = {"search": {"do", "id", "term"},
                 "add_to": {"do", "id", "item_from", "destination"},
                 "click": {"do", "id", "target"},
                 "enter": {"do", "id", "target", "value"},
-                "select": {"do", "id", "target", "option"}}
+                "select": {"do", "id", "target", "option"},
+                # NOOD_0188 — the form/navigation verbs. The runtime has had
+                # steps for all of these since NOOD_0186; only the cheap
+                # deterministic authoring path couldn't reach them, so any
+                # test with a checkbox, an upload, a hover menu, a date
+                # picker or an Enter press dropped to hand-written Gherkin
+                # (which is never intent-verified). This is the wiring, not
+                # new capability.
+                "check": {"do", "id", "target"},
+                "uncheck": {"do", "id", "target"},
+                "hover": {"do", "id", "target"},
+                "upload": {"do", "id", "target", "file"},
+                "press_key": {"do", "id", "key", "target"},
+                "pick_date": {"do", "id", "target", "date"},
+                "go_back": {"do", "id"}}
 _ACTION_REQUIRED = {"search": {"term"}, "suggest": {"term", "option"},
                     "pick": set(), "click": {"target"},
                     "add_to": {"item_from", "destination"},
-                    "enter": {"target", "value"}, "select": {"target", "option"}}
+                    "enter": {"target", "value"}, "select": {"target", "option"},
+                    "check": {"target"}, "uncheck": {"target"},
+                    "hover": {"target"}, "upload": {"target", "file"},
+                    "press_key": {"key"}, "pick_date": {"target", "date"},
+                    "go_back": set()}
 _PICK_STRATEGIES = {"first_actionable"}
+# NOOD_0188 — actions that name a surface control, so they resolve through the
+# probe's canonical spelling and earn a POM entry. `press_key` is here only
+# when it carries an optional target (focus first); `go_back` never is.
+_TARGETED_ACTIONS = ("click", "enter", "select", "check", "uncheck",
+                     "hover", "upload", "pick_date")
 # NOOD_0156 — "field" checks ({field, value}): the target field/control shows
 # the entered/selected value. Always runtime-asserted (the probe never types
 # data); the kind generated for assertion-free enter/select goals.
@@ -66,8 +89,17 @@ _PICK_STRATEGIES = {"first_actionable"}
 # cart-count assertion cannot satisfy "the selected toy is in the cart".
 # `evidence: screenshot` (any check kind) compiles the existing NOOD_0153
 # "( take a screenshot )" marker onto the verification step itself.
+# NOOD_0188 — "not_see" (text absent: the empty-state/removal case, which
+# `see` cannot express) and "url_contains" (the flow landed where it should —
+# the navigation half of a journey, previously unassertable from a goal).
 _CHECK_KEYS = {"see", "count", "any_of", "field", "value", "min", "name",
-               "after", "item_in_destination", "expected_from", "evidence"}
+               "after", "item_in_destination", "expected_from", "evidence",
+               "not_see", "url_contains"}
+# The check KINDS — exactly one per check. Single source (NOOD_0188): this
+# tuple was hand-repeated in validate(), its error string and intent_trace(),
+# so a new kind silently fell through to the any_of branch in three places.
+_CHECK_KINDS = ("see", "not_see", "count", "any_of", "field",
+                "item_in_destination", "url_contains")
 # NOOD_0163 — the landing-page anchor. NOOD_0158 made an unanchored check
 # observe the END state, which is right for the outcome but left a check on
 # text the LANDING page shows with nowhere to go: it compiled after the
@@ -108,7 +140,7 @@ def vocabulary() -> dict:
                     for do, keys in sorted(_ACTION_KEYS.items())},
         "check_keys": sorted(_CHECK_KEYS),
         "dismissals": sorted(_DISMISSALS),
-        "notes": "one of see|count|any_of|field|item_in_destination per "
+        "notes": "one of " + "|".join(_CHECK_KINDS) + " per "
                  "check; evidence: 'screenshot' on any check; after: "
                  "start|<action id> anchors a check to its page; "
                  "item_in_destination pairs with expected_from: <pick id>; "
@@ -343,11 +375,10 @@ def validate(goal) -> list[str]:
             continue
         for k in set(c) - _CHECK_KEYS:
             errs.append(f"checks[{i}]: unknown field {k!r}")
-        kinds = [k for k in ("see", "count", "any_of", "field",
-                             "item_in_destination") if k in c]
+        kinds = [k for k in _CHECK_KINDS if k in c]
         if len(kinds) != 1:
-            errs.append(f"checks[{i}]: exactly one of see | count | any_of "
-                        "| field | item_in_destination")
+            errs.append(f"checks[{i}]: exactly one of "
+                        + " | ".join(_CHECK_KINDS))
             continue
         kind = kinds[0]
         if "evidence" in c and c["evidence"] != "screenshot":
@@ -506,9 +537,17 @@ def _runtime_gate(actions: list) -> int | None:
     and everything AFTER a pick runs on the landed page the probe only
     snapshots (NOOD_0156 — the add-to-cart click itself would mutate state,
     so the probe never performs it). Every check anchored at or after the
-    gate is runtime-asserted (proven by the run), never claimed probe-proven."""
+    gate is runtime-asserted (proven by the run), never claimed probe-proven.
+
+    NOOD_0188 — the new form/navigation verbs join it on the same rule: every
+    one of them either writes state (check/uncheck/upload/pick_date), can
+    submit (press_key) or moves the page out from under the snapshot
+    (go_back). `hover` is deliberately NOT here — like a reveal click it only
+    exposes controls, which is exactly what the probe is for."""
     for i, a in enumerate(actions):
-        if a.get("do") in ("enter", "select", "suggest", "pick", "add_to"):
+        if a.get("do") in ("enter", "select", "suggest", "pick", "add_to",
+                           "check", "uncheck", "upload", "press_key",
+                           "pick_date", "go_back"):
             return i
     return None
 
@@ -682,14 +721,16 @@ def _page_blocks(pg: dict) -> list[tuple[dict, str, str | None]]:
 def _reveal_click_before(actions: list, action: dict, trigger: str | None) -> bool:
     """True when an explicit click action targeting `trigger` precedes
     `action` — the prerequisite that legitimately makes a revealed control
-    reachable at run time."""
+    reachable at run time. NOOD_0188 — a `hover` counts too: hover menus are
+    the other way a control legitimately becomes reachable, and treating them
+    as unreachable blocked the exact flow NOOD_0186 added steps for."""
     tn = _norm(trigger)
     if not tn:
         return False
     for x in actions:
         if x is action:
             return False
-        if x.get("do") == "click":
+        if x.get("do") in ("click", "hover"):
             xn = _norm(x.get("target"))
             if xn and (xn == tn or tn in xn or xn in tn):
                 return True
@@ -1008,6 +1049,12 @@ def evidence(goal: dict, probe_result: dict) -> dict:
             else:
                 proven[f'suggest:{a["term"]}'] = canon
             continue
+        # NOOD_0188 — actions that name NO control (press_key, go_back) have
+        # nothing for the probe to resolve: they act on the focused element or
+        # on history. The generic path below keys everything on a["target"],
+        # so without this they raised KeyError mid-author.
+        if not a.get("target"):
+            continue
         after_pick = any(x.get("do") == "pick" for x in actions[:i])
         ctrl = phase = trigger = note = None
         if after_pick and picked_blk is not None:
@@ -1106,6 +1153,13 @@ def evidence(goal: dict, probe_result: dict) -> dict:
         if "field" in c:
             # NOOD_0156 — a field-shows-value check is always runtime-proven:
             # the probe never types data, so there is nothing to prove it by.
+            runtime.append(_check_step(c)[0])
+            continue
+        if "not_see" in c or "url_contains" in c:
+            # NOOD_0188 — absence and landing-URL are runtime-only by nature:
+            # a probe snapshot cannot prove a thing is ABSENT (it may simply
+            # not have rendered yet), and the probe never follows the flow to
+            # its landing URL. Blocking on them would be a false negative.
             runtime.append(_check_step(c)[0])
             continue
         scope = search_scope if _check_scope(c, goal) == "search" else initial_scope
@@ -1295,6 +1349,33 @@ def infer_postcondition(goal: dict, ev: dict) -> dict:
             "check": f'the "{target}" field should contain "{value}"'}]
         return out
 
+    if do == "pick_date":
+        # NOOD_0188 — same shape as enter/select: the control must show what
+        # the calendar set. Deterministic, no invention.
+        target = proven.get(f'pick_date:{last.get("target", "")}') \
+            or last.get("target", "")
+        out["checks"] = [{"field": target, "value": last.get("date"),
+                          "after": aid}]
+        out["generated"] = [{
+            "after": aid,
+            "reason": "pick_date action had no user-supplied postcondition",
+            "check": f'the "{target}" field should contain '
+                     f'"{last.get("date")}"'}]
+        return out
+
+    if do in ("check", "uncheck", "upload", "hover", "press_key", "go_back"):
+        # NOOD_0188 — these have no deterministic self-evident postcondition
+        # (a checkbox's own state isn't proof the app DID anything, and a
+        # hover/back reveals whatever the app decides). Inventing one would be
+        # exactly the guessed-confirmation failure NOOD_0156 closed for
+        # clicks, so block with the same shape and let the author say what
+        # should be true.
+        out["blocking"].append(
+            f"{do} has no user-supplied postcondition and none can be derived "
+            f"deterministically — add a check saying what should be true "
+            f"after it (see / not_see / url_contains / count)")
+        return out
+
     # click — state-changing or navigating. Deterministic only when the probe
     # itself observed what this click reveals (an explicit reveal transaction
     # with a captured heading). Anything else would be an invented
@@ -1343,7 +1424,10 @@ def intent_summary(goal: dict, ev: dict) -> dict:
         if not isinstance(a, dict):
             continue
         reqs.append({k: a[k] for k in
-                     ("do", "id", "target", "term", "value", "option")
+                     ("do", "id", "target", "term", "value", "option",
+                      # NOOD_0188 — the new verbs' payload keys, or the intent
+                      # contract would silently drop what was actually asked.
+                      "file", "key", "date")
                      if a.get(k) is not None})
     prereqs = []
     for p in ev.get("permission_prompts") or []:
@@ -1419,9 +1503,17 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
         elif do == "add_to":
             key = aid or f"add_to:{a.get('destination', '')}"
             ok, evid = key in mplans, "probe:mutation-path"
+        elif not a.get("target"):
+            # NOOD_0188 — press_key/go_back name no control: they act on the
+            # focused element or on history, so there is nothing for a probe
+            # to resolve and the compiled step carries no locator. Keying them
+            # on a target they don't have reported "missing" and dragged
+            # intent_verified false for every goal that used one.
+            ok, evid = True, "deterministic:no-control"
         else:
             ok, evid = f'{do}:{a.get("target", "")}' in proven, "probe:control"
-        what = a.get("target") or a.get("term") or a.get("destination") or ""
+        what = a.get("target") or a.get("term") or a.get("destination") \
+            or a.get("key") or ""
         trace.append({"requirement": f"{do} {what}".strip(),
                       "node": f"actions[{i}]",
                       "evidence": evid if ok else "missing", "ok": bool(ok)})
@@ -1429,11 +1521,15 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
     for i, c in enumerate(goal.get("checks") or []):
         if not isinstance(c, dict):
             continue
-        kind = next((k for k in ("see", "count", "any_of", "field",
-                                 "item_in_destination") if k in c), "?")
+        kind = next((k for k in _CHECK_KINDS if k in c), "?")
         if kind == "see":
             ok = f"see:{c['see']}" in proven or any(
                 c["see"] in s for s in runtime)
+        elif kind in ("not_see", "url_contains"):
+            # NOOD_0188 — both are runtime-only by nature: the probe can't
+            # prove an absence, and it never follows the flow to the landing
+            # URL. Verified by the run, so they must appear in `runtime`.
+            ok = any(str(c[kind]) in s for s in runtime)
         elif kind == "count":
             ok = f"count:{c['count']}" in proven or any(
                 c["count"] in s for s in runtime)
@@ -1514,6 +1610,15 @@ def _check_step(c: dict, captions: dict | None = None) -> tuple[str, str | None]
     the capture attaches to the assertion it proves, never a separate step."""
     if "see" in c:
         body, pom = f'the user sees "{c["see"]}"', None
+    elif "not_see" in c:
+        # NOOD_0188 — absence. The empty-state/removal half of a journey
+        # ("the item is gone from the cart", "no error is shown") had no
+        # expressible form, so those goals dropped to hand-written Gherkin.
+        body, pom = f'the user should not see "{c["not_see"]}"', None
+    elif "url_contains" in c:
+        # NOOD_0188 — "the flow landed where it should". Navigation was
+        # driveable from a goal but never assertable from one.
+        body, pom = f'the url should contain "{c["url_contains"]}"', None
     elif "count" in c:
         body, pom = (f"the number in '{c['count']}' should be at least "
                      f"{c.get('min', 1)}", c["count"])
@@ -1529,9 +1634,16 @@ def _check_step(c: dict, captions: dict | None = None) -> tuple[str, str | None]
         cap = (captions or {}).get(c.get("expected_from", ""),
                                    c.get("expected_from", ""))
         body, pom = f'the user sees "{cap}"', None
-    else:
+    elif "any_of" in c:
         name = c.get("name") or "result titles"
         body, pom = f'should see at least {c.get("min", 1)} "{name}"', name
+    else:
+        # NOOD_0188 — was a silent `else: any_of`, so a new kind added to the
+        # tables but not here compiled a bogus count assertion that still
+        # matched the pattern table.
+        raise ValueError(
+            f"_check_step has no branch for check {sorted(c)} — add one for "
+            "the new kind (a fallthrough would compile a wrong assertion)")
     if c.get("evidence") == "screenshot":
         body += " ( take a screenshot )"
     return body, pom
@@ -1539,14 +1651,38 @@ def _check_step(c: dict, captions: dict | None = None) -> tuple[str, str | None]
 
 def _action_step(a: dict, target: str) -> str:
     """`target` is the PROBED canonical control name when one matched — the
-    spelling that actually resolves at run time — else the goal's own."""
-    if a["do"] == "search":
+    spelling that actually resolves at run time — else the goal's own.
+
+    NOOD_0188 — every `do` now has an explicit branch and the tail RAISES.
+    It used to fall through to `select`, so an action added to the tables but
+    not here compiled a plausible-but-wrong select step that still matched the
+    pattern table — i.e. the compiler-agreement test could not catch it."""
+    do = a["do"]
+    if do == "search":
         return f'User searches for "{a["term"]}"'
-    if a["do"] == "click":
+    if do == "click":
         return f'User clicks "{target}"'
-    if a["do"] == "enter":
+    if do == "enter":
         return f'User enters "{a["value"]}" in the "{target}" field'
-    return f'User selects "{a["option"]}" from "{target}"'
+    if do == "select":
+        return f'User selects "{a["option"]}" from "{target}"'
+    if do == "check":
+        return f'User checks the "{target}" checkbox'
+    if do == "uncheck":
+        return f'User unchecks the "{target}" checkbox'
+    if do == "hover":
+        return f'User hovers over the "{target}"'
+    if do == "upload":
+        return f'User uploads "{a["file"]}" to the "{target}"'
+    if do == "press_key":
+        return f'User presses the {a["key"]} key'
+    if do == "pick_date":
+        return f'User selects "{a["date"]}" from the "{target}" calendar'
+    if do == "go_back":
+        return "User goes back"
+    raise ValueError(
+        f"_action_step has no branch for do={do!r} — add one (a silent "
+        "fallthrough would compile a wrong-but-matching step)")
 
 
 def compile_goal(goal: dict, ev: dict, base_url_key: str,
@@ -1698,7 +1834,11 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
                         _emit_check(c)
             continue
         ctrl = None
-        if a["do"] in ("click", "enter", "select"):
+        # NOOD_0188 — every TARGETED action resolves through the probe's
+        # canonical name and gets a POM entry below. This tuple used to be
+        # the three original verbs, so a new targeted action would silently
+        # skip both (unstable locator, no POM key).
+        if a["do"] in _TARGETED_ACTIONS:
             # NOOD_0145 — the evidence pass already resolved this target
             # (exact/synonym/submit rules); reuse ITS verdict so the compiled
             # step names the same control instead of re-matching by substring.

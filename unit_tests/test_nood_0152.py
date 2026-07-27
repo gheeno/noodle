@@ -467,12 +467,25 @@ def test_download_content_reads_the_file(tmp_path):
         actions.assert_download_content(page, [dl], rows=5)
 
 
-def test_download_content_explains_a_binary_file(tmp_path):
-    f = tmp_path / "report.pdf"
-    f.write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe\xfd")
-    dl = SimpleNamespace(path=lambda: str(f), suggested_filename="report.pdf")
-    with pytest.raises(AssertionError, match="not UTF-8 text"):
-        actions.assert_download_content(MagicMock(), [dl], needle="Invoice")
+def test_download_content_reads_a_binary_export(tmp_path):
+    # NOOD_0188 — xlsx/pdf used to be REFUSED here ("not UTF-8 text — assert
+    # the filename instead"); noodle.docparse reads them now, so the enterprise
+    # export case is assertable. A file with no extractable text still fails
+    # honestly, naming that the text was extracted.
+    import zlib
+    pdf = tmp_path / "report.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nstream\n"
+                    + zlib.compress(b"BT (Invoice 42) Tj ET") + b"\nendstream")
+    dl = SimpleNamespace(path=lambda: str(pdf), suggested_filename="report.pdf")
+    actions.assert_download_content(MagicMock(), [dl], needle="Invoice 42")
+    with pytest.raises(AssertionError, match="does not contain"):
+        actions.assert_download_content(MagicMock(), [dl], needle="Credit note")
+
+    empty = tmp_path / "opaque.pdf"
+    empty.write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe\xfd")     # no text to find
+    dl2 = SimpleNamespace(path=lambda: str(empty), suggested_filename="opaque.pdf")
+    with pytest.raises(AssertionError, match="extracted text"):
+        actions.assert_download_content(MagicMock(), [dl2], needle="Invoice")
 
 
 # --- DATES ------------------------------------------------------------------

@@ -41,7 +41,15 @@ from urllib.parse import urlsplit
 _MAX_CLAUSE_LEN = 600   # NOOD_0177 — a prompt clause is a sentence; bounds backtracking
 _BULLET = re.compile(r"^\s*(?:\d+\s*[.)]\s*|[-*•]\s+)")
 _INLINE_NUM = re.compile(r"\s+\d+\s*[.)]\s+")
-_URLISH = re.compile(r"^(?:https?://)?[\w-]+(?:\.[\w-]+)+(?:/\S*)?$", re.I)
+# NOOD_0188 — an explicit scheme accepts ANY host (dotless + port), so a local
+# dev server works: `go to the url http://localhost:3333`. Without a scheme a
+# dot is still required, which is what keeps "go to the cart" a CLICK rather
+# than a navigation. Ports were rejected outright before, so every
+# localhost:PORT / 127.0.0.1:PORT prompt failed with "no URL in the prompt" —
+# i.e. the cheap authoring path couldn't target the app you're developing.
+_URLISH = re.compile(
+    r"^(?:https?://[\w-]+(?:\.[\w-]+)*(?::\d+)?(?:/\S*)?"
+    r"|[\w-]+(?:\.[\w-]+)+(?::\d+)?(?:/\S*)?)$", re.I)
 _ARTICLE = re.compile(r"^(?:a|an|the|any|some)\s+", re.I)
 _ANAPHORA = {"it", "that", "this", "them", "one", "item", "product",
              "the item", "the product", "the result"}
@@ -62,7 +70,11 @@ VERBS_HELP = ("go to / open url / then url <url>; search for <term>; "
               "click <name>; click the suggestion <option> (after a search); "
               "enter <value> in <field>; "
               "select <option> from <list>; add [<item>] to <destination>; "
-              "verify[:] <destination> has <item> | verify <text>; "
+              "check/uncheck <name> checkbox; hover over <name>; "
+              "upload <file> to <field>; press Enter; go back; "
+              "select <date> from the <name> calendar; "
+              "verify[:] <destination> has <item> | verify <text> | "
+              "verify <text> is not visible | verify the url contains <part>; "
               "close popups / location prompt; take a screenshot")
 
 # (kind, compiled regex) — first match wins, order matters: nav-url before
@@ -81,11 +93,34 @@ _VERBS = [
         r"^(?:go(?:es)?\s+to|open(?:s)?|visit(?:s)?|navigate(?:s)?\s+to|"
         r"launch(?:es)?|then)\s+(.+)$", re.I)),
     ("search", re.compile(r"^search(?:es)?(?:\s+for)?\s+(.+)$", re.I)),
+    # NOOD_0188 — go_back before nav so "goes back" is never read as a click.
+    ("go_back", re.compile(
+        r"^(?:go(?:es)?|navigates?)\s+back$", re.I)),
     ("enter", re.compile(
         r"^(?:enter|type|fill)s?\s+(?:in\s+)?[\"']?(.+?)[\"']?\s+"
         r"(?:in|into)\s+(?:the\s+)?(.+)$", re.I)),
+    # NOOD_0188 — checkbox verbs MUST precede `verify`, which already owns the
+    # word "check". Both require the trailing checkbox/box noun so an ordinary
+    # "check the total is 5" stays an assertion.
+    ("uncheck", re.compile(
+        r"^(?:uncheck|untick|clear)s?\s+(?:the\s+)?[\"']?(.+?)[\"']?\s+"
+        r"(?:checkbox|check\s*box|box)$", re.I)),
+    ("check", re.compile(
+        r"^(?:check|tick|ticks)s?\s+(?:the\s+)?[\"']?(.+?)[\"']?\s+"
+        r"(?:checkbox|check\s*box|box)$", re.I)),
+    # NOOD_0188 — pick_date before `select`, whose generic "X from Y" would
+    # otherwise swallow the calendar and target "Departure calendar".
+    ("pick_date", re.compile(
+        r"^(?:select|pick|choose)s?\s+[\"']?(.+?)[\"']?\s+(?:from|in)\s+"
+        r"(?:the\s+)?[\"']?(.+?)[\"']?\s+(?:calendar|date\s*picker)$", re.I)),
     ("select", re.compile(
         r"^selects?\s+(.+?)\s+from\s+(?:the\s+)?(.+)$", re.I)),
+    # NOOD_0188 — upload before add_to (different leading verb, but keep the
+    # file→field shape adjacent to the other two-argument verbs).
+    ("upload", re.compile(
+        r"^uploads?\s+[\"']?(.+?)[\"']?\s+(?:to|into)\s+(?:the\s+)?(.+)$", re.I)),
+    ("hover", re.compile(
+        r"^hovers?\s+(?:over|on)?\s*(?:the\s+)?(.+)$", re.I)),
     ("add_to", re.compile(
         r"^adds?\s*(.*?)\s*to\s+(?:the\s+)?([\w ]+?)$", re.I)),
     # (?!\s*out) — "check out"/"checkout" is a mutation flow, not an
@@ -95,9 +130,22 @@ _VERBS = [
         r"^(?:verif(?:y|ies)|checks?(?!\s*out\b)|confirms?|ensures?|"
         r"make\s+sure|asserts?|(?:should\s+)?sees?)\b\s*:?\s*"
         r"(?:that\s+|if\s+|whether\s+)?(.*)$", re.I)),
+    # NOOD_0188 — press_key before `click`, which owns "press". Restricted to
+    # real key names so "press the Submit button" stays a click.
+    ("press_key", re.compile(
+        r"^(?:press(?:es)?|hits?|types?)\s+(?:the\s+)?"
+        r"(Enter|Return|Tab|Escape|Esc|Space|Backspace|Delete|"
+        r"Arrow\s*Up|Arrow\s*Down|Arrow\s*Left|Arrow\s*Right)"
+        r"(?:\s+key)?$", re.I)),
     ("click", re.compile(
         r"^(?:click|press|tap)s?\s+(?:on\s+)?(.+)$", re.I)),
 ]
+
+# NOOD_0188 — canonical key spellings for press_key (the runtime step wants
+# Playwright's names).
+_KEY_CANON = {"return": "Enter", "esc": "Escape", "arrowup": "ArrowUp",
+              "arrowdown": "ArrowDown", "arrowleft": "ArrowLeft",
+              "arrowright": "ArrowRight"}
 _HAS = re.compile(
     r"^(?:the\s+)?(.+?)\s+(?:has|have|contains?|shows?|includes?|lists?)\s+"
     r"(?:a\s+|an\s+|the\s+)?(.+)$", re.I)
@@ -275,6 +323,20 @@ def _parse_clause(c: dict) -> dict:
         elif kind == "add_to":
             node["item"], node["destination"] = \
                 _clean(m.group(1)), _clean(m.group(2))
+        # NOOD_0188 — the form/navigation verbs.
+        elif kind in ("check", "uncheck", "hover"):
+            node["target"] = _clean(m.group(1))
+        elif kind == "upload":
+            node["file"], node["target"] = \
+                _clean(m.group(1)), _clean(m.group(2))
+        elif kind == "pick_date":
+            node["date"], node["target"] = \
+                _clean(m.group(1)), _clean(m.group(2))
+        elif kind == "press_key":
+            raw = re.sub(r"\s+", "", m.group(1)).casefold()
+            node["key"] = _KEY_CANON.get(raw, m.group(1).strip().title())
+        elif kind == "go_back":
+            pass                      # no payload — the verb IS the action
         elif kind == "verify":
             node["rest"] = m.group(1).strip()
         elif kind == "click":
@@ -450,6 +512,25 @@ def expand(text: str, base_url: str | None = None) -> dict:
             actions.append({"do": "select", "target": n["target"],
                             "option": n["option"]})
             _cover(n, "action")
+        # NOOD_0188 — literal translation, same as the verbs above: the clause
+        # names the action and its target, nothing is inferred.
+        elif n["kind"] in ("check", "uncheck", "hover"):
+            actions.append({"do": n["kind"], "target": n["target"]})
+            _cover(n, "action")
+        elif n["kind"] == "upload":
+            actions.append({"do": "upload", "target": n["target"],
+                            "file": n["file"]})
+            _cover(n, "action")
+        elif n["kind"] == "pick_date":
+            actions.append({"do": "pick_date", "target": n["target"],
+                            "date": n["date"]})
+            _cover(n, "action")
+        elif n["kind"] == "press_key":
+            actions.append({"do": "press_key", "key": n["key"]})
+            _cover(n, "action")
+        elif n["kind"] == "go_back":
+            actions.append({"do": "go_back"})
+            _cover(n, "action")
         elif n["kind"] == "add_to":
             item, dest = n["item"], n["destination"]
             back = [(j, s) for j, s in searches.items() if j < i]
@@ -607,12 +688,38 @@ def expand(text: str, base_url: str | None = None) -> dict:
                 # compiles to `the user sees "<text>"`. Wrapping quotes from
                 # the prompt are part of the quoting, not the text.
                 text = rest.strip()
-                if len(text) > 1 and text[0] == text[-1] and text[0] in "\"'":
-                    text = text[1:-1]
-                check = {"see": text}
-                assumptions.append(
-                    f"step {no} '{n['raw']}': asserting the literal text "
-                    f"'{text}' is visible")
+                # NOOD_0188 — two shapes the `see` fallback cannot express,
+                # both read straight off the clause (no inference):
+                #   "<text> is not visible" / "no <text>"  → not_see
+                #   "the url contains <part>"              → url_contains
+                neg = re.match(
+                    r"^(?:there\s+(?:is|are)\s+)?(?:no|not)\s+(.+)$|"
+                    r"^(.+?)\s+(?:is|are)\s+(?:not|no\s+longer)\s+"
+                    r"(?:visible|shown|displayed|present|there)$",
+                    text, re.I)
+                url_m = re.match(
+                    r"^(?:the\s+)?(?:url|address|link)\s+"
+                    r"(?:contains?|includes?|has|is|ends?\s+with)\s+(.+)$",
+                    text, re.I)
+                if url_m:
+                    part = _clean(url_m.group(1)).strip("\"'")
+                    check = {"url_contains": part}
+                    assumptions.append(
+                        f"step {no} '{n['raw']}': asserting the URL contains "
+                        f"'{part}'")
+                elif neg:
+                    gone = _clean(neg.group(1) or neg.group(2)).strip("\"'")
+                    check = {"not_see": gone}
+                    assumptions.append(
+                        f"step {no} '{n['raw']}': asserting '{gone}' is NOT "
+                        "visible")
+                else:
+                    if len(text) > 1 and text[0] == text[-1] and text[0] in "\"'":
+                        text = text[1:-1]
+                    check = {"see": text}
+                    assumptions.append(
+                        f"step {no} '{n['raw']}': asserting the literal text "
+                        f"'{text}' is visible")
             if n["evidence"] or pending_evidence:
                 check["evidence"] = "screenshot"
                 pending_evidence = False
@@ -661,8 +768,16 @@ def expand(text: str, base_url: str | None = None) -> dict:
             labels.append(f"suggestion '{a['option']}' for '{a['term']}'")
         elif a["do"] == "add_to":
             labels.append(f"add to {a['destination']}")
-        elif a["do"] in ("click", "enter", "select"):
-            labels.append(f"{a['do']} {a.get('target', '')}".strip())
+        elif a["do"] == "press_key":
+            labels.append(f"press {a['key']}")
+        elif a["do"] == "go_back":
+            labels.append("go back")
+        elif a["do"] in ("click", "enter", "select", "check", "uncheck",
+                         "hover", "upload", "pick_date"):
+            # NOOD_0188 — every targeted verb reaches the scenario title; a
+            # missing branch silently dropped the action from the name.
+            labels.append(f"{a['do'].replace('_', ' ')} "
+                          f"{a.get('target', '')}".strip())
     for c in checks:
         if "item_in_destination" in c:
             labels.append(f"verify {c['item_in_destination']}")
@@ -720,7 +835,10 @@ def review_contract(exp: dict) -> dict:
     # editor) may not invent a click/enter/select label
     text = " ".join(c["text"] for c in exp.get("clauses") or [])
     for a in norm.get("actions") or []:
-        if a.get("do") in ("click", "enter", "select") and a.get("target"):
+        # NOOD_0188 — every TARGETED verb is gated, not just the original
+        # three: an ungated one could have its control label invented by the
+        # model fallback with no source clause behind it.
+        if a.get("do") in goal_mod._TARGETED_ACTIONS and a.get("target"):
             if not _overlaps(a["target"], text):
                 problems.append(
                     f'{a["do"]} "{a["target"]}" has no source clause — '
