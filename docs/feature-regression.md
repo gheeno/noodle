@@ -1,8 +1,8 @@
 # Feature-generation regression benchmark (NOOD_0185)
 
 Not a unit test. An end-to-end "is the core product still good" check:
-two fixed plain-English prompts → authored `.feature` files → green verified
-runs — measured on **time**, **accuracy** and **size**, per test case and on
+three fixed test cases → authored `.feature` files → green verified runs —
+measured on **time**, **accuracy** and **size**, per test case and on
 average. It exists so that after new engine capabilities land, one command
 tells you whether the thing Noodle is actually for — fast, correct test
 generation — regressed.
@@ -25,7 +25,7 @@ noodle feature-regression --score results.json   # re-score an existing run
 
 Exit **0 = PASS, 1 = REGRESSED**. One call from anywhere — a bare terminal,
 Claude Code, Copilot CLI — does the whole thing: scaffolds a fresh workspace,
-authors and runs both canonical prompts, runs them again combined onto one
+authors and runs all three canonical cases, runs them again combined onto one
 Allure + RCA, scores, serves, prints the table.
 
 ```
@@ -33,10 +33,11 @@ Allure + RCA, scores, serves, prints the table.
    workspace: /…/regression_runs/20260727-101500_1.0.0a6_6859c75
 
    TEST CASE                  GENERATE    RUN   CORR  LINES  GREEN  VERIFIED
-   tc1_search_suggestion             9s     7s      1      8  ✅     ✅
-   tc2_account_textboxes            11s    12s      0     12  ✅     ✅
+   tc1_search_suggestion           4.8s    14s      1     10  ✅     ✅
+   tc2_account_textboxes           4.9s    12s      0     15  ✅     ✅
+   tc3_api_seeds_ui_verifies       1.5s     1s      0      —  ✅     ✅
    ────────────────────────────────────────────────────────────────────────
-   average                          10s   9.5s    0.5     10
+   average                        3.73s     9s   0.33   12.5
 
    VERDICT: PASS
 
@@ -73,15 +74,33 @@ A stale install still refuses up front (`run \`noodle update\` first`): the
 folder is stamped with the **checkout's** version, so measuring a lagging
 install would file the results under code that never ran.
 
-The test cases live in `noodle/regression.py` (`PROMPTS`): **both are
-numbered plain-English prompts** — the benchmark must generate the way a
-human or agent actually asks (an AC, not a convenience). tc1 exercises the
-typeahead flow (`click the suggestion <option>` after a search — prompt
-vocabulary since NOOD_0185), tc2 click-navigation + plain-text verifies,
-both against Wikipedia — live but automation-friendly, so the benchmark can
-go green from any machine. If the site drifts, update the content there;
-never bend the scoring. The scoring doesn't care what the prompts say, only
-what they cost — any pair works for a demo.
+The test cases live in `noodle/regression.py` (`PROMPTS`) — all against
+Wikipedia, live but automation-friendly, so the benchmark can go green from
+any machine. If the site drifts, update the content there; never bend the
+scoring.
+
+## The three canonical cases
+
+| # | Mode | What it covers |
+|---|---|---|
+| `tc1_search_suggestion` | numbered prompt | typeahead suggestion, popup tolerance, plain-text assertion |
+| `tc2_account_textboxes` | numbered prompt | click-navigation across pages, multiple field assertions |
+| `tc3_api_seeds_ui_verifies` | `feature_content` | **cross-wok** — fetch over REST, chain `{var:}` into a web step, assert it rendered |
+
+tc1/tc2 are the plain-English path a human or agent actually sends. tc3
+(NOOD_0191) is the other real shape: *"get the data from the API, then prove
+the UI shows it"* — the most common mix in a real suite, because most UI is
+an API with a face on it. It exercises the REST client, `{var:}` chaining
+from a response field into a later web step, `{env:}` across both step
+families in one scenario, and the `feature_content` authoring door that
+nothing else here touches. Verified by mutation when it landed: breaking
+`rest_extract_json` turns tc3 red and leaves tc1/tc2 green.
+
+It is `feature_content` because that is the honest path for a cross-wok test
+today — the prompt/goal compiler is web-only, so this genuinely is
+hand-authored Gherkin. And it is tagged `@web`, **not** `@api`: `@api` means
+"start no browser", which would kill the UI half. REST steps need no tag at
+all ([woks.md](woks.md#the-api-wok-is-a-lifecycle-not-a-gate)).
 
 ## What each measurement means
 
@@ -94,8 +113,8 @@ driving agent.
 | `run_s` | `run.seconds` | The generated test's own execution time. |
 | `development_s` | **derived:** `elapsed_s − run_s` | How long *generation* took. This is what the time budget applies to. |
 | `corrections` | `run.healing_events` + `run.flaky` + re-author passes | The engine's own repair signals: a locator that needed self-healing, a scenario that needed a retry, a re-author because `ready` came back false. Never a self-report — last session tc1 claimed `corrections: 0` while the run log recorded a real heal (`locator 'search', strategy visible-filter, multiple matches, exactly one visible`). The engine knew; the old protocol never asked. |
-| `lines` | `author.compiled.feature` + `author.compiled.pom` line count | The simplicity signal: *are we still generating simple `.feature` files*. Reported, not gated — if generation starts padding features with extra steps or POM entries, this moves. Stdlib `splitlines()`, zero dependencies, always present. |
-| `green` / `verified` | `run.failed`, `run.verified`, `author.intent_verified` | The run contract: `failed == 0` **and** `verified: true` **and** the intent contract held. A pass held up by fuzzy healing or lenient matching is not a pass. |
+| `lines` | `author.compiled.feature` + `author.compiled.pom` line count | The simplicity signal: *are we still generating simple `.feature` files*. Reported, not gated — if generation starts padding features with extra steps or POM entries, this moves. `—` for a `feature_content` case (tc3): nothing was generated, so there is nothing to count, and it is excluded from the average rather than counted as zero. |
+| `green` / `verified` | `run.failed`, `run.verified`, `author.intent_verified` | The run contract: `failed == 0` **and** `verified: true` **and** the intent contract held. A pass held up by fuzzy healing or lenient matching is not a pass. `intent_verified` asks "did the *compiled* goal match probe evidence", so it applies to the prompt cases only — tc3's Gherkin states its intent literally, and there `run.verified` is the whole bar. |
 
 Accuracy has a human half too: the HIL (or a reviewing agent) reads the
 generated `.feature` against the prompt — steps match the intent, assertions
@@ -157,27 +176,27 @@ did it. Confirm before blaming:
 If numbers look absurd or the behavior looks old, first suspect a stale
 install shadowing the checkout — `noodle doctor`.
 
-## Live drill — the original retail-site pair
+## Live drill — a real retail site
 
-The benchmark was born from two Canadian Tire prompts. They remain the
-harder, site-specific drill — run them the same way when you want realism
-over repeatability (their search API bot-gates automated browsers from
-ordinary machines: `net::ERR_ABORTED` on the results XHR, headed and
-headless alike, so expect red for site reasons):
+The benchmark grew out of a pair of prompts against a live retail store
+front. Templates below: substitute your own site and its real copy. This is
+the harder, site-specific drill — run it the same way when you want realism
+over repeatability. Expect red for *site* reasons rather than engine ones:
+most retail search APIs bot-gate automated browsers from ordinary machines
+(`net::ERR_ABORTED` on the results XHR, headed and headless alike).
 
 ```
-1. Go to the URL https://www.canadiantire.ca/en.html
+1. Go to the URL https://<your-retail-site>/en.html
 2. Close any popup that may appear
 3. Use the search bar, search for "Vaccu" (needs to be incomplete)
 4. Then a suggestion bar appears below the search bar
 5. Click the suggestion "Vaccum cleaner"
 6. Then the results page appears with these products:
-   "BISSELL® PowerLifter® FurFinder™ Cordless Self-Standing Stick Vacuum" and
-   "Hoover WindTunnel 2 Bagless Upright Vacuum"
+   "<exact product title 1>" and "<exact product title 2>"
 ```
 
 ```
-1. Go to the URL https://www.canadiantire.ca/en.html
+1. Go to the URL https://<your-retail-site>/en.html
 2. Close all the popups that may appear, including geolocation
 3. Click the order status
 4. On the next page verify you see the two textboxes with

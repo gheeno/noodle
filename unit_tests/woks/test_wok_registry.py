@@ -1,7 +1,7 @@
 """NOOD_0155 — the wok registry: Noodle's formal capability-domain concept.
 
 unit_tests/woks/ is the per-wok isolation boundary: each wok's tests live in
-their own subfolder (web/, mobile/, desktop/, performance/) so capability work
+their own subfolder (web/, api/, mobile/, desktop/, performance/) so capability work
 on one wok can be regression-checked alone (`pytest unit_tests/woks/desktop`)
 without cross-contaminating the others. This file covers the concept itself.
 """
@@ -9,8 +9,10 @@ from noodle import wok
 from noodle.hooks import appium_platform
 
 
-def test_the_four_woks_exist():
-    assert set(wok.WOKS) == {"web", "mobile", "desktop", "performance"}
+def test_the_five_woks_exist():
+    # NOOD_0191 — api split out of web: it is browserless (hooks returns
+    # before any browser launch), so it was never a mode of the web wok.
+    assert set(wok.WOKS) == {"web", "api", "mobile", "desktop", "performance"}
 
 
 def test_every_wok_is_fully_described():
@@ -38,7 +40,8 @@ def test_routing_precedence_matches_the_engine():
         ("ios",): "mobile",
         ("windows",): "desktop",       # Appium native desktop
         ("mac",): "desktop",
-        ("api",): "web",               # REST rides in the web wok
+        ("api",): "api",               # browserless — its own wok (NOOD_0191)
+        ("web", "api"): "api",         # @api wins: it means no browser
         ("terminal", "web"): "web",    # browser-embedded terminal (OCR bridge)
         ("mobile",): "web",            # @mobile = Playwright device EMULATION
         ("mobile", "android"): "web",  # @mobile wins — pre-NOOD_0032 meaning

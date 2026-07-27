@@ -139,7 +139,7 @@ deletes the whole tree; `noodle archive` zips it to `archives/artifacts_<timesta
 | `docs/feature-packages.md` | Per-app packaging: `features/`, `resources/`, resolution order, in-repo vs external workspace |
 | `docs/steps_dictionary.md` | All built-in step patterns with phrasings and examples |
 | `docs/architecture.md` | Deep dive: components, resolution hierarchy, the LLM layer |
-| `docs/woks.md` | The wok concept — the four capability work areas (web/mobile/desktop/performance), routing tags, cross-wok composition, per-wok unit tests |
+| `docs/woks.md` | The wok concept — the five capability work areas (web/api/mobile/desktop/performance), routing tags, cross-wok composition, per-wok unit tests |
 | `docs/design-history.md` | Rationale behind each capability, condensed from the build phases |
 | `docs/agent-playbook.md` | **The** canonical AI-agent guide — workspace routing, Gherkin/tag vocabulary, steps-dictionary/POM resolution pipeline, mandatory RCA+Allure reporting, edge cases. `.github/copilot-instructions.md` and `CLAUDE.md` both point here |
 | `.github/copilot-instructions.md` | Copilot-native digest of the playbook above (Copilot auto-loads this path) |

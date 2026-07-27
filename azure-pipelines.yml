@@ -178,14 +178,15 @@ jobs:
           # NOOD_0187 — pinned transitive deps (uv.lock → constraints.txt).
           pip install -e ".[all,llm]" -c constraints.txt
           playwright install chromium --with-deps
-          # NOOD_0039 — Allure 3 CLI (npm package `allure`, replaces the Java
-          # allure-commandline 2.x). Reads our allure2-format result JSON as-is.
-          # NOOD_0046 — pinned exact: agent-local registries have shadowed the
-          # `allure` bin name with the wrong package before; a floating ^3 also
-          # lets minor bumps change report/history behaviour mid-week.
-          sudo npm install -g allure@3.14.1
         displayName: Install Noodle
         workingDirectory: $(Build.SourcesDirectory)
+
+      # NOOD_0191 — the same hardened Allure install the project-repo template
+      # uses (ci/azure/steps-allure-cli.yml): no `sudo npm -g`, exact version
+      # into a workspace dir, and the RESOLVED bin verified before it goes on
+      # PATH. This pipeline shipping the advice it doesn't follow was how the
+      # sudo/bin-collision failures kept being rediscovered downstream.
+      - template: ci/azure/steps-allure-cli.yml
 
       # NOOD_0042 — BusterBlock (sample_feature_tests/web/busterblock/) is the bundled
       # Node/Express test app, not a real remote site. It must be started
@@ -339,10 +340,7 @@ jobs:
     condition: always()
     steps:
       - checkout: none
-      - script: |
-          sudo npm install -g allure@3.14.1
-          test "$(allure --version)" = "3.14.1"
-        displayName: 'Install Allure 3 CLI (pinned)'
+      - template: ci/azure/steps-allure-cli.yml
       - task: DownloadPipelineArtifact@2
         inputs:
           patterns: 'allure-results-*/**'

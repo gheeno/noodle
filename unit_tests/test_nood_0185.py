@@ -16,8 +16,19 @@ def _tc(**over):
     return {**base, **over}
 
 
+def _full(*over):
+    """One healthy measurement per CANONICAL case, so a test about budgets
+    never trips the "all cases measured" guard. Sized off PROMPTS, not a
+    literal — NOOD_0191 added tc3 and every 2-case fixture regressed."""
+    cases = [_tc(id=p["id"]) for p in regression.PROMPTS]
+    for i, changes in enumerate(over):
+        if changes:
+            cases[i] = {**cases[i], **changes}
+    return {"test_cases": cases}
+
+
 def test_pass_within_budget():
-    v = regression.score({"test_cases": [_tc(), _tc(id="tc2_account_textboxes")]})
+    v = regression.score(_full())
     assert v["verdict"] == "PASS" and v["regressions"] == []
     assert v["average"]["lines"] == 9
 
@@ -49,18 +60,21 @@ def test_development_time_excludes_run_time():
     not fail a fast authoring."""
     v = regression.score({"test_cases": [
         _tc(elapsed_s=130, run_s=100),                       # 30s development
-        _tc(id="tc2_account_textboxes", run_s=10)]})         # 10s development
+        _tc(id="tc2_account_textboxes", run_s=10),
+        _tc(id="tc3_api_seeds_ui_verifies", run_s=10)]})     # 10s development
     assert v["verdict"] == "PASS"
     assert v["test_cases"][0]["development_s"] == 30
     v2 = regression.score({"test_cases": [
-        _tc(elapsed_s=150, run_s=5), _tc(id="tc2_account_textboxes")]})
+        _tc(elapsed_s=150, run_s=5), _tc(id="tc2_account_textboxes"),
+        _tc(id="tc3_api_seeds_ui_verifies")]})
     assert any("slow development" in r for r in v2["regressions"])
 
 
 def test_budget_env_overrides(monkeypatch):
     monkeypatch.setenv("NOODLE_REG_MAX_CORRECTIONS", "9")
     v = regression.score({"test_cases": [
-        _tc(corrections=5), _tc(id="tc2_account_textboxes", corrections=5)]})
+        _tc(corrections=5), _tc(id="tc2_account_textboxes", corrections=5),
+        _tc(id="tc3_api_seeds_ui_verifies", corrections=5)]})
     assert v["verdict"] == "PASS"
 
 
@@ -202,7 +216,7 @@ def test_a_regressed_run_exits_1(tmp_path, monkeypatch):
 def test_score_writes_verdict_next_to_results(tmp_path):
     results = tmp_path / "results.json"
     results.write_text(json.dumps(
-        {"test_cases": [_tc(), _tc(id="tc2_account_textboxes")]}))
+        _full()))
     out = CliRunner().invoke(cli.app, ["feature-regression", "--score", str(results)])
     assert out.exit_code == 0
     assert json.loads((tmp_path / "verdict.json").read_text())["verdict"] == "PASS"

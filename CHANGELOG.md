@@ -4,6 +4,132 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a7] — 2026-07-27
+
+**NOOD_0191** — feature: AI-SDLC ready without MCP — `noodle task`, a
+consumable project-repo pipeline template, and public-safety redaction.
+
+Noodle could already do every job an AI SDLC needs; it had two missing
+doorways. An agent that has never read the docs had no entry point that
+tolerated its phrasing, and a project repo wanting to run its own tests had to
+copy 400 lines of hard-won Allure wiring. Both are closed here. No LLM call is
+added anywhere — the execution path makes zero by construction, and the
+authoring path stays deterministic.
+
+- **`noodle task "<any text>"`** — one door, five intents (generate / update /
+  run / report / verdict) chosen by a deterministic keyword scan and
+  dispatched to commands that already exist. No recognized verb defaults to
+  generate. Adds no authoring logic.
+- **The refusal is the feature.** Text that can't be compiled comes back with
+  `need`, `next` and the grammar instead of a guess, so the caller — already
+  an LLM — fills the gap and re-sends in one round trip. An "already exists"
+  refusal says `need: ["overwrite"]`, not "rewrite your prompt". A routing
+  sentence in front of a step list (`create a test: 1. Go to …`) is stripped
+  before compiling; it reached the grammar as step 1 and was refused.
+- **`noodle task --contract`** — intents, prompt grammar, goal vocabulary and
+  the envelope schema in one bounded payload, so an agent that isn't Claude
+  Code or Copilot (and so can't read the skill card) fetches the contract once
+  instead of learning it through rejections.
+- **`ci/azure/noodle-tests.yml`** — a jobs template a project repo consumes in
+  ~12 lines: it clones the engine pinned by tag, installs it with the engine's
+  own `constraints.txt` (base deps, not `.[all,llm]`), shards by feature file,
+  runs headless, and publishes the Allure tab, Tests tab, RCA and artifacts.
+  Secrets are one knob — `keyVaultUrl` — with `secretEnv` as the escape hatch,
+  replacing the per-key list that made the old pipeline unreusable.
+- **Self-hosted agent hardening**, shared by the template and this repo's own
+  pipeline (`ci/azure/steps-allure-cli.yml`): no `sudo npm -g`, the Allure CLI
+  installed by exact version into a workspace dir with its *resolved* binary
+  version-verified before it reaches PATH, and a portable Node provisioned
+  when the agent's is older than 20. Shipping advice we didn't follow was how
+  these kept being rediscovered downstream.
+- **CI is headless only.** Nobody can watch a browser in a build agent, so the
+  template has no `--headed` knob and a test keeps one from growing back.
+  Headed stays the local demo path.
+- **Stops the framework denying capabilities it has.** A developer added the
+  skill to their work repo, asked for API tests, and the agent refused —
+  *"Noodle is a web UI testing framework… use pytest, RestAssured or
+  Postman"*. Flatly wrong: Noodle is a universal BDD framework and has
+  shipped browserless REST testing since NOOD_0007 (GET/POST/PUT/PATCH/DELETE, bearer/basic/apikey/oauth2,
+  status+body+header asserts, JSON extraction and variable chaining, payload
+  files, five worked sample features). The agent was reasoning correctly from
+  what it had been shown: every always-on surface opened "Playwright+behave
+  BDD", and `@api` appeared once inside a ten-tag list. All of them now name
+  the wok and say **never refuse a non-web ask** — skill cards (both hosts),
+  `AGENTS.md`, and `noodle task`'s contract.
+- **API is now its own wok — Noodle is universal, not web-with-extras.** It
+  had been filed under the web wok on the grounds that REST "shares the web
+  session lifecycle". It never did: `hooks.before_scenario` nulls the page and
+  returns before any browser launch for `@api`, so an API suite runs on a CI
+  image with no Playwright installed. Five woks now — **web · api · mobile ·
+  desktop · performance** — each standing alone, none a sub-mode of another
+  (`noodle/wok.py`, `docs/woks.md`, `noodle wok`). `@api` routes to `api` and
+  beats `@web` when both are present, matching what the runtime already did.
+- **Verified: API and UI steps mix freely in one scenario** — "seed data over
+  REST, then assert it rendered" is the most common real pattern, and it works
+  today. Proven live: a `@web` scenario doing GET → extract `{var:}` →
+  navigate → assert went green. The trap is the tag, now documented in
+  `docs/woks.md § Cross-wok composition`: **`@api` does not mean "contains API
+  steps", it means "no browser at all"** — tag a mixed scenario `@web`. REST
+  steps are browserless by action-type prefix, so they already run in any
+  scenario; mistagging removes the browser and the first web step fails with a
+  clear message (also verified). `unit_tests/woks/api/` guards the prefix rule
+  and the naming convention it depends on.
+- **`noodle feature-regression` gains tc3 — the cross-wok case.** The
+  benchmark had two prompt cases and nothing covering the shape a real suite
+  uses most: fetch over REST, chain `{var:}` into a web step, assert it
+  rendered. `tc3_api_seeds_ui_verifies` covers the REST client, `{var:}`
+  chaining across step families, `{env:}` in both, and the `feature_content`
+  authoring door nothing else here touched. Verified by mutation: breaking
+  `rest_extract_json` turns tc3 red and leaves tc1/tc2 green.
+  `_case()` now dispatches on `mode` (it declared the key but never read it),
+  and two measurements are mode-aware rather than wrong: `intent_verified` is
+  `goal is not None and not blocking`, so demanding it for hand-authored
+  Gherkin would score tc3 red forever — there `run.verified` is the whole bar;
+  and `lines` reports `—` instead of `0`, because nothing was *generated* to
+  count and a zero would drag the average with a number never measured.
+- **The API wok is a lifecycle, not a gate** — documented explicitly, because
+  promoting it to a wok risks re-implying the silo just removed. REST steps
+  are plain I/O available in *every* scenario with no tag at all, the same
+  class of thing as `run_command` or a JDBC call to seed a fixture: the runner
+  refuses a step only when `page is None`, and `rest_*` is exempt there too,
+  so REST is never gated anywhere. `@api` is purely an opt-out from starting a
+  browser — a CI-image-size and startup-cost decision. Pinned by a test, so a
+  future change can't quietly make the tag a precondition. Honest gap recorded
+  alongside it: there is no native SQL/DB step family yet — database setup
+  goes through `run_command`/`run_script` today.
+- `noodle task` routes a non-web ask to its wok instead of refusing it with
+  web grammar: an API request returns `wok: "api"` with copy-ready REST step
+  syntax and `next: "supported — this is the api wok"`. Same for
+  mobile/desktop. Web prompts are unaffected.
+- Instruction-budget ledger: claude skill card 5888 → 6144, copilot 6144 →
+  6304. The §7 exception applies more strongly here than anywhere it has
+  before — an agent must know a capability exists before it will spend a call
+  looking it up, and this one never made a second call. A first attempt paid
+  for the bytes by deleting the probe narrow-exemption sentence;
+  `test_nood_0101`/`test_nood_0136` refused it, correctly — that is the
+  131-AIC session's lesson, not spare bytes. `AGENTS.md` absorbed its scope
+  line inside its cap, and the NOOD_0160 headroom floor forced three genuine
+  content moves rather than a spend (`after:` anchoring and `inspect_locator`
+  to the playbook, the `--spec -` heredoc tip added to playbook §2).
+- Redacts employer-specific references from the public repo: the live-drill
+  prompts in `docs/feature-regression.md` become site-neutral templates, and
+  the matching comments in `noodle/regression.py` / this changelog say
+  "retail-store pair". No corp agent pools, hostnames or org names remain.
+- Release tags are now `1.0.0aN` → `1.0.0bN` → `1.0.0`, no `v` prefix
+  (CONTRIBUTING.md); the obsolete `v`-prefixed tag is gone. A consuming
+  project pins `ref: refs/tags/<version>`.
+- Docs: `docs/ci-project-repo.md` (the walkthrough),
+  `ci/azure/example-project-pipeline.yml` (copy-paste consumer),
+  `docs/cli-reference.md § noodle task`, and `docs/ai-sdlc-integration.md`
+  rewritten around project-repo-owns-its-tests with a CLI-door section for
+  networks where MCP isn't allowed. Background and the deferred items:
+  `docs/todo/nood-0191-ai-sdlc-cli-plan.md`.
+- `unit_tests/test_nood_0191.py` — a routing table of real off-template
+  prompts, plus drift guards over the pipelines: no resurrected `sudo npm`, no
+  bare `allure` invocation, and the CLI pin identical across all five files
+  that name it (both the literal `allure@X.Y.Z` form and the template
+  parameter default — reading only the first let the templates drift).
+
 ## [1.0.0a6] — 2026-07-27
 
 **NOOD_0190** — feature: `noodle feature-regression` runs the benchmark in one
@@ -361,7 +487,7 @@ Pin `1.0.0a*` expecting the web wok to hold and the rest to move.
 Unit tests prove functions; nothing proved the product. New on-demand
 benchmark: two fixed "super easy" test cases against Wikipedia (live but
 automation-friendly — typeahead suggest via goal spec, click-nav +
-plain-text verifies via numbered prompt; the original Canadian Tire pair
+plain-text verifies via numbered prompt; the original retail-store pair
 stays in the doc as a live drill, its search API bot-gates automated
 browsers) → one `noodle author … --run` each → both on ONE served
 Allure + RCA report, measured per test case on time, host AIC, corrections,

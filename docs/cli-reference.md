@@ -306,7 +306,7 @@ Clipboard (Phase Q)
 
 ## noodle wok
 
-List Noodle's woks — the four capability work areas (NOOD_0155) — or inspect
+List Noodle's woks — the five capability work areas (NOOD_0155) — or inspect
 one.
 
 ```
@@ -492,6 +492,49 @@ noodle record [OPTIONS]
 | `--output`, `-o` | `noodle_tests/recorded.feature` | Path to write the generated `.feature` file | Recording into a specific app's test folder instead of the default. |
 | `--name`, `-n` | `Recorded Feature` | Feature/scenario name | Naming the recorded scenario meaningfully instead of the default placeholder. |
 | `--workspace`, `-w` | `.` | Workspace dir | See top of doc. |
+
+## noodle task
+
+One door for a driving agent (NOOD_0191): free text in, one JSON envelope
+out. A deterministic keyword scan picks the intent — `generate`, `update`,
+`run`, `report` or `verdict` — and dispatches to the command you'd have run
+yourself. No recognized verb defaults to `generate`. It adds no authoring
+logic and makes **no LLM call**.
+
+```
+noodle task "<text>" [OPTIONS]
+noodle task --contract          # the calling contract, once, up front
+```
+
+| Flag | Default | Purpose | When to use |
+|---|---|---|---|
+| `--workspace`, `-w` | `.` | Workspace dir | See top of doc. |
+| `--tag`, `-t` | — | Filter a run to this tag | Routing to `run` and you want a subset. |
+| `--headed` | off | Visible browser | Local demo. CI and containers stay headless. |
+| `--no-serve` | off | Don't host the reports afterwards | CI, where the artifact is the deliverable. |
+| `--contract` | off | Print intents, prompt grammar, goal vocabulary and the envelope schema, then exit | Fetch **once** from a new agent instead of learning the grammar through rejections. |
+| `--json` / `--no-json` | `--json` | One bounded envelope, or a short human summary | `--no-json` when a person is reading it. |
+
+Exit 0 when `ok` is true, 1 otherwise.
+
+**Why it exists.** Every other entry point assumes the caller already knows
+which command it wants. That's false for an AI-SDLC agent that has never read
+these docs and sends *"write me a regression test for the checkout discount
+and tell me if it passes"*. Rather than guess, a refusal says exactly what's
+missing:
+
+```json
+{ "ok": false, "intent": "generate",
+  "need": ["base_url"],
+  "grammar": "go to <url>; search for <term>; click <name>; …",
+  "next": "re-send with a URL and numbered steps that use the grammar" }
+```
+
+The caller fills `need` and re-sends. Noodle never invents a URL or a control
+name — surface facts come from the prompt or from probe evidence, never from
+translation. A routing sentence in front of a step list (`create a test: 1. Go
+to …`) is stripped before compiling, since that sentence is what routed the
+call.
 
 ## noodle summary
 

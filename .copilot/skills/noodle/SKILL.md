@@ -1,6 +1,6 @@
 ---
 name: "noodle"
-description: "Author and run Noodle BDD tests — .feature syntax, tags, parameterization, POM files, env/secrets files, running with --headed/--headless/--parallel, and the mandatory Allure + RCA reporting step. Use whenever asked to write, update, or run a test with the Noodle framework, via the CLI, noodle repl, or the noodle MCP server."
+description: "Author and run Noodle BDD tests — web UI (Playwright) AND REST/API (`@api`, browserless), plus mobile/desktop; .feature syntax, tags, POM files, env/secrets, --headed/--headless/--parallel, and the mandatory Allure + RCA reporting step. Use whenever asked to write, update, or run any test with the Noodle framework, via the CLI, noodle repl, or the noodle MCP server."
 domain: "testing"
 confidence: "high"
 source: "team-decision"
@@ -8,9 +8,12 @@ source: "team-decision"
 
 # Noodle — agent skill
 
-Playwright+behave BDD: plain-English Gherkin matched to a curated
-pattern table (no step code); locators: accessible-name →
-POM yaml → self-heal; every run writes Allure + RCA. Deep dive:
+Universal BDD, plain-English Gherkin on a curated pattern table (no
+step code). Independent woks, none a sub-mode of another: **web** UI
+(Playwright) · **api** REST, browserless, `@api`
+(`read_docs('steps_dictionary', query='REST')`) · mobile · desktop ·
+perf. Never say Noodle can't — check the wok first. Locators: accessible-name → POM yaml →
+self-heal; every run writes Allure + RCA. Deep dive:
 `read_docs('agent-playbook')`.
 
 Nouns: engine = framework repo/install; workspace = `noodle init` test

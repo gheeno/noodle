@@ -1,0 +1,87 @@
+# NOOD_0191 — install the Allure 3 CLI so it survives a locked-down
+# self-hosted agent. Three failure modes, all seen in the wild, all handled
+# here so no consumer has to rediscover them:
+#
+#   1. `sudo npm install -g` assumes sudo exists. On a hardened corporate
+#      agent it does not, and the step dies before any test runs.
+#   2. A global install lets an agent-local npm registry shadow the `allure`
+#      bin name with an entirely different package — the report then silently
+#      fails to generate, or generates something that isn't Allure.
+#   3. Self-hosted agents ship an ancient system Node (v10 seen). Allure 3's
+#      dependencies need >= 20, and UseNode@1's tool-cache download is
+#      unreliable on those same agents.
+#
+# So: provision a portable Node when the agent's is too old, install allure by
+# EXACT version into a workspace-local dir, verify the resolved binary really
+# is that version, and put only that verified binary on PATH.
+#
+# ponytail: the version pin lives here as a parameter default, not in a shared
+# file — Azure templates can't read one at compile time. unit_tests/
+# test_nood_0191.py fails if this pin drifts from the other pipelines, which
+# is cheaper than machinery to prevent the drift.
+parameters:
+  - name: allureVersion
+    type: string
+    default: '3.14.1'
+  - name: nodeVersion
+    type: string
+    default: 'v20.18.1'
+
+steps:
+  - task: Cache@2
+    displayName: 'Cache portable Node'
+    continueOnError: true
+    inputs:
+      key: 'noodle-node | "$(Agent.OS)" | "${{ parameters.nodeVersion }}"'
+      path: $(Pipeline.Workspace)/.node
+
+  - task: Cache@2
+    displayName: 'Cache npm (Allure CLI)'
+    continueOnError: true
+    inputs:
+      key: 'noodle-allure | "$(Agent.OS)" | "${{ parameters.allureVersion }}"'
+      path: $(Pipeline.Workspace)/.npm
+
+  - bash: |
+      set -euo pipefail
+
+      NODE_HOME="$(Pipeline.Workspace)/.node"
+      MAJOR=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+      if [ "$MAJOR" -lt 20 ]; then
+        if [ ! -x "$NODE_HOME/bin/node" ]; then
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64)  PLAT=linux-x64 ;;
+            Linux-aarch64) PLAT=linux-arm64 ;;
+            Darwin-arm64)  PLAT=darwin-arm64 ;;
+            Darwin-x86_64) PLAT=darwin-x64 ;;
+            *) echo "##[error]No portable Node build for $(uname -s)-$(uname -m). Bake Node >= 20 into the agent image."; exit 1 ;;
+          esac
+          echo "[node] agent node is $(node -v 2>/dev/null || echo absent) — fetching portable ${{ parameters.nodeVersion }} ($PLAT)"
+          mkdir -p "$NODE_HOME"
+          curl -fsSL "https://nodejs.org/dist/${{ parameters.nodeVersion }}/node-${{ parameters.nodeVersion }}-$PLAT.tar.xz" \
+            | tar -xJ -C "$NODE_HOME" --strip-components=1
+        else
+          echo "[node] using cached portable Node at $NODE_HOME"
+        fi
+        echo "##vso[task.prependpath]$NODE_HOME/bin"
+        export PATH="$NODE_HOME/bin:$PATH"
+      fi
+      echo "[node] $(node -v) at $(command -v node)"
+
+      export npm_config_cache="$(Pipeline.Workspace)/.npm"
+      CLI_DIR="$(Pipeline.Workspace)/.allure-cli"
+      npm install --no-save --no-audit --no-fund \
+        --prefix "$CLI_DIR" allure@${{ parameters.allureVersion }}
+
+      ALLURE_BIN="$CLI_DIR/node_modules/.bin/allure"
+      GOT="$("$ALLURE_BIN" --version 2>/dev/null || true)"
+      if [ "$GOT" != "${{ parameters.allureVersion }}" ]; then
+        echo "##[error]Resolved Allure CLI is '$GOT', expected ${{ parameters.allureVersion }} — an agent-local npm registry is shadowing the 'allure' bin name."
+        exit 1
+      fi
+      echo "[allure] $GOT at $ALLURE_BIN"
+
+      # noodle's report builder resolves `allure` via shutil.which, so put the
+      # VERIFIED binary on PATH for every later step in this job.
+      echo "##vso[task.prependpath]$CLI_DIR/node_modules/.bin"
+    displayName: 'Install Allure 3 CLI (pinned, no sudo)'

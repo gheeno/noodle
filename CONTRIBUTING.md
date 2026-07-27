@@ -31,6 +31,25 @@ Short description
 
 `worktype`: `feature` / `fix` / `docs` / `refactor` / `perf` / `test` / `chore`.
 
+## Versions & release tags
+
+`pyproject.toml`'s `[project] version` is the only version source; every
+branch touching `noodle/` bumps it and adds the matching `CHANGELOG.md`
+section (a unit test asserts the header matches).
+
+Tags carry that exact string, **no `v` prefix**:
+
+```
+1.0.0a6 → 1.0.0a7 → …   alpha, the counter we're on now
+1.0.0b1 → 1.0.0b2 → …   beta
+1.0.0                    release
+```
+
+Tag every release — a project repo consuming
+[`ci/azure/noodle-tests.yml`](ci/azure/noodle-tests.yml) pins the engine with
+`ref: refs/tags/<version>`, and has nothing stable to point at otherwise. The
+old `v`-prefixed spelling is obsolete and gone.
+
 ## Trust boundary — feature files are code, not data
 
 `.feature` files can run arbitrary shell via `run_command`/`run_script`

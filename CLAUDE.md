@@ -8,9 +8,10 @@ Three formal nouns (NOOD_0155), canonical definitions in
 engine" = change code here); **noodle workspace** = the test project
 scaffolded by `noodle init` / refreshed by `noodle init --force` ("update
 our noodle workspace" = change tests/config there, never engine code);
-**noodle wok** = a capability work area — web, mobile, desktop, performance
-("update our noodle wok mobile" = extend that capability + its per-wok
-tests, see [docs/woks.md](docs/woks.md)). Use the user's noun to decide
+**noodle wok** = a capability work area — web, api, mobile, desktop,
+performance; Noodle is a universal test framework, not a web-UI one, and no
+wok is a sub-mode of another ("update our noodle wok mobile" = extend that
+capability + its per-wok tests, see [docs/woks.md](docs/woks.md)). Use the user's noun to decide
 where a change lands.
 
 ## Test authoring and running
