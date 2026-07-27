@@ -642,7 +642,12 @@ def _planner_verdict(result: dict, model_calls: int) -> dict:
         state = "RUN_FAILED"
     out = {"state": state,
            "budgets": {"interpretation_model_calls": model_calls,
-                       "probes": 1 if author.get("source") == "goal" else 0,
+                       # NOOD_0192 — a browserless (api-only) goal runs no
+                       # probe at all; counting one would misreport the very
+                       # budget an agent uses to decide what a lap cost.
+                       "probes": 1 if author.get("source") == "goal"
+                       and not (author.get("evidence") or {}).get("browserless")
+                       else 0,
                        "runs": 0 if run is None or run.get("skipped") else 1}}
     if blocking:
         out["unresolved"] = blocking[0]
@@ -789,7 +794,16 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     # same layout generate.py produces (docs/feature-packages.md).
     existing = generate._app_from_existing_url(base_url, cfg, workspace)
     app = existing or _norm_app(app_name)
-    app_dir = (Path(workspace) / cfg["tests_dir"] / "web" / app).resolve()
+    # NOOD_0192 — the package lands in its WOK's category dir (the layout has
+    # always been <tests_dir>/<wok>/<app>, docs/feature-packages.md; only this
+    # line hardcoded web). A pure-API package under web/ is a lie a developer
+    # reads in their own repo. An existing package keeps the dir it is in,
+    # whatever that is — never a second copy of the same app in another wok.
+    from noodle.repl import goal as _goal_mod
+    tests_root = Path(workspace) / cfg["tests_dir"]
+    wok_dir = "web" if goal is None or _goal_mod.needs_browser(goal) else "api"
+    app_dir = next((d for d in sorted(tests_root.glob(f"*/{app}"))
+                    if d.is_dir()), tests_root / wok_dir / app).resolve()
     features_dir = app_dir / "features"
     stem = Path(feature_path).name
     stem = stem[:-8] if stem.endswith(".feature") else stem
@@ -827,6 +841,11 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         # in order (one browser, state carries), interacting only on the last
         # — earlier URLs are setup navigation, not action pages.
         nav_env = goal_mod.navigation_env(goal, app)
+        # NOOD_0192 — a pure-API goal has no page to probe: no browser is
+        # launched here, and none is launched by the run either (@api). This
+        # is the whole api wok's authoring path, and it costs one branch.
+        browserless = not goal_mod.needs_browser(goal)
+        probe_result = {} if browserless else None
         probe_urls = " ".join(u for _, u in nav_env) if nav_env else base_url
         p_args = goal_mod.probe_args(goal)
         act_on = "last" if len(nav_env) > 1 else "each"
@@ -835,17 +854,20 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         # for a fix-in-place retry, so the retry re-probed the SAME url with
         # the SAME transaction: a full browser launch + page load + scan, per
         # lap, for evidence the engine had just written to disk.
-        probe_result, cache_hit = _cached_probe(
-            workspace, probe_urls, act_on, p_args, str(feat_dest),
-            lambda: probe_page(probe_urls, act_on=act_on, **p_args))
-        # Raw snapshot goes to artifacts/debug, never the model-visible payload.
-        dbg = Path(workspace) / _paths.artifacts_root() / "probe_goal.json"
-        try:
-            dbg.parent.mkdir(parents=True, exist_ok=True)
-            dbg.write_text(json.dumps(probe_result, indent=2, default=str))
-        except OSError:
-            pass
-        goal_ev = goal_mod.evidence(goal, probe_result)
+        cache_hit = False
+        if not browserless:
+            probe_result, cache_hit = _cached_probe(
+                workspace, probe_urls, act_on, p_args, str(feat_dest),
+                lambda: probe_page(probe_urls, act_on=act_on, **p_args))
+            # Raw snapshot goes to artifacts/debug, never the model-visible payload.
+            dbg = Path(workspace) / _paths.artifacts_root() / "probe_goal.json"
+            try:
+                dbg.parent.mkdir(parents=True, exist_ok=True)
+                dbg.write_text(json.dumps(probe_result, indent=2, default=str))
+            except OSError:
+                pass
+        goal_ev = (goal_mod.browserless_evidence(goal) if browserless
+                   else goal_mod.evidence(goal, probe_result))
         # NOOD_0156 — automatic postcondition synthesis: a goal with actions
         # but no checks gets an explicit generated `Then` derived from the
         # last meaningful action + probe evidence (emitted into the .feature,
@@ -857,7 +879,8 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         if generated_checks:
             goal = dict(goal, actions=synth["actions"],
                         checks=synth["checks"])
-            goal_ev = goal_mod.evidence(goal, probe_result)
+            goal_ev = (goal_mod.browserless_evidence(goal) if browserless
+                       else goal_mod.evidence(goal, probe_result))
         goal_ev["blocking"] = goal_ev["blocking"] + synth["blocking"]
         feature_content, pom_content = goal_mod.compile_goal(
             goal, goal_ev, app.upper(),
@@ -1163,6 +1186,11 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             # agent debugging "why didn't my page change take effect" must be
             # able to see that this lap didn't re-open the browser.
             result["evidence"]["probe_reused"] = True
+        if browserless:
+            # NOOD_0192 — no probe, no browser, no page: the api wok's
+            # authoring path. Stated, because the planner budget below counts
+            # it and a payload that implied a probe would be lying.
+            result["evidence"]["browserless"] = True
         if goal_ev.get("bound_targets"):
             result["evidence"]["bound_targets"] = goal_ev["bound_targets"]
         # NOOD_0156 — intent provenance: what the user asked for, what got

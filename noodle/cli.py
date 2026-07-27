@@ -1750,6 +1750,45 @@ def author(
 
 
 @app.command()
+def scan(
+    path: str = typer.Argument(".", help="Repo root to scan"),
+    as_json: bool = typer.Option(True, "--json/--no-json", help="One bounded JSON payload (default) or a short human summary"),
+):
+    """NOOD_0192 — what is this repo, and what can Noodle test in it?
+
+    A deterministic scan of marker files: stack, framework, how the repo says
+    it serves itself, any OpenAPI spec (with its endpoints — that IS the API
+    test plan), where tests already live, and the QUESTIONS still open before
+    a test can be authored. No LLM, no code execution, nothing written.
+
+    The answer to "review this repo and write me some tests": run this, settle
+    `questions` with the developer, then send the steps to `noodle task`."""
+    from noodle import repo_scan
+    rep = repo_scan.scan(path)
+    if as_json:
+        _json_out(rep)
+        raise typer.Exit(0 if rep.get("ok") else 1)
+    if not rep.get("ok"):
+        typer.echo(f"  ✗ {rep.get('error')}")
+        raise typer.Exit(1)
+    typer.echo(f"  📁 {rep['root']}")
+    typer.echo(f"  · stack: {', '.join(rep['stacks']) or 'unrecognized'}"
+               + (f" ({', '.join(rep['frameworks'])})" if rep["frameworks"] else ""))
+    typer.echo(f"  · woks:  {', '.join(rep['woks'])}")
+    for s in rep["serve"]:
+        typer.echo(f"  · serve: {s}")
+    for s in rep["api_specs"]:
+        typer.echo(f"  · spec:  {s} ({rep['endpoints_total']} endpoints)")
+    for e in rep["endpoints"]:
+        typer.echo(f"      {e}")
+    for t in rep["test_dirs"]:
+        typer.echo(f"  · tests: {t}")
+    for q in rep["questions"]:
+        typer.echo(f"  → ask: {q}")
+    raise typer.Exit(0)
+
+
+@app.command()
 def task(
     text: str = typer.Argument(None, help="What you want, in plain English — 'write a test that ...', 'run the tests', 'did it pass'. Noodle picks the command."),
     workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
@@ -1795,6 +1834,8 @@ def task(
         typer.echo(f"  ✗ {result['error']}")
     if result.get("need"):
         typer.echo(f"  → need: {', '.join(result['need'])}")
+    for q in result.get("questions") or []:      # NOOD_0192 — scan intent
+        typer.echo(f"  → ask: {q}")
     if result.get("next"):
         typer.echo(f"  → next: {result['next']}")
     raise typer.Exit(0 if result["ok"] else 1)

@@ -595,6 +595,24 @@ def init_workspace(path: str, llm: str | None = None,
 
 
 @_tool()
+def scan_repo(path: str | None = None) -> dict:
+    """NOOD_0192 — what is this repo, and what can Noodle test in it?
+
+    For the "review this repo and write me tests for the new features" ask,
+    which names no URL and no steps. A deterministic marker-file scan (no LLM,
+    no code execution, nothing written): stacks, frameworks, how the repo says
+    it serves itself (npm scripts / compose / Makefile), any OpenAPI spec WITH
+    its endpoint list — that is the API test plan the developer already wrote
+    — where tests already live, the candidate woks, and `questions`: what is
+    still missing before a test can be authored. Settle those with the
+    developer (or read them out of the code — you can, we can't), then call
+    author_test with the URL and numbered steps. Noodle never guesses a URL.
+    path defaults to the server's workspace."""
+    from noodle import repo_scan
+    return repo_scan.scan(_ws(path))
+
+
+@_tool()
 def cost_estimate(target: str, model: str | None = None,
                   workspace: str | None = None) -> dict:
     """Pre-flight LLM token/dollar estimate for a file (NOOD_0084): the

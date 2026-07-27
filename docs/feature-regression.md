@@ -33,11 +33,11 @@ Allure + RCA, scores, serves, prints the table.
    workspace: /…/regression_runs/20260727-101500_1.0.0a6_6859c75
 
    TEST CASE                  GENERATE    RUN   CORR  LINES  GREEN  VERIFIED
-   tc1_search_suggestion           4.8s    14s      1     10  ✅     ✅
-   tc2_account_textboxes           4.9s    12s      0     15  ✅     ✅
-   tc3_api_seeds_ui_verifies       1.5s     1s      0      —  ✅     ✅
+   tc1_search_suggestion           4.4s    15s      1     10  ✅     ✅
+   tc2_account_textboxes             5s    13s      0     15  ✅     ✅
+   tc3_api_seeds_ui_verifies       2.6s    12s      0     10  ✅     ✅
    ────────────────────────────────────────────────────────────────────────
-   average                        3.73s     9s   0.33   12.5
+   average                           4s 13.33s   0.33  11.67
 
    VERDICT: PASS
 
@@ -85,22 +85,28 @@ scoring.
 |---|---|---|
 | `tc1_search_suggestion` | numbered prompt | typeahead suggestion, popup tolerance, plain-text assertion |
 | `tc2_account_textboxes` | numbered prompt | click-navigation across pages, multiple field assertions |
-| `tc3_api_seeds_ui_verifies` | `feature_content` | **cross-wok** — fetch over REST, chain `{var:}` into a web step, assert it rendered |
+| `tc3_api_seeds_ui_verifies` | numbered prompt | **cross-wok** — fetch over REST, assert the status, then prove the UI rendered it |
 
-tc1/tc2 are the plain-English path a human or agent actually sends. tc3
+All three are the plain-English path a human or agent actually sends. tc3
 (NOOD_0191) is the other real shape: *"get the data from the API, then prove
 the UI shows it"* — the most common mix in a real suite, because most UI is
-an API with a face on it. It exercises the REST client, `{var:}` chaining
-from a response field into a later web step, `{env:}` across both step
-families in one scenario, and the `feature_content` authoring door that
-nothing else here touches. Verified by mutation when it landed: breaking
-`rest_extract_json` turns tc3 red and leaves tc1/tc2 green.
+an API with a face on it. It exercises the REST client, `{env:}` across both
+step families in one scenario, and the compiler's cross-wok step **order**
+(the REST preamble ahead of the navigation `Given`).
 
-It is `feature_content` because that is the honest path for a cross-wok test
-today — the prompt/goal compiler is web-only, so this genuinely is
-hand-authored Gherkin. And it is tagged `@web`, **not** `@api`: `@api` means
-"start no browser", which would kill the UI half. REST steps need no tag at
-all ([woks.md](woks.md#the-api-wok-is-a-lifecycle-not-a-gate)).
+**It was `feature_content` until NOOD_0192**, because the prompt compiler was
+web-only and a cross-wok test genuinely had to be hand-written Gherkin — which
+meant the one cross-wok case in a *generation* benchmark measured no
+generation at all and printed `—` for LINES. Now the api verbs are in the
+grammar, so all three cases measure what the engine writes, and the risk and
+work effort of a cross-wok test is a number like any other. What the swap gave
+up is covered where it belongs, in `unit_tests/woks/api/`: `{var:}` chaining
+from a response field, and the `feature_content` door.
+
+The generated scenario is tagged `@web`, **not** `@api`: `@api` means "start
+no browser", which would kill the UI half. The compiler decides this itself —
+api-only goals get `@api`, anything with a web step gets `@web`
+([woks.md](woks.md#the-api-wok-is-a-lifecycle-not-a-gate)).
 
 ## What each measurement means
 
@@ -113,8 +119,8 @@ driving agent.
 | `run_s` | `run.seconds` | The generated test's own execution time. |
 | `development_s` | **derived:** `elapsed_s − run_s` | How long *generation* took. This is what the time budget applies to. |
 | `corrections` | `run.healing_events` + `run.flaky` + re-author passes | The engine's own repair signals: a locator that needed self-healing, a scenario that needed a retry, a re-author because `ready` came back false. Never a self-report — last session tc1 claimed `corrections: 0` while the run log recorded a real heal (`locator 'search', strategy visible-filter, multiple matches, exactly one visible`). The engine knew; the old protocol never asked. |
-| `lines` | `author.compiled.feature` + `author.compiled.pom` line count | The simplicity signal: *are we still generating simple `.feature` files*. Reported, not gated — if generation starts padding features with extra steps or POM entries, this moves. `—` for a `feature_content` case (tc3): nothing was generated, so there is nothing to count, and it is excluded from the average rather than counted as zero. |
-| `green` / `verified` | `run.failed`, `run.verified`, `author.intent_verified` | The run contract: `failed == 0` **and** `verified: true` **and** the intent contract held. A pass held up by fuzzy healing or lenient matching is not a pass. `intent_verified` asks "did the *compiled* goal match probe evidence", so it applies to the prompt cases only — tc3's Gherkin states its intent literally, and there `run.verified` is the whole bar. |
+| `lines` | `author.compiled.feature` + `author.compiled.pom` line count | The simplicity signal: *are we still generating simple `.feature` files*. Reported, not gated — if generation starts padding features with extra steps or POM entries, this moves. `—` for a `feature_content` case: nothing was generated, so there is nothing to count, and it is excluded from the average rather than counted as zero. Since NOOD_0192 all three cases are prompts, so all three report a number. |
+| `green` / `verified` | `run.failed`, `run.verified`, `author.intent_verified` | The run contract: `failed == 0` **and** `verified: true` **and** the intent contract held. A pass held up by fuzzy healing or lenient matching is not a pass. `intent_verified` asks "did the *compiled* goal match probe evidence", so it applies to the prompt cases — which, since NOOD_0192, is all three. (A `feature_content` case states its intent literally, with nothing inferred to verify against; there `run.verified` alone is the bar.) |
 
 Accuracy has a human half too: the HIL (or a reviewing agent) reads the
 generated `.feature` against the prompt — steps match the intent, assertions

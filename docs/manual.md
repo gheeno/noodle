@@ -107,10 +107,14 @@ in this repo still updates the global commands.
 > **`noodle: command not found` right after `uv tool install`?** The tool
 > bin dir (`~/.local/bin` on macOS/Linux, `%USERPROFILE%\.local\bin` on
 > Windows — check either with `uv tool dir --bin`) isn't on `PATH` yet —
-> `uv tool update-shell` (above) edits your shell profile (`.zshrc`/`.bashrc`,
-> or adds it to the Windows user `PATH` registry key) to add it. **Open a
-> new terminal window afterward** — the edit only
-> takes effect in shells started after it ran.
+> `uv tool update-shell` (above) edits your shell profile to add it —
+> whichever shell you use: `.zshrc`, `.bashrc`,
+> `~/.config/fish/config.fish`, or the Windows user `PATH` registry key.
+> **Open a new terminal window afterward** — the edit only takes effect in
+> shells started after it ran. Run it *from the shell you actually use*; if
+> `noodle` works in one terminal and not another, that's the shell whose
+> profile was never updated (`noodle doctor` reports it as
+> `install.login-shell`, with fish's own `fish_add_path` fallback).
 
 Want LiteLLM-backed manual mode too (a cloud provider or Ollama, for
 `noodle repl`/`noodle run` without an AI coding agent driving it)? It's

@@ -4,6 +4,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a8] — 2026-07-27
+
+**NOOD_0192** — feature: the api wok authors from a prompt (alone or mixed
+with web), Noodle can read the repo it's in, and the install is
+shell-agnostic.
+
+Noodle has run REST tests since NOOD_0007 and called API a first-class wok
+since NOOD_0191 — but the cheap deterministic authoring path (plain English →
+compiled `.feature`) was web-only. So every API test in existence had to be
+hand-written Gherkin: never intent-verified, never size-measured, a second
+workflow for the same job. That is closed here. Still zero LLM calls on the
+authoring path.
+
+- **API verbs in the prompt grammar.** `GET|POST|PUT|PATCH|DELETE <url>`,
+  `call the api at <url>`, `go to <url> via rest`, `verify the response
+  status is <code>`, `verify the response body contains <text>`. New goal
+  action `api` (`method`, `url`, `body`) and check kinds `status` /
+  `response_contains`.
+- **Pure-API tests need no browser anywhere.** An api-only prompt needs no
+  URL step and no `base_url` (it is made of URLs), skips the probe entirely,
+  compiles to `@api`, writes no POM, and lands in `noodle_tests/api/<app>/`
+  — authoring works on a machine with no Playwright install. `evidence.
+  browserless: true` says so, and the planner bills `probes: 0` instead of a
+  probe that never ran.
+- **Cross-wok in one prompt, in your order.** API calls placed before the
+  first web step compile *ahead* of the navigation `Given` — "fetch it, then
+  prove the UI shows it" is a sequence, not a set. Mixed scenarios are tagged
+  `@web`, never `@api` (which would kill the UI half by starting no browser).
+- **feature-regression tc3 is a prompt now**, not `feature_content`. The one
+  cross-wok case in a *generation* benchmark generated nothing and printed
+  `—` for LINES; it now measures like the other two (10 lines, green,
+  verified, PASS). What the swap gave up — `{var:}` response chaining, the
+  `feature_content` door — moved to `unit_tests/woks/api/`.
+- **`noodle scan` / `scan_repo` / `noodle task "review this repo"`** — what
+  is this repo and what can Noodle test in it: stacks, frameworks, how the
+  repo says it serves itself, the OpenAPI endpoint list (the API test plan
+  the developer already wrote), where tests live, candidate woks — and
+  `questions`, the things still missing before a test can be authored.
+  Deterministic marker-file scan: no LLM, no code execution, nothing written,
+  gitignored dirs skipped. The answer to "review this repo and write tests
+  for the new features" is now questions, not a guess.
+- **Shell-agnostic install, verified.** `uv tool update-shell` already writes
+  bash, zsh, **fish** and PowerShell — there was never a fish-specific
+  install path, only no way to tell the shell was missed. `noodle doctor`
+  gains `install.login-shell`: it asks `$SHELL` (as a login shell) to find
+  `noodle` and warns with that shell's own fix (`fish_add_path (uv tool dir
+  --bin)`) when it can't. Advisory when unanswerable (Windows, no `$SHELL`),
+  never a fail.
+- **Fixes.** `noodle task` intent patterns missed every PLURAL noun
+  (`\btest\b` cannot match "tests"), so "generate new API tests" matched
+  nothing and fell through to the default. `intent_trace` now reports api
+  assertions as `runtime:rest-client` rather than claiming probe evidence.
+- No instruction-budget ceiling raised: the api prompt grammar lands in
+  `docs/woks.md` and the `noodle task --contract` payload, per the ledger's
+  own "surfaces route, docs carry" rule.
+
 ## [1.0.0a7] — 2026-07-27
 
 **NOOD_0191** — feature: AI-SDLC ready without MCP — `noodle task`, a

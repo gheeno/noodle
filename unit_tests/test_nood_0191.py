@@ -153,6 +153,10 @@ def test_an_api_ask_is_redirected_not_refused(tmp_path):
     assert out["wok"] == "api"
     assert "supported" in out["next"]
     assert "@api" in out["how"] and "REST_BASE_URL" in out["how"]
+    # NOOD_0192 — and the redirect now names the CHEAP door first: the api
+    # wok is prompt-authorable, so "author it by hand" is no longer the
+    # answer to "generate the api tests for me".
+    assert "GET https://host/path" in out["how"]
     # web vocabulary must NOT come back — that reads as "can't do this"
     assert "grammar" not in out
     assert "search for" not in out.get("how", "")
