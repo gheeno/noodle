@@ -536,19 +536,24 @@ $ noodle cost noodle_tests/web/shop/features/checkout.feature --model anthropic/
 ## noodle feature-regression
 
 Core-product regression benchmark (NOOD_0185): prove prompt → `.feature`
-generation is still fast, cheap and accurate after engine changes. Executed
-by the driving agent (Claude, Copilot, a human) on any OS, **only when
-asked** — full guide: [docs/feature-regression.md](feature-regression.md).
+generation is still fast and accurate after engine changes. **Runs only when
+asked**, and since NOOD_0190 the bare command *runs it* — one call generates
+both canonical test cases, runs them, serves the reports and prints the
+benchmark table. Full guide:
+[docs/feature-regression.md](feature-regression.md).
 
 ```
-noodle feature-regression [--score results.json]
+noodle feature-regression [--json] [--init] [--score results.json]
 ```
+
+Exit **0 = PASS, 1 = REGRESSED**.
 
 | Flag / arg | Default | Purpose | When to use |
 |---|---|---|---|
-| (none) | — | Print the runbook: setup, the fixed benchmark test cases, per-test-case measurement protocol, results schema — **exits 2**: the printed protocol is not a run, so exit 0 can never read as a completed benchmark (NOOD_0189) | After developing new engine capabilities; also a self-contained demo |
-| `--init` | off | Scaffold a fresh `regression_runs/<stamp>_<build>/` workspace — a new gitignored folder every run; features, reports, results.json and verdict.json all stay inside it | First step of every benchmark run — never reuse an old workspace |
-| `--score` | none | Score a filled results JSON: per-TC breakdown + averages + `PASS`/`REGRESSED` verdict, exit 1 on REGRESSED; writes `verdict.json` + `verdict.html` next to the results file and serves the scorecard at `/verdict.html` beside Allure/RCA | Last step of the runbook, or in a script |
+| (none) | — | Run the benchmark: fresh `<clone>/regression_runs/<stamp>_<build>_<sha>/` workspace → both canonical prompts authored + run → combined Allure + RCA + verdict served → benchmark table printed. Every number (generation time, run time, corrections, generated lines) comes from the engine's own payload | After developing new engine capabilities; also a self-contained demo |
+| `--json` | off | One bounded JSON payload instead of the table | Scripting, or a host that wants the numbers structured |
+| `--init` | off | Scaffold the fresh workspace and stop — don't run the benchmark | Driving the steps by hand for debugging |
+| `--score` | none | Re-score an existing run's `results.json` instead of running: same table, rewrites `verdict.json` + `verdict.html` | Re-scoring after a budget override, or in a script |
 
 ## noodle rca-report
 

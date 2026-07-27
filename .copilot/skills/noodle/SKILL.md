@@ -60,6 +60,9 @@ goal:  # an OBJECT, never a string; rejections return this example
 - Execute payload: report paths, served URLs and, on red, `rca_compact`;
   extra RCA/report/serve calls repeat it; URLs pre-checked (`http_ok`)
   — no curl, no jq.
+- "run feature-regression" → `noodle feature-regression`. ONE call:
+  generates both test cases, runs, serves, prints the table. Never
+  hand-build `results.json` or read host telemetry.
 - Fastest path first: only standard-visible-control pages skip the
   probe; hidden/config/custom/SPA probe first (`--discover`,
   `probe-app`). `append_to` adds a scenario; `use_llm=True` last

@@ -1,6 +1,8 @@
-"""NOOD_0185 — feature-generation regression benchmark: score() verdicts and
-reason lines, env-overridable budget, runbook self-sufficiency, CLI exit
-codes. The benchmark itself (live site + host model) never runs here."""
+"""NOOD_0185/0190 — feature-generation regression benchmark: score() verdicts
+and reason lines, env-overridable budget, execute()'s measurement of the
+author payload, and the CLI's run/exit codes. The live half (real browser,
+real site) never runs here — execute() is faked at the core.author_test seam.
+"""
 import json
 
 from typer.testing import CliRunner
@@ -9,7 +11,7 @@ from noodle import cli, regression
 
 
 def _tc(**over):
-    base = {"id": "tc1_search_suggestion", "elapsed_s": 20, "aic": 3,
+    base = {"id": "tc1_search_suggestion", "elapsed_s": 20, "lines": 9,
             "corrections": 0, "green": True, "verified": True}
     return {**base, **over}
 
@@ -17,18 +19,17 @@ def _tc(**over):
 def test_pass_within_budget():
     v = regression.score({"test_cases": [_tc(), _tc(id="tc2_account_textboxes")]})
     assert v["verdict"] == "PASS" and v["regressions"] == []
-    assert v["average"]["aic"] == 3
+    assert v["average"]["lines"] == 9
 
 
 def test_every_budget_breach_gets_a_named_reason():
     v = regression.score({"test_cases": [
-        _tc(elapsed_s=9999, aic=40, corrections=5),
+        _tc(elapsed_s=9999, corrections=5),
         _tc(id="tc2_account_textboxes", green=False, verified=False),
         _tc(id="tc3_extra", verified=False)]})   # a pass held up by healing
     assert v["verdict"] == "REGRESSED"
     joined = " | ".join(v["regressions"])
-    for token in ("slow", "over budget", "inaccurate", "not green",
-                  "unverified", "average"):
+    for token in ("slow", "inaccurate", "not green", "unverified"):
         assert token in joined
     # a red run reports "not green" alone — unverified would be noise there
     tc2 = v["test_cases"][1]
@@ -57,27 +58,90 @@ def test_development_time_excludes_run_time():
 
 
 def test_budget_env_overrides(monkeypatch):
-    monkeypatch.setenv("NOODLE_REG_MAX_AIC", "50")
-    monkeypatch.setenv("NOODLE_REG_MAX_AVG_AIC", "50")
+    monkeypatch.setenv("NOODLE_REG_MAX_CORRECTIONS", "9")
     v = regression.score({"test_cases": [
-        _tc(aic=40), _tc(id="tc2_account_textboxes", aic=40)]})
+        _tc(corrections=5), _tc(id="tc2_account_textboxes", corrections=5)]})
     assert v["verdict"] == "PASS"
 
 
-def test_runbook_is_self_sufficient():
-    text = regression.runbook()
-    for p in regression.PROMPTS:
-        assert p["id"] in text and p["mode"] in text and p["content"] in text
-    assert "results.json" in text and "--score" in text
+# --- execute(): the benchmark runs itself (NOOD_0190) ------------------------
+
+def _fake_author(monkeypatch, *, ready=True, healing=0, flaky=0, failed=0,
+                 ready_on_retry=True):
+    """Stand in for core.author_test — the one seam between the benchmark and
+    a real browser. Records every call so the re-author path is observable."""
+    from noodle.repl import core
+    calls = []
+
+    def fake(**kw):
+        calls.append(kw)
+        is_retry = kw.get("overwrite")
+        ok_now = ready or (is_retry and ready_on_retry)
+        return {
+            "ok": ok_now and not failed,
+            "author": {"ready": ok_now, "intent_verified": ok_now,
+                       "feature": f"noodle_tests/web/wiki/features/f{len(calls)}.feature",
+                       "compiled": {"feature": "line\n" * 8, "pom": "p\n" * 4}},
+            "run": {"seconds": 7, "failed": failed, "verified": not failed,
+                    "healing_events": [{"locator": "search"}] * healing,
+                    "flaky": [{"scenario": "s"}] * flaky}}
+
+    monkeypatch.setattr(core, "author_test", fake)
+    monkeypatch.setattr(core, "run_and_report", lambda *a, **k: {
+        "ok": True, "served": {"host": "127.0.0.1", "port": 9999,
+                               "urls": ["http://127.0.0.1:9999/rca.html"]}})
+    return calls
 
 
-def _matched_install(monkeypatch):
-    """Keep the folder-freshness test about folders: a developer whose install
-    lags the checkout hits the mismatch guard below, not this."""
+def test_execute_produces_a_scorer_valid_results_file(monkeypatch):
+    _fake_author(monkeypatch)
+    results = regression.execute("/tmp/ws")
+    assert len(results["test_cases"]) == len(regression.PROMPTS)
+    assert regression.score(results)["verdict"] == "PASS"
+    # the size signal is the generated feature + POM line count — 8 + 4
+    assert all(tc["lines"] == 12 for tc in results["test_cases"])
+    # verdict.html leads the served URLs
+    assert results["report_urls"][0].endswith("/verdict.html")
+
+
+def test_corrections_come_from_the_engines_own_repair_signals(monkeypatch):
+    """NOOD_0190 — a self-reported 0 used to sit beside a run log recording a
+    real self-heal. Healing, a flaky retry and a re-author each cost one."""
+    _fake_author(monkeypatch, healing=1)
+    assert regression.execute("/tmp/ws")["test_cases"][0]["corrections"] == 1
+    _fake_author(monkeypatch, flaky=1)
+    assert regression.execute("/tmp/ws")["test_cases"][0]["corrections"] == 1
+    calls = _fake_author(monkeypatch, ready=False)
+    tc = regression.execute("/tmp/ws")["test_cases"][0]
+    assert tc["corrections"] == 1 and tc["green"]
+    assert calls[1]["overwrite"] is True      # re-authored exactly once
+
+
+def test_a_case_that_never_becomes_ready_stays_red(monkeypatch):
+    _fake_author(monkeypatch, ready=False, ready_on_retry=False)
+    results = regression.execute("/tmp/ws")
+    assert not results["test_cases"][0]["green"]
+    assert regression.score(results)["verdict"] == "REGRESSED"
+
+
+def test_a_failed_run_regresses(monkeypatch):
+    _fake_author(monkeypatch, failed=1)
+    v = regression.score(regression.execute("/tmp/ws"))
+    assert v["verdict"] == "REGRESSED"
+    assert any("not green" in r for r in v["regressions"])
+
+
+# --- CLI --------------------------------------------------------------------
+
+def _matched_install(monkeypatch, tmp_path):
+    """Keep the folder tests about folders: a developer whose install lags the
+    checkout hits the mismatch guard below, not these. clone_root is pinned to
+    tmp_path so a unit test never writes into the real clone."""
     from noodle import install_check
     monkeypatch.setattr(install_check, "version_report",
                         lambda: {"installed": "9.9.9", "source": "9.9.9",
                                  "mismatch": False})
+    monkeypatch.setattr(install_check, "clone_root", lambda: tmp_path)
 
 
 def test_init_refuses_a_stale_install(tmp_path, monkeypatch):
@@ -94,14 +158,45 @@ def test_init_refuses_a_stale_install(tmp_path, monkeypatch):
     assert not (tmp_path / "regression_runs").exists()   # nothing half-scaffolded
 
 
-def test_init_makes_a_new_workspace_every_run(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    _matched_install(monkeypatch)
+def test_init_makes_a_new_workspace_every_run_inside_the_clone(tmp_path, monkeypatch):
+    """NOOD_0190 — the folder is anchored to the CLONE, not the cwd, so
+    invoking from a subdirectory can't drop an un-gitignored regression_runs/
+    wherever you happen to stand."""
+    sub = tmp_path / "some" / "subdir"
+    sub.mkdir(parents=True)
+    monkeypatch.chdir(sub)
+    _matched_install(monkeypatch, tmp_path)
     r = CliRunner()
     assert r.invoke(cli.app, ["feature-regression", "--init"]).exit_code == 0
     assert r.invoke(cli.app, ["feature-regression", "--init"]).exit_code == 0
     runs = list((tmp_path / "regression_runs").iterdir())
     assert len(runs) == 2 and all((d / "noodle.yaml").is_file() for d in runs)
+    assert not (sub / "regression_runs").exists()
+
+
+def test_bare_command_runs_the_benchmark(tmp_path, monkeypatch):
+    """NOOD_0190 — the whole point: one call generates, runs, serves and
+    prints, instead of printing a protocol for an agent to improvise around."""
+    monkeypatch.chdir(tmp_path)
+    _matched_install(monkeypatch, tmp_path)
+    _fake_author(monkeypatch)
+    out = CliRunner().invoke(cli.app, ["feature-regression"])
+    assert out.exit_code == 0
+    assert "VERDICT: PASS" in out.output
+    for p in regression.PROMPTS:
+        assert p["id"] in out.output
+    ws = next((tmp_path / "regression_runs").iterdir())
+    assert json.loads((ws / "results.json").read_text())["test_cases"]
+    assert json.loads((ws / "verdict.json").read_text())["verdict"] == "PASS"
+    assert "PASS" in (ws / "verdict.html").read_text()
+
+
+def test_a_regressed_run_exits_1(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _matched_install(monkeypatch, tmp_path)
+    _fake_author(monkeypatch, failed=1)
+    out = CliRunner().invoke(cli.app, ["feature-regression"])
+    assert out.exit_code == 1 and "VERDICT: REGRESSED" in out.output
 
 
 def test_score_writes_verdict_next_to_results(tmp_path):
@@ -111,10 +206,10 @@ def test_score_writes_verdict_next_to_results(tmp_path):
     out = CliRunner().invoke(cli.app, ["feature-regression", "--score", str(results)])
     assert out.exit_code == 0
     assert json.loads((tmp_path / "verdict.json").read_text())["verdict"] == "PASS"
-    # the three ACs (development time, cost, accuracy) get a browser page too
+    # the ACs (development time, accuracy, size) get a browser page too
     html = (tmp_path / "verdict.html").read_text()
     assert "PASS" in html and "tc1_search_suggestion" in html
-    assert "development" in html and "AIC" in html
+    assert "development" in html and "lines" in html
 
 
 def test_prompt_suggestion_click_becomes_typeahead_suggest():
@@ -153,43 +248,3 @@ def test_prompt_verify_compiles_to_sees_text():
     assert exp["ok"]
     assert exp["goal"]["checks"] == [
         {"see": "Confirm password"}, {"see": "Email address"}]
-
-
-def test_cli_exit_codes(tmp_path):
-    r = CliRunner()
-    good = tmp_path / "good.json"
-    good.write_text(json.dumps(
-        {"test_cases": [_tc(), _tc(id="tc2_account_textboxes")]}))
-    assert r.invoke(cli.app, ["feature-regression", "--score", str(good)]).exit_code == 0
-    bad = tmp_path / "bad.json"
-    bad.write_text(json.dumps({"test_cases": [_tc(aic=99)]}))
-    assert r.invoke(cli.app, ["feature-regression", "--score", str(bad)]).exit_code == 1
-    # bare-command exit code owned by test_bare_command_exits_non_zero…
-    assert "tc1_search_suggestion (prompt)" in r.invoke(
-        cli.app, ["feature-regression"]).output
-
-
-def test_zero_cost_without_a_host_basis_is_not_a_measurement():
-    """NOOD_0189 — `aic: 0` used to satisfy `0 > cap` and pass silently,
-    while `null` failed as a missing measurement: the placeholder scored
-    better than the omission it stood for."""
-    v = regression.score({"test_cases": [
-        _tc(aic=0, cost_basis="measured: host billing unavailable; floor=0"),
-        _tc(id="tc2_account_textboxes")]})
-    assert v["verdict"] == "REGRESSED"
-    assert any("unmeasured cost" in r for r in v["regressions"])
-
-
-def test_zero_cost_is_accepted_when_the_host_reported_it():
-    v = regression.score({"test_cases": [
-        _tc(aic=0, cost_basis="host-reported"),
-        _tc(id="tc2_account_textboxes")]})
-    assert v["verdict"] == "PASS"
-
-
-def test_bare_command_exits_non_zero_so_a_runbook_is_never_a_result():
-    """NOOD_0189 — the printed protocol was reported as a completed run
-    because exit 0 read as success."""
-    out = CliRunner().invoke(cli.app, ["feature-regression"])
-    assert out.exit_code != 0
-    assert "NOT a run" in out.output

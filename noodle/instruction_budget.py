@@ -76,6 +76,14 @@ Ceiling accounting (moved verbatim from the retired test asserts):
   machines, wall-clock budget, stop-on-first-red). Same NOOD_0179 rule: a
   flag's existence is routing, and each carries a one-line help; the
   rationale lives in docs/cli-reference.md. 5321 B used at the bump.
+- NOOD_0190: copilot skill card 5888 → 6144 and copilot digest 7168 → 7424
+  (+256 each; the Claude card absorbed the same line inside its cap). All
+  three learn that `noodle feature-regression` RUNS the benchmark in one
+  call. Same NOOD_0179 rule at command scale: a command an agent never
+  learns exists is a command it improvises around, and that improvisation
+  — reading docs, guessing flags, hand-writing results.json, digging
+  through session telemetry for a cost number — was measured at ~28 AIC
+  per benchmark run, against an engine that spent none. 189 B buys it back.
 """
 from __future__ import annotations
 
@@ -89,8 +97,8 @@ CEILINGS: dict[str, int] = {
     "prompt-template (cli._PROMPT_TEMPLATE)": 1024,
     "mcp-instructions (server._INSTRUCTIONS)": 2432,
     "claude-skill-card (.claude/skills/noodle/SKILL.md)": 5888,
-    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 5888,
-    "copilot-digest (.github/copilot-instructions.md)": 7168,
+    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 6144,
+    "copilot-digest (.github/copilot-instructions.md)": 7424,
     "hot-tool-docstrings (probe/author/run_and_report/run)": 6400,
     "cli-help (noodle probe --help)": 6400,
     "cli-help (noodle run --help)": 5504,
