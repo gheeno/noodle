@@ -1,7 +1,9 @@
 """NOOD_0155 — Woks: Noodle's formal capability domains ("work areas").
 
-A **wok** is a self-contained area where Noodle can cook tests: web, mobile,
-desktop, performance. The name is a pun on "WOrK area" that fits the noodle
+Noodle is a universal BDD test framework, not a web-UI one. A **wok** is a
+self-contained area where it can cook tests: web, api, mobile, desktop,
+performance — each stands alone, and none is a sub-mode of another. The
+name is a pun on "WOrK area" that fits the noodle
 kitchen — each wok is one station, with its own engines, step vocabulary,
 optional dependencies, sample suite and unit tests. Every wok speaks the same
 Gherkin, reports through the same Allure + RCA pipeline, and can capture
@@ -49,17 +51,47 @@ WOKS: dict[str, Wok] = {
     "web": Wok(
         name="web",
         title="Web",
-        blurb="Browser apps via Playwright — plus REST (@api) and the OCR bridge "
-              "for canvas/terminal-style UIs (@terminal).",
+        blurb="Browser UI via Playwright — plus the OCR bridge for "
+              "canvas/terminal-style UIs (@terminal).",
         engines=("Playwright (chromium/firefox/webkit + safari/edge channels)",
-                 "REST client (stdlib, @api)",
                  "OCR pixel bridge (@terminal — canvas & xterm.js UIs)"),
-        tags=("web", "api", "terminal", "mobile"),  # @mobile = device *emulation*
+        tags=("web", "terminal", "mobile"),  # @mobile = device *emulation*
         extras=(),
-        samples="sample_feature_tests/web (also api/, terminal/)",
+        samples="sample_feature_tests/web (also terminal/)",
         unit_tests="unit_tests/woks/web",
         screenshots="Playwright page screenshots — failure shots, NOOD_0153 "
                     "evidence shots, visual baselines",
+    ),
+    # NOOD_0191 — API is its own wok, not a corner of web. It was listed
+    # under web on the grounds that REST "shares the web session lifecycle",
+    # which was never true: hooks.before_scenario returns early for @api with
+    # no browser, no context and no tracing. The mislabelling had a cost —
+    # every always-on surface described Noodle as a browser framework, and an
+    # agent asked for API tests told a user to go use Postman. Web and API
+    # stand alone (a browserless @api suite needs no Playwright install) and
+    # compose freely (a @web scenario can seed state over REST — most UI is
+    # an API with a face on it).
+    #
+    # Two separate facts, and conflating them is what caused the mess:
+    #   1. REST STEPS are plain I/O — available in EVERY scenario, no tag
+    #      required, exactly like run_command/load_data/a spreadsheet read.
+    #      The runner only gates a step when `page is None`, and `rest_*` is
+    #      exempt there too, so REST is never gated at all.
+    #   2. The API WOK is the browserless LIFECYCLE for suites whose subject
+    #      IS the API. `@api` means "start no browser" — a CI-image and
+    #      startup-cost decision, NOT permission to use REST steps.
+    "api": Wok(
+        name="api",
+        title="API",
+        blurb="REST services, browserless. NB: REST steps run in ANY "
+              "scenario without this tag — @api only skips the browser.",
+        engines=("REST client (stdlib http, @api) — no browser, no driver",),
+        tags=("api", "rest"),
+        extras=(),
+        samples="sample_feature_tests/api",
+        unit_tests="unit_tests/woks/api",
+        screenshots="No UI to capture: evidence is the recorded "
+                    "request/response pair on the Allure step",
     ),
     "mobile": Wok(
         name="mobile",
@@ -113,15 +145,21 @@ def wok_for_tags(tags) -> Wok:
     steps/catch_all.py) — keep in that order, and keep
     unit_tests/woks/test_wok_registry.py green when either side changes:
 
-      @perf → performance;  @visual → desktop (visual agent);
+      @perf → performance;  @api → api (browserless);
+      @visual → desktop (visual agent);
       @android/@ios (sans @mobile) → mobile (Appium);
       @windows/@mac (sans @mobile) → desktop (Appium native);
-      @appium alone → mobile;  everything else (incl. @api/@terminal/@mobile
+      @appium alone → mobile;  everything else (incl. @terminal/@mobile
       emulation) → web.
+
+    @api sits high in the order for the same reason hooks.before_scenario
+    checks it early: it is the one tag that means "no browser at all".
     """
     tags = set(tags)
     if 'perf' in tags:
         return WOKS["performance"]
+    if 'api' in tags:
+        return WOKS["api"]
     if 'visual' in tags:
         return WOKS["desktop"]
     if 'mobile' not in tags:  # @mobile keeps Playwright emulation → web

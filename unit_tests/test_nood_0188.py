@@ -418,11 +418,12 @@ def test_unresolvable_mask_is_skipped_not_fatal():
 # --- benchmark artifact cross-check -----------------------------------------
 
 def _claims_green():
+    """One healthy claim per CANONICAL case — sized off PROMPTS so adding a
+    test case to the benchmark can't silently turn these into "not all cases
+    measured" regressions (NOOD_0191 added tc3 and did exactly that)."""
     return {"test_cases": [
-        {"id": "tc1", "elapsed_s": 20, "run_s": 14, "corrections": 0,
-         "green": True, "verified": True},
-        {"id": "tc2", "elapsed_s": 18, "run_s": 13, "corrections": 0,
-         "green": True, "verified": True}]}
+        {"id": p["id"], "elapsed_s": 20, "run_s": 14, "corrections": 0,
+         "green": True, "verified": True} for p in R.PROMPTS]}
 
 
 def test_score_stays_pure_without_a_workspace():

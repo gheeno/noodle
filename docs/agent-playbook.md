@@ -218,7 +218,12 @@ time (see [design-history.md § Phase 23](design-history.md#phase-23--external-w
 **Fastest path (NOOD_0128): `author_test` / `noodle author --spec`** writes the
 whole package in one transaction — app folder, `environments.yaml` (base URL),
 POM, feature, and empty placeholders for the secret keys you name — validates
-the Gherkin, and rolls back every file it wrote if anything fails. If the
+the Gherkin, and rolls back every file it wrote if anything fails.
+
+Over the CLI, pass the spec on **stdin** (`--spec -`) as a heredoc rather than
+writing a temp spec file — one call instead of write-then-read-then-delete.
+The spec keys are exactly `author_test`'s arguments, listed in the MCP tool
+schema and in `noodle author --help`. If the
 original prompt supplied credential *values* (NOOD_0130), pass them once as
 `secret_values={KEY: value}`: they are written ONLY into the gitignored
 `<app>_secrets.env`, never echoed back or returned, and never placed in a

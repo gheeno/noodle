@@ -1409,12 +1409,14 @@ directions exist; the shipped pipeline files implement the first:
   parameters — it then checks out **both** repos (engine at
   `$(Build.SourcesDirectory)`, tests at `$(Pipeline.Workspace)/testsRepo`)
   and runs theirs.
-- **Tests repo owns the CI**: the mirror image of the above — a pipeline
-  YAML kept in the tests repo that declares the engine as a
-  `resources.repositories` entry, checks both repos out, installs the
-  engine editable from its checkout, and runs `noodle run --workspace`
-  against the tests repo. Use this when the testing team wants their
-  pipeline, triggers, and run history in *their* project.
+- **Project repo owns the CI** (NOOD_0191): the mirror image of the above,
+  and now a shipped template rather than something to hand-write. The
+  project repo commits its own Noodle workspace, declares this engine as a
+  `resources.repositories` entry pinned to a tag, and adds
+  `ci/azure/noodle-tests.yml@noodle` as a job — about twelve lines. Its
+  pipeline, triggers and run history stay in *its* project, and the test
+  lands in the same PR as the feature it covers. Full walkthrough →
+  **[docs/ci-project-repo.md](ci-project-repo.md)**
 
 Cross-project gotcha (both directions): when the other repo lives in a
 different Azure DevOps **project** of the same organization, the

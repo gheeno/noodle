@@ -1,0 +1,319 @@
+# NOOD_0191 — run a project repo's own Noodle tests, from that project's own
+# pipeline. A consumable jobs template: the project keeps its build and deploy
+# jobs and adds this one alongside them.
+#
+#   resources:
+#     repositories:
+#       - repository: noodle
+#         type: git                  # or 'github' + endpoint: <service connection>
+#         name: Tooling/noodle
+#         ref: refs/tags/1.0.0a7     # pin the engine — a moving ref is not a build
+#
+#   jobs:
+#     - template: ci/azure/noodle-tests.yml@noodle
+#       parameters:
+#         workspaceDir: tests/noodle
+#         keyVaultUrl: $(NOODLE_KEYVAULT_URL)
+#
+# See ci/azure/example-project-pipeline.yml for a complete consumer file, and
+# docs/ci-project-repo.md for the walkthrough.
+#
+# Headless only, on purpose: nobody can watch a browser inside a CI agent, so
+# a --headed knob here is a failure mode with no upside. Headed is the local
+# demo path (`noodle run --headed` on a developer's machine). A run that needs
+# watching afterwards uses the @record_video tag, which attaches to the report.
+#
+# No LLM is involved at any point. This template only runs `noodle run`.
+
+parameters:
+  - name: workspaceDir
+    displayName: 'Noodle workspace inside this repo (the dir holding noodle.yaml)'
+    type: string
+    default: tests/noodle
+  - name: testTag
+    displayName: 'Only run scenarios with this tag (blank = everything discovered)'
+    type: string
+    default: ''
+  - name: pool
+    displayName: 'Agent pool — pass your own for a self-hosted pool'
+    type: object
+    default:
+      vmImage: ubuntu-latest
+  - name: shard
+    displayName: 'One agent per .feature file'
+    type: boolean
+    default: true
+  - name: maxParallel
+    type: number
+    default: 4
+  - name: parallelProcesses
+    displayName: 'behavex processes WITHIN a job (0 = single process)'
+    type: number
+    default: 0
+  - name: pythonVersion
+    type: string
+    default: '3.11'
+  - name: extras
+    displayName: "Extra install group, e.g. '[visual]' — only if the suite uses @visual/@appium"
+    type: string
+    default: ''
+  - name: keyVaultUrl
+    displayName: 'Azure Key Vault URL — the ONE secrets knob (see below)'
+    type: string
+    default: ''
+  - name: secretEnv
+    displayName: 'Explicit KEY: $(VAR) map, for teams not using Key Vault'
+    type: object
+    default: {}
+  - name: allureVersion
+    type: string
+    default: '3.14.1'
+  - name: historyRuns
+    displayName: 'Allure trend runs to retain'
+    type: number
+    default: 30
+  - name: jobName
+    type: string
+    default: noodle_tests
+
+jobs:
+  # Sharding needs the file list before the matrix exists, so discovery is its
+  # own job. Skipped entirely when shard=false — one job runs the whole suite.
+  - ${{ if eq(parameters.shard, true) }}:
+    - job: ${{ parameters.jobName }}_discover
+      displayName: 'Discover Noodle feature files'
+      pool: ${{ parameters.pool }}
+      steps:
+        - checkout: self
+          path: s/project
+        - checkout: noodle
+          path: s/noodle
+        - task: UsePythonVersion@0
+          inputs:
+            versionSpec: '${{ parameters.pythonVersion }}'
+        - bash: |
+            set -euo pipefail
+            # Fails (never emits {}) when nothing is found — an empty matrix
+            # would make the tests job a no-op and the pipeline would go green
+            # having discovered nothing.
+            MATRIX=$(python "$(Agent.BuildDirectory)/s/noodle/scripts/list_features.py" --root .)
+            echo "##vso[task.setvariable variable=matrix;isOutput=true]$MATRIX"
+          name: gen
+          displayName: 'List web .feature files'
+          workingDirectory: $(Agent.BuildDirectory)/s/project/${{ parameters.workspaceDir }}
+
+  - job: ${{ parameters.jobName }}
+    displayName: 'Noodle tests'
+    pool: ${{ parameters.pool }}
+    ${{ if eq(parameters.shard, true) }}:
+      dependsOn: ${{ parameters.jobName }}_discover
+      strategy:
+        maxParallel: ${{ parameters.maxParallel }}
+        matrix: $[ dependencies.${{ parameters.jobName }}_discover.outputs['gen.matrix'] ]
+    variables:
+      # Explicit checkout paths: with two repos checked out, the default
+      # directory names come from the repo names, which this template cannot
+      # know. Pinning both makes every path below deterministic.
+      projectRoot: $(Agent.BuildDirectory)/s/project
+      noodleRoot: $(Agent.BuildDirectory)/s/noodle
+      workspace: $(Agent.BuildDirectory)/s/project/${{ parameters.workspaceDir }}
+      PLAYWRIGHT_BROWSERS_PATH: $(Pipeline.Workspace)/pw-browsers
+      ${{ if eq(parameters.shard, true) }}:
+        runTarget: $(featurePath)
+      ${{ else }}:
+        runTarget: ''
+      # The tag rides inside single quotes so a tag containing a space
+      # survives the shell's word-split of $(tagFlag); blank stays blank.
+      ${{ if ne(parameters.testTag, '') }}:
+        tagFlag: "--tag '${{ parameters.testTag }}'"
+      ${{ else }}:
+        tagFlag: ''
+
+    steps:
+      - checkout: self
+        path: s/project
+      - checkout: noodle
+        path: s/noodle
+
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: '${{ parameters.pythonVersion }}'
+
+      # Keyed on the engine's own constraints.txt — the Playwright version is
+      # pinned there, so a shard only re-downloads browsers when that pin moves.
+      - task: Cache@2
+        displayName: 'Cache Playwright browsers'
+        inputs:
+          key: '"noodle-pw" | $(noodleRoot)/constraints.txt'
+          path: $(Pipeline.Workspace)/pw-browsers
+
+      # Base deps only, pinned by the engine's own constraints.txt. NOT
+      # ".[all,llm]" — that set exists to gate the engine's unit suite; running
+      # tests needs none of it, and every extra is install time on every run.
+      - bash: |
+          set -euo pipefail
+          pip install "$(noodleRoot)${{ parameters.extras }}" -c "$(noodleRoot)/constraints.txt"
+          playwright install chromium --with-deps
+          noodle --version
+        displayName: 'Install Noodle (pinned)'
+
+      - template: steps-allure-cli.yml
+        parameters:
+          allureVersion: ${{ parameters.allureVersion }}
+
+      # Allure 3 keeps trend history as one JSONL file. Cache keys are
+      # immutable, so key on BuildId (never hits, always saves) and let
+      # restoreKeys pull the newest previous run. Azure evicts after 7 idle
+      # days, and every restore refreshes that clock — history persists as long
+      # as runs are less than a week apart.
+      - task: Cache@2
+        displayName: 'Restore Allure history'
+        condition: always()
+        continueOnError: true
+        inputs:
+          key: '"noodle-history" | "$(System.JobName)" | "$(Build.BuildId)"'
+          restoreKeys: |
+            "noodle-history" | "$(System.JobName)"
+          path: $(workspace)/artifacts/reports/allure-history
+
+      - bash: |
+          set -o pipefail
+          noodle run $(runTarget) --workspace "$(workspace)" --headless $(tagFlag)
+        displayName: 'Run Noodle tests'
+        env:
+          # Pin the classic shared artifacts/ tree: a single-feature run would
+          # otherwise route output into that app package's own report/ folder,
+          # which the publish steps below don't look in.
+          NOODLE_ARTIFACTS_DIR: artifacts
+          # A shard IS a slice — a tag filter can legitimately empty one shard
+          # while others run, and `noodle run` exits 3 on zero scenarios.
+          ${{ if eq(parameters.shard, true) }}:
+            NOODLE_ALLOW_EMPTY: '1'
+          NOODLE_PARALLEL_PROCESSES: ${{ parameters.parallelProcesses }}
+          # Secrets, one knob. Azure exposes NON-secret variable-group values
+          # as env automatically; secret ones must be mapped by hand. Rather
+          # than make every project list its keys here, point the engine at a
+          # Key Vault and map one variable. `secretEnv` is the escape hatch.
+          NOODLE_KEYVAULT_URL: ${{ parameters.keyVaultUrl }}
+          ${{ each pair in parameters.secretEnv }}:
+            ${{ pair.key }}: ${{ pair.value }}
+
+      # after_all builds the report on a normal run. A run that crashed before
+      # it has none — generate one so the artifact is never empty. Guarded, so
+      # a normal run doesn't generate twice (each generate appends to history).
+      - bash: |
+          set -euo pipefail
+          mkdir -p "$(workspace)/artifacts/allure-results"
+          if [ ! -f "$(workspace)/artifacts/reports/allure-report/index.html" ]; then
+            python -c "from noodle.reporting import builder; import sys; builder.generate(sys.argv[1], sys.argv[2])" \
+              "$(workspace)/artifacts/allure-results" "$(workspace)/artifacts/reports/allure-report"
+          fi
+          HISTORY="$(workspace)/artifacts/reports/allure-history/history.jsonl"
+          if [ -f "$HISTORY" ]; then
+            tail -n ${{ parameters.historyRuns }} "$HISTORY" > "$HISTORY.tmp" && mv "$HISTORY.tmp" "$HISTORY"
+          fi
+        displayName: 'Generate Allure report (if missing)'
+        condition: always()
+
+      # `noodle run` only auto-writes a bare markdown RCA on a red single-process
+      # run — never the HTML view, never on a clean run. Generate both here so
+      # the artifact always has one. uploadsummary renders rca.md on the run's
+      # Extensions tab: the RCA counterpart to the Allure tab.
+      - bash: |
+          set -euo pipefail
+          noodle rca-report --workspace "$(workspace)" --out "$(workspace)/artifacts/reports/rca.md"
+          python -c "from pathlib import Path; from noodle.reporting import rca_report as r; import sys; Path(sys.argv[2]).write_text(r.render_html(sys.argv[1]))" \
+            "$(workspace)/artifacts/allure-results" "$(workspace)/artifacts/reports/rca.html"
+          echo "##vso[task.uploadsummary]$(workspace)/artifacts/reports/rca.md"
+        displayName: 'Generate RCA report'
+        condition: always()
+
+      - task: PublishTestResults@2
+        displayName: 'Publish to the Tests tab'
+        condition: always()
+        inputs:
+          testResultsFormat: JUnit
+          testResultsFiles: $(workspace)/artifacts/reports/junit.xml
+          testRunTitle: 'Noodle — $(Build.SourceBranchName) — $(System.JobName)'
+
+      # Raw results exist only to feed the suite merge below; nobody consumes
+      # result JSON from the user-facing artifact.
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish raw Allure results'
+        condition: always()
+        inputs:
+          targetPath: $(workspace)/artifacts/allure-results
+          artifact: 'noodle-allure-results-$(System.JobName)'
+          publishLocation: pipeline
+
+      - bash: rm -rf "$(workspace)/artifacts/allure-results"
+        displayName: 'Drop raw results from TestArtifacts'
+        condition: always()
+
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish test artifacts'
+        condition: always()
+        inputs:
+          targetPath: $(workspace)/artifacts
+          artifact: 'NoodleTestArtifacts-$(System.JobName)'
+          publishLocation: pipeline
+
+  # One suite-level report across every shard, published as the browsable
+  # "Allure Report" tab. Needs the free qameta.allure-azure-pipelines
+  # extension installed ONCE at organization level.
+  - job: ${{ parameters.jobName }}_report
+    displayName: 'Allure report tab'
+    dependsOn: ${{ parameters.jobName }}
+    condition: always()
+    pool: ${{ parameters.pool }}
+    steps:
+      - checkout: none
+
+      - template: steps-allure-cli.yml
+        parameters:
+          allureVersion: ${{ parameters.allureVersion }}
+
+      - task: DownloadPipelineArtifact@2
+        displayName: 'Download shard results'
+        inputs:
+          patterns: 'noodle-allure-results-*/**'
+          path: $(Pipeline.Workspace)/shards
+
+      - task: Cache@2
+        displayName: 'Restore suite Allure history'
+        continueOnError: true
+        inputs:
+          key: '"noodle-history-suite" | "$(Build.BuildId)"'
+          restoreKeys: |
+            "noodle-history-suite"
+          path: $(Pipeline.Workspace)/allure-history
+
+      # --single-file is REQUIRED for the tab: the Qameta extension only
+      # uploads a report whose summary.json has meta.singleFile=true, and
+      # silently skips a multi-file one ("no report to show"). The same file
+      # also opens offline straight from the artifact.
+      - bash: |
+          set -euo pipefail
+          mkdir -p merged allure-history
+          cp -r shards/*/. merged/
+          HISTORY="$(Pipeline.Workspace)/allure-history/history.jsonl"
+          allure awesome --single-file --report-name "Noodle Suite" \
+            --output allure-report --history-path "$HISTORY" merged
+          if [ -f "$HISTORY" ]; then
+            tail -n ${{ parameters.historyRuns }} "$HISTORY" > "$HISTORY.tmp" && mv "$HISTORY.tmp" "$HISTORY"
+          fi
+        displayName: 'Merge shards + generate suite report'
+        workingDirectory: $(Pipeline.Workspace)
+
+      - task: PublishAllureReport@2
+        displayName: 'Publish Allure Report tab'
+        inputs:
+          testResultsDir: $(Pipeline.Workspace)/merged
+          reportDir: $(Pipeline.Workspace)/allure-report
+          reportName: 'Allure Report'
+
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish single-file Allure report'
+        inputs:
+          targetPath: $(Pipeline.Workspace)/allure-report
+          artifact: 'NoodleAllureReport'

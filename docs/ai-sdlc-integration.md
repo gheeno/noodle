@@ -19,7 +19,7 @@ existing Allure/RCA reporting (deep CI reference:
 
 1. [The picture, in plain words](#1-the-picture-in-plain-words)
 2. [One-time Azure DevOps setup (org/project admin)](#2-one-time-azure-devops-setup-orgproject-admin)
-3. [Letting another team bring their own tests](#3-letting-another-team-bring-their-own-tests)
+3. [Where the tests live — the project repo owns them](#3-where-the-tests-live--the-project-repo-owns-them)
 4. [Hooking up an AI SDLC agent](#4-hooking-up-an-ai-sdlc-agent)
 5. [The full loop: generate → run → Allure tab](#5-the-full-loop-generate--run--allure-tab)
 6. [Worked example: a multi-agent "Squad" pattern](#6-worked-example-a-multi-agent-squad-pattern)
@@ -120,23 +120,37 @@ just uses it.
 That's the whole one-time setup. Nothing below requires touching this
 again unless credentials rotate.
 
-## 3. Letting another team bring their own tests
+## 3. Where the tests live — the project repo owns them
 
-A team doesn't need to fork or modify this engine repo. They need their
-**own small repo** shaped like what `noodle init` scaffolds:
+**Default: the application repo holds its own tests**, in a workspace
+committed during development.
 
-```bash
-# the other team runs this once, in their own new/empty repo
-noodle init .
+```
+<project repo>/
+  src/…                     ← the application
+  azure-pipelines.yml       ← its own pipeline, + the Noodle template
+  tests/noodle/             ← `noodle init tests/noodle`, committed
+    noodle.yaml  .env  noodle_tests/…
 ```
 
-That gives them `noodle.yaml`, a `noodle_tests/` folder, `.env`, `resources/` —
-nothing engine-specific. They write `.feature` files there, same plain
-English as everywhere else in this framework.
+The agent that writes the app already has this repo checked out, so it
+scaffolds and authors into that same checkout — the test lands in the same
+branch and PR as the feature it covers, and the project's own pipeline gates
+it. No cross-repo push, no PAT, no "I pushed and nothing triggered".
 
-To run their repo through *this* pipeline without copying YAML, queue this
-repo's pipeline with the external-repo parameters (Run pipeline → the
-parameters panel):
+The project's pipeline consumes a template from this repo in about twelve
+lines — it clones the engine, installs it on the agent, runs the committed
+workspace, and publishes the Allure tab, Tests tab and RCA. Full walkthrough:
+**[docs/ci-project-repo.md](ci-project-repo.md)**.
+
+Tests never go in this engine repo — it's generic.
+
+**Alternative: a dedicated tests repo.** Still supported, and the right call
+when the application repo is locked down or a QE team wants its own history.
+It costs an extra repo, extra permissions, extra triggers, and version skew
+between app and test, so reach for it deliberately rather than by default.
+The team runs `noodle init .` in their own repo, then queues *this* repo's
+pipeline with the external-repo parameters:
 
 | Parameter | Set it to |
 |---|---|
@@ -148,16 +162,40 @@ parameters panel):
 | `testsRepoDir` | usually `tests` (their `noodle.yaml`'s `tests_dir`) |
 
 The pipeline then checks out **both** repos — this one for the engine
-code, theirs for the tests — and runs/reports exactly the same way,
-producing their own Tests tab + Allure Report tab on their pipeline run.
+code, theirs for the tests — and runs/reports exactly the same way.
 Full parameter reference: [encyclopedia.md § Running against an external
 tests repo](encyclopedia.md#running-against-an-external-tests-repo).
 
 ## 4. Hooking up an AI SDLC agent
 
 This is the "waiter" from §1. The agent doesn't need to know anything
-about Playwright, Gherkin syntax details, or Allure — it just needs to
-speak MCP to `noodle-mcp`.
+about Playwright, Gherkin syntax details, or Allure — it needs one door.
+There are two, and MCP is not required.
+
+### 4.0 The CLI door — when MCP isn't available (NOOD_0191)
+
+Plenty of corporate networks don't allow MCP. Nothing is lost: **every MCP
+tool has a CLI twin** (`author_test` → `noodle author`, `run_and_report` →
+`noodle run --json --serve`, `get_rca` → `noodle rca-report --compact`, and so
+on — [cli-reference.md](cli-reference.md)). Losing MCP costs the tool
+*discovery* affordance, not any capability.
+
+For an agent that has never read these docs, `noodle task` is that discovery
+affordance:
+
+```bash
+noodle task --contract --json          # intents, grammar, envelope — fetch once
+noodle task "<whatever the agent wants>" -w tests/noodle --json
+```
+
+It routes free text to generate / update / run / report / verdict, and when it
+can't compile the text it returns `need` and `next` instead of guessing — the
+agent fills them in and re-sends. That works over plain `subprocess`, in a
+pipeline step, or inside a container, with no protocol and no server. Details:
+[cli-reference.md § noodle task](cli-reference.md#noodle-task).
+
+Prefer MCP when it's available (richer tool metadata, no shelling out); reach
+for the CLI door whenever it isn't.
 
 ### 4.1 Stand up `noodle-mcp`
 
@@ -248,32 +286,33 @@ someone asks the AI SDLC agent for a new test and wants it to show up on
 the Azure DevOps Allure tab:
 
 1. **Human asks** the agent, in English, for a test.
-2. **Agent calls `generate_test`** via MCP → Noodle writes a `.feature`
-   file (+ POM if needed) into the workspace's `noodle_tests/` dir. Deterministic,
-   no LLM needed on Noodle's side for this step.
-3. **Agent sanity-checks it** by calling `run_test` then `get_last_result`
-   (or `run_and_report` for a local HTML report) — this is the "taste it
-   before serving" step, running wherever `noodle-mcp` runs.
-4. **Agent commits and pushes** the new `.feature` file to the team's tests
-   repo (plain `git add/commit/push`, or the Azure DevOps REST API if the
-   agent has no local git checkout — `POST
-   _apis/git/repositories/{repo}/pushes` with a PAT/service principal).
-5. **Push triggers the Azure Pipeline** (§2/§3) automatically — it's
-   already listening on `main`/`develop`. *(Optional: the agent can queue
-   the pipeline explicitly instead of relying on the push trigger, via
-   `POST _apis/pipelines/{pipelineId}/runs` — useful if the branch isn't
-   one of the trigger branches, e.g. a feature branch under review.)*
-6. **Pipeline runs it for real** — same shard/run/report steps as any other
-   test, headless, in CI.
+2. **Agent authors it into the project repo's workspace** — `author_test` via
+   MCP, or `noodle task "…" -w <project>/tests/noodle --json` over the CLI
+   (§4.0). Noodle writes the `.feature` (+ POM) itself. Deterministic; no LLM
+   on Noodle's side.
+3. **Agent sanity-checks it.** Both doors already run and report in the same
+   call (`run_after_author` / `noodle task`), so this is usually free — a red
+   result comes back with the compact RCA inline. This is the "taste it before
+   serving" step, on whatever machine the agent runs.
+4. **Agent commits the test on the app's own branch.** It's a file in the
+   checkout the agent already has, so this is `git add tests/noodle && git
+   commit` alongside the application change — same branch, same PR.
+5. **The project's own pipeline runs on that PR** (§3, and
+   [ci-project-repo.md](ci-project-repo.md)) — no cross-repo push, no PAT, no
+   explicit queue call.
+6. **Pipeline runs it for real** — sharded, headless, in CI.
 7. **Team opens the Azure DevOps run → Allure Report tab.** That's the
-   hosted, trend-tracked report. The agent can also just report back the
-   pass/fail from step 3 immediately, without waiting for CI, if the human
-   just wants a quick answer.
+   hosted, trend-tracked report. The agent can also report back the pass/fail
+   from step 3 immediately, without waiting for CI, if the human just wants a
+   quick answer.
 
 Steps 1–3 are "the agent talking to Noodle." Steps 4–7 are "getting it
 into Azure DevOps's system of record." Both matter, but they're different
 loops — don't expect step 3's local report to *be* the Allure tab; the tab
 is a CI artifact.
+
+*(Using a separate tests repo instead (§3, alternative)? Then step 4 is a push
+to that repo and step 5 does **not** fire automatically — see the §6 gotcha.)*
 
 ## 6. Worked example: a multi-agent "Squad" pattern
 
@@ -305,10 +344,11 @@ dictionary or POM resolution order; only Noodle does.
 
 **Where test cases live — three repos, not two.** Not in Squad's repo
 (code-gen logic shouldn't fill up with `.feature` files), not in Noodle's
-engine repo either (generic — shouldn't fill up with one team's tests). A
-dedicated **tests repo**, scaffolded once with `noodle init .`, grows over
-time as Squad generates more tests, independent of both. This is exactly
-the `useExternalTestsRepo` shape from §3.
+engine repo either (generic — shouldn't fill up with one team's tests).
+Default is the **project repo** whose application is under test: Squad already
+has it checked out, so the test lands in the same PR as the code (§3). A
+dedicated tests repo is the fallback for a locked-down app repo — that's the
+`useExternalTestsRepo` shape, and it carries the trigger gotcha below.
 
 ```mermaid
 flowchart TD
@@ -336,16 +376,18 @@ Container App or AKS pod, `--transport streamable-http`) and an API key
 for that endpoint (Key Vault, sent as a bearer token — never in Squad's
 prompt/config in plaintext).
 
-**Gotcha: pushing to the tests repo doesn't auto-trigger the pipeline.**
-`azure-pipelines.yml`'s `trigger:` block only watches **this** repo (the
-engine), not an external tests repo declared via `resources.repositories`.
-A push to the tests repo does **not** auto-trigger the pipeline the way
-pushing to this repo does — Squad's agent needs to explicitly queue the
-run after pushing, via `POST _apis/pipelines/{pipelineId}/runs` with the
-`useExternalTestsRepo`/`testsRepoName`/`testsRepoDir` parameters set in
-the request body (same call as §5 step 5). Worth calling out because it's
-the first thing that looks broken ("I pushed, nothing happened") if you
-don't know it's expected.
+**Gotcha, separate-tests-repo only: pushing there doesn't auto-trigger the
+pipeline.** `azure-pipelines.yml`'s `trigger:` block only watches **this**
+repo (the engine), not an external tests repo declared via
+`resources.repositories`. Squad's agent has to explicitly queue the run after
+pushing, via `POST _apis/pipelines/{pipelineId}/runs` with the
+`useExternalTestsRepo`/`testsRepoName`/`testsRepoDir` parameters in the
+request body. It's the first thing that looks broken ("I pushed, nothing
+happened") if you don't know it's expected.
+
+The project-repo default (§3) has no such gotcha — the test is a file on the
+app's own branch, so the app's own pipeline triggers on it like any other
+change. That's the main reason it's the default.
 
 ## 7. Checklist
 
@@ -356,11 +398,17 @@ don't know it's expected.
 - [ ] Pipeline created from `azure-pipelines.yml`, run once manually to confirm Tests tab + Allure Report tab
 - [ ] (If hosting `noodle-mcp` remotely) container/VM stood up, `NOODLE_MCP_API_KEY` in Key Vault
 
-**Per team bringing their own tests:**
+**Per project repo (the default — [ci-project-repo.md](ci-project-repo.md)):**
+- [ ] `noodle init tests/noodle` run in the project repo and committed
+- [ ] Engine declared as a `resources.repositories` entry, pinned to a tag
+- [ ] `ci/azure/noodle-tests.yml@noodle` added as a job in the project's pipeline
+- [ ] Secrets reachable: `keyVaultUrl`, or an explicit `secretEnv` map
+
+**Per team using a separate tests repo instead:**
 - [ ] `noodle init .` in their own repo
 - [ ] `useExternalTestsRepo`/`testsRepoType`/`testsRepoName`/`testsRepoRef`/`testsRepoDir` parameters queued on this repo's pipeline
 
 **Per AI SDLC agent integration:**
-- [ ] `noodle-mcp` reachable (stdio or streamable-http) from the agent
-- [ ] Agent wired to the MCP tools (LangChain adapter, MAF tool classes, or Foundry MCP tool)
-- [ ] Agent's push/queue step confirmed to actually trigger the pipeline (see §6 gotcha if using an external tests repo)
+- [ ] A door confirmed reachable: `noodle-mcp` (stdio or streamable-http), **or** the CLI (§4.0) where MCP isn't allowed
+- [ ] Agent wired to it — MCP tools (LangChain adapter, MAF tool classes, Foundry MCP tool), or `noodle task --contract` fetched once
+- [ ] Agent's commit lands on the app's branch (project-repo default), or its push/queue step confirmed to trigger the pipeline (see §6 gotcha for a separate tests repo)

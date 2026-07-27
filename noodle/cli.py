@@ -1090,7 +1090,10 @@ North star: deterministic, plain-English, token-cheap, honest.
 
 Nouns: **engine** = the installed framework (never edited here);
 THIS folder = a **workspace** (`noodle init`; refresh `--force`);
-**wok** = capability area, tag-routed (`read_docs('woks')`).
+**wok** = capability area, tag-routed (`read_docs('woks')`). Noodle is
+universal, not web-only: independent woks are web · api (REST,
+browserless, `@api` — `read_docs('steps_dictionary', query='REST')`) ·
+mobile · desktop · perf. Never say "Noodle can't": read the wok.
 
 ## The pipeline — 3 operations
 
@@ -1107,22 +1110,19 @@ THIS folder = a **workspace** (`noodle init`; refresh `--force`);
 2. Author once — reuse first: `list_tests(query=<app>)`; copying a
    green same-app test and retargeting `{env:}` beats authoring
    (playbook §1).
-   `author_test` (`noodle author --spec -` heredoc — no temp spec
-   file; keys in the tool schema / `--help`): the whole package in one
+   `author_test` (`noodle author --spec -`): the whole package in one
    transaction. New single-flow test: `--prompt` (numbered user steps,
    passed RAW) or `goal`, + `--run` — THE rule;
-   `after: start|<action id>` anchors a check to its page (none =
-   end state);
    feature_content only on a named goal blocker. `ready: true` =
    parsed, matched, POM scoped, `{env:}` resolved — do not validate/
    preflight separately; run next. `ready: false`? Fix `blocking`,
    re-author — no bypass, no guessed action. Base URL lands in
    `resources/environments.yaml` under the returned `base_url_key`;
    use that key. Steps: probe output or `search_step`
-   (`noodle steps <kw>…` — all words, ONE call); never `use_llm=True`
-   when you can author
-   directly; `append_to` adds a scenario sans regen (llm-performance).
-   Result-pick binding and `evidence: screenshot`: playbook.
+   (`noodle steps <kw>…` — all words, ONE call); `use_llm=True` last;
+   `append_to` adds a scenario sans regen (llm-performance).
+   Result-pick binding, `after:` check anchoring and
+   `evidence: screenshot`: playbook.
 3. Execute + report — one call: `run_and_report` with `headless=True,
    retries=0, serve_reports=True` (`noodle run noodle_tests/<app>
    --headless --retries 0 --json --serve`): preflights secrets, runs,
@@ -1138,8 +1138,8 @@ screenshot/network capture only if
 inconclusive — vision costs ~10× text. Reproduce it ONCE (`probe
 --do` replays the flow), re-author from evidence; cause-backed fixes
 only, cap NOODLE_DEV_FIX_ATTEMPTS (default 10).
-Wrong element? `noodle inspect <url> "<phrase>"` (`inspect_locator`).
-Hand-edited? `validate_feature` before re-running. Failure taxonomy
+Hand-edited? `validate_feature` before re-running. Wrong element
+(`inspect_locator`) and the failure taxonomy
 (mutation-failed = fix the ACTION, never the assertion): playbook.
 
 ## Rules
@@ -1164,7 +1164,7 @@ Hand-edited? `validate_feature` before re-running. Failure taxonomy
 - Progress updates: max 2 sentences of current intent (e.g. "Serving
   the reports now"); quote only failing steps/errors. "do not output
   the shell command"? Then echo no command line.
-- Keep each app's files in its own package: features, resources, report.
+- Keep each app's files in its own package.
 - This file and the skill card are already in context — don't re-read
   them. Scope every search to the app package, never `artifacts/`.
 - Session diagnostics: a run result flags `diagnostic_due`,
@@ -1747,6 +1747,57 @@ def author(
             typer.echo(f"    {b}")
         raise typer.Exit(1)
     raise typer.Exit(0)
+
+
+@app.command()
+def task(
+    text: str = typer.Argument(None, help="What you want, in plain English — 'write a test that ...', 'run the tests', 'did it pass'. Noodle picks the command."),
+    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    tag: str = typer.Option(None, "--tag", "-t", help="Filter a run to this tag"),
+    headed: bool = typer.Option(False, "--headed", help="Visible browser (local demo; CI and containers are headless)"),
+    no_serve: bool = typer.Option(False, "--no-serve", help="Skip hosting the reports afterwards"),
+    show_contract: bool = typer.Option(False, "--contract", help="Print the calling contract (intents, prompt grammar, goal vocabulary, envelope schema) and exit — fetch this ONCE instead of learning the grammar through rejections."),
+    as_json: bool = typer.Option(True, "--json/--no-json", help="One bounded JSON envelope (default) or a short human summary"),
+):
+    """NOOD_0191 — one door: free text in, one envelope out.
+
+    Routes to the command you meant — generate / update / run / report /
+    verdict — by a deterministic keyword scan, with no recognized verb
+    defaulting to generate. Dispatches to commands that already exist; it
+    adds no authoring logic and makes no LLM call.
+
+    When the text can't be compiled it does NOT guess: the envelope carries
+    `need` (the missing inputs), `grammar` and `next`, so a driving agent
+    fills them in and re-sends. `--contract` returns that grammar up front."""
+    from noodle.repl import task as _task
+    if show_contract:
+        _json_out(_task.contract())
+        raise typer.Exit(0)
+    if not text:
+        raise typer.BadParameter("pass the task text, or --contract",
+                                 param_hint="'TEXT'")
+    result = _task.route(text, workspace=workspace, tag=tag,
+                         headless=not headed, serve=not no_serve)
+    if as_json:
+        _json_out(result)
+        raise typer.Exit(0 if result["ok"] else 1)
+    typer.echo(f"  · intent: {result['intent']} ({result['confidence']})")
+    if result.get("feature"):
+        typer.echo(f"  · feature: {result['feature']}")
+    if result.get("run"):
+        r = result["run"]
+        typer.echo(f"  {'✓' if result['ok'] else '✗'} "
+                   f"{r.get('passed', 0)} passed, {r.get('failed', 0)} failed"
+                   f" — {result.get('verdict')}")
+    for url in result.get("reports") or []:
+        typer.echo(f"    {url}")
+    if result.get("error"):
+        typer.echo(f"  ✗ {result['error']}")
+    if result.get("need"):
+        typer.echo(f"  → need: {', '.join(result['need'])}")
+    if result.get("next"):
+        typer.echo(f"  → next: {result['next']}")
+    raise typer.Exit(0 if result["ok"] else 1)
 
 
 @app.command()

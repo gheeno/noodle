@@ -24,12 +24,28 @@ from pathlib import Path
 # automation-friendly site (Wikipedia) on purpose: typeahead suggestion,
 # popup tolerance, cross-page navigation and plain-text assertions are the
 # capabilities under test, and the benchmark must go green from any machine —
-# retail sites bot-gate automated browsers (the original Canadian Tire pair,
+# retail sites bot-gate automated browsers (the original retail-store pair,
 # kept in docs/feature-regression.md as a live drill, proved that). Site
 # drift = update the content here, never the scoring.
-# Both are numbered PROMPTS — the plain-English path a human/agent actually
+# tc1/tc2 are numbered PROMPTS — the plain-English path a human/agent actually
 # sends (the AC: the benchmark must mimic real usage, never hand-built
 # specs). tc1's suggestion click is prompt vocabulary since NOOD_0185.
+#
+# NOOD_0191 — tc3 covers the other real shape: CROSS-WOK. "Fetch or seed over
+# the API, then prove it rendered in the UI" is the most common mix in a real
+# suite (most UI is an API with a face on it), and nothing guarded it end to
+# end. What it actually exercises, verified by mutation when it landed
+# (breaking rest_extract_json turned tc3 red and left tc1/tc2 green): the REST
+# client itself, {var:} chaining from a response field into a later web step,
+# {env:} resolution across both step families in one scenario, and the
+# feature_content authoring door — which nothing else in the benchmark
+# touches. It does NOT exercise the runner's browserless `rest_*` exemption:
+# this scenario is @web, so `page` is never None and that guard never fires
+# (unit_tests/woks/api/ covers it instead).
+#
+# feature_content mode because that is the honest path for a cross-wok test
+# today — the prompt/goal compiler is web-only, so this IS hand-authored
+# Gherkin, and the benchmark should measure the door a real user would use.
 PROMPTS = [
     {"id": "tc1_search_suggestion", "mode": "prompt",
      "content": """1. Go to the URL https://en.wikipedia.org/wiki/Main_Page
@@ -44,6 +60,28 @@ PROMPTS = [
 4. Verify "Password"
 5. Verify "Confirm password"
 6. Verify "Email address\""""},
+    {"id": "tc3_api_seeds_ui_verifies", "mode": "feature_content",
+     "app_name": "wikipedia_crosswok",
+     "base_url": "https://en.wikipedia.org",
+     "feature_path": "noodle_tests/web/wikipedia_crosswok/features/"
+                     "api_seeds_ui_verifies.feature",
+     "environment_values": {"WIKI_API": "https://en.wikipedia.org/api/rest_v1",
+                            "WIKI": "https://en.wikipedia.org/wiki"},
+     # @web, NOT @api: @api means "start no browser", which would kill the UI
+     # half. REST steps need no tag at all — they are plain I/O, legal in
+     # every scenario (docs/woks.md § The API wok is a lifecycle, not a gate).
+     "content": """@web
+Feature: Cross-wok — the API supplies the data, the UI proves it
+
+  Scenario: A value fetched over REST is verified in the browser
+    Given sets {var:REST_BASE_URL} to '{env:WIKI_API}'
+    When performs a GET call at '/page/summary/Vacuum_cleaner'
+    Then the response status should be 200
+    And extracts 'title' from response storing in {var:TITLE}
+    Given User is on '{env:WIKI}/{var:TITLE}'
+    Then User should see "{var:TITLE}"
+    And User should see "From Wikipedia, the free encyclopedia"
+"""},
 ]
 
 # Per-test-case ceilings — the definition of "not regressed": on time and
@@ -69,8 +107,15 @@ def _case(prompt: dict, workspace: str) -> dict:
     """
     from noodle.repl import core
     t0 = time.monotonic()
-    kw = {"prompt": prompt["content"], "run_after_author": True,
-          "workspace": workspace}
+    if prompt.get("mode") == "feature_content":
+        kw = {k: prompt[k] for k in ("app_name", "base_url", "feature_path")}
+        kw["feature_content"] = prompt["content"]
+        if prompt.get("environment_values"):
+            kw["environment_values"] = prompt["environment_values"]
+        kw |= {"run_after_author": True, "workspace": workspace}
+    else:
+        kw = {"prompt": prompt["content"], "run_after_author": True,
+              "workspace": workspace}
     res = core.author_test(**kw)
     reauthors = 0
     if not (res.get("author") or {}).get("ready"):
@@ -80,14 +125,29 @@ def _case(prompt: dict, workspace: str) -> dict:
     author, run = res.get("author") or {}, res.get("run") or {}
     compiled = author.get("compiled") or {}
     feature, pom = compiled.get("feature") or "", compiled.get("pom") or ""
+    # LINES measures what the ENGINE generated. feature_content supplies its
+    # own Gherkin, so nothing was generated and there is nothing to count —
+    # None (rendered "—", skipped by the average), never 0. A zero here would
+    # read as "the engine produced an empty test" and would drag the mean
+    # down with a number that was never measured.
+    lines = (len(feature.splitlines()) + len(pom.splitlines())
+             if compiled else None)
     return {"id": prompt["id"], "elapsed_s": round(elapsed, 1),
             "run_s": run.get("seconds"),
             "corrections": reauthors + len(run.get("healing_events") or [])
                            + len(run.get("flaky") or []),
-            "lines": len(feature.splitlines()) + len(pom.splitlines()),
+            "lines": lines,
             "green": bool(res.get("ok")) and not run.get("failed"),
+            # `intent_verified` answers "did the COMPILED goal match probe
+            # evidence" — it is `goal is not None and not blocking`, so it is
+            # structurally False for feature_content and demanding it there
+            # would score tc3 red forever. Hand-authored Gherkin states its
+            # intent literally; there is nothing inferred to verify against,
+            # so the run's own `verified` (no fuzzy healing behind the pass)
+            # IS the whole bar. Not a weaker AC — the right one per mode.
             "verified": run.get("verified") is True
-                        and author.get("intent_verified") is True,
+                        and (prompt.get("mode") == "feature_content"
+                             or author.get("intent_verified") is True),
             "feature": author.get("feature"),
             "error": res.get("error") or run.get("skipped")}
 

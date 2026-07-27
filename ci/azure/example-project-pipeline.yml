@@ -1,0 +1,63 @@
+# NOOD_0191 — copy this into a PROJECT repo (the app being built) as its
+# azure-pipelines.yml, or paste the two marked blocks into the pipeline it
+# already has. Nothing here belongs in the Noodle engine repo.
+#
+# Prerequisites, all one-time:
+#   1. The project repo has a Noodle workspace committed at tests/noodle/
+#      (`noodle init tests/noodle`, then commit it).
+#   2. The `qameta.allure-azure-pipelines` marketplace extension is installed
+#      once at ORGANIZATION level — without it the run still passes and
+#      publishes artifacts, but there is no browsable Allure Report tab.
+#   3. Whatever the tests need for credentials: either a Key Vault the agent
+#      identity can read, or a variable group with the keys mapped through
+#      `secretEnv` below.
+
+trigger:
+  - main
+
+# ─── block 1: declare the engine as a repository resource ──────────────────
+resources:
+  repositories:
+    - repository: noodle
+      type: git                    # 'github' for a GitHub-hosted engine
+      name: Tooling/noodle         # <Project>/<Repo> in Azure Repos
+      ref: refs/tags/1.0.0a7       # PIN IT. A moving ref is not a build.
+      # endpoint: my-github-connection   # only when type: github
+
+jobs:
+  # …the project's own build / test / deploy jobs stay exactly as they are…
+
+  # ─── block 2: add Noodle's tests alongside them ──────────────────────────
+  - template: ci/azure/noodle-tests.yml@noodle
+    parameters:
+      workspaceDir: tests/noodle   # where `noodle init` was run, committed
+
+      # Optional — every one of these has a working default.
+      # testTag: smoke             # only @smoke scenarios
+      # shard: false               # one job for the whole suite, no matrix
+      # maxParallel: 4
+      # pool:                      # a self-hosted pool instead of Microsoft's
+      #   name: my-linux-pool
+      # extras: '[visual]'         # ONLY if the suite uses @visual / @appium
+
+      # Secrets — pick ONE of these two.
+      #
+      # (a) Key Vault: one variable to map, and the engine resolves every key
+      #     from the vault at run time. Grant the agent identity get+list.
+      # keyVaultUrl: $(NOODLE_KEYVAULT_URL)
+      #
+      # (b) Explicit map, for teams not on Key Vault. Azure exposes non-secret
+      #     variable-group values as env automatically; SECRET ones must be
+      #     listed here or the run will not see them.
+      # secretEnv:
+      #   APP_PASSWORD: $(APP_PASSWORD)
+      #   API_KEY: $(API_KEY)
+
+# What the run produces:
+#   • "Allure Report" tab   — browsable, with cross-run trend history
+#   • "Tests" tab           — pass/fail per scenario, from JUnit
+#   • run summary           — the RCA markdown for every failure
+#   • NoodleTestArtifacts-* — screenshots, traces, videos, rca.html
+#
+# Runs are headless. Headed is the local demo path: `noodle run --headed` on a
+# developer's own machine.

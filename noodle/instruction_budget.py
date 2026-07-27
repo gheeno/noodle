@@ -44,6 +44,35 @@ Ceiling accounting (moved verbatim from the retired test asserts):
   the copilot card, which sat at 6 bytes (the NOOD_0160 floor lesson).
 - copilot digest 7168: first pinned by NOOD_0159 (it was the one always-on
   surface with no cap; 7058 bytes at pin time).
+- NOOD_0191: claude skill card 5888 → 6144, copilot 6144 → 6304 (+256/+160;
+  6037 and 6200 B used at the bump). A developer added the skill to their
+  work repo, asked for API tests, and the agent REFUSED — "Noodle is a web UI
+  testing framework, use pytest or Postman". Flatly wrong: Noodle is a
+  UNIVERSAL BDD framework and has shipped a browserless REST capability
+  (verbs, oauth2, status/body/header asserts, JSON extraction, five sample
+  features) since NOOD_0007 — promoted to its own `api` wok here. But the
+  agent reasoned correctly from what the card told it — the card opened
+  "Playwright+behave BDD", its `description` listed POM files and --headed,
+  and `@api` appeared exactly once inside a ten-tag list. What the +bytes buy
+  is the scope correction in the `description` (the string that decides
+  whether the skill applies AT ALL) plus one line naming the API wok and
+  saying "never refuse a non-web ask".
+  This is the clearest case yet of the §7 exception, and it is stronger than
+  NOOD_0179's flag-existence argument: an agent has to know a capability
+  exists before it will spend a call looking it up, and this one never made a
+  second call — it declined the whole request and recommended a competitor.
+  A doc section cannot fix a surface that talks the reader out of reading.
+  First attempt paid for it by deleting the fastest-path-first probe sentence
+  instead; test_nood_0101 and test_nood_0136 correctly refused that — those
+  are the narrow-exemption triggers from the 131-AIC session, not spare
+  bytes. Cutting a hard-won rule to fund a different one is not a saving.
+  _AGENTS_MD took the same scope line inside its cap, and the NOOD_0160
+  headroom FLOOR did its job — it refused the spend and forced three real
+  moves instead: `after:` check anchoring and `inspect_locator` to the
+  playbook (both already there), and the `--spec -` heredoc tip to
+  playbook §2 (a move, so it was ADDED there first). Folding the scope
+  sentence into the existing Nouns paragraph paid the rest. 5067 B used,
+  565 headroom — above the floor it started at.
 - hot docstrings 6144: probe_page + author_test + run_and_report + run_test,
   summed — the four schemas every MCP session carries.
 - NOOD_0160: −1039 bytes off _AGENTS_MD (5628 → 4589) — the first
@@ -96,8 +125,8 @@ CEILINGS: dict[str, int] = {
     "agents-md (cli._AGENTS_MD)": 5632,
     "prompt-template (cli._PROMPT_TEMPLATE)": 1024,
     "mcp-instructions (server._INSTRUCTIONS)": 2432,
-    "claude-skill-card (.claude/skills/noodle/SKILL.md)": 5888,
-    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 6144,
+    "claude-skill-card (.claude/skills/noodle/SKILL.md)": 6144,
+    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 6304,
     "copilot-digest (.github/copilot-instructions.md)": 7424,
     "hot-tool-docstrings (probe/author/run_and_report/run)": 6400,
     "cli-help (noodle probe --help)": 6400,

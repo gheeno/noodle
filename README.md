@@ -455,6 +455,12 @@ detail, including running another team's tests repo through this pipeline:
    **Artifacts** entry per shard (Allure report, RCA, screenshots, traces),
    and a merged, hosted **Allure Report tab** across every shard.
 
+**Building an application and want *its* pipeline to run *its* tests?**
+Commit a workspace at `tests/noodle`, then add this repo's ready-made
+template as a job — about twelve lines, and the test rides in the same PR as
+the feature it covers:
+**[docs/ci-project-repo.md](docs/ci-project-repo.md)**.
+
 ### Zero to hero — let your agent install it
 
 Open this repo in your AI coding agent's chat (Copilot, Claude Code,

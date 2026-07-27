@@ -18,11 +18,13 @@ this repo), **workspace** (the test project `noodle init` scaffolds), **wok**
 "Update our noodle wok mobile" means: extend the mobile capability in the
 engine and its per-wok tests, not a workspace's test suites.
 
-There are four woks:
+Noodle is a **universal** BDD test framework, not a web-UI one. There
+are five woks, each standing alone:
 
 | Wok | Tests | Engine(s) | Routing tags | Extras |
 |-----|-------|-----------|--------------|--------|
-| **Web** | browser apps, REST APIs, canvas/terminal-style UIs | Playwright · stdlib REST client · OCR pixel bridge | `@web` (default), `@api`, `@terminal` | none — core install |
+| **Web** | browser UI, canvas/terminal-style UIs | Playwright · OCR pixel bridge | `@web` (default), `@terminal` | none — core install |
+| **API** | REST services, browserless | stdlib REST client — no browser, no driver | `@api` | none — core install |
 | **Mobile** | native Android/iOS apps on device/emulator | Appium (UiAutomator2 / XCUITest) | `@appium`, `@android`, `@ios` | `noodle[mobile]` |
 | **Desktop** | native Windows/macOS apps, terminal UIs, spreadsheets — "complex UIs" | Visual agent (OpenCV + OCR + PyAutoGUI) · Appium (WinAppDriver / Mac2) · stdlib `.xlsx` reader | `@visual`, `@windows`, `@mac` | `noodle[visual,desktop,mobile]` |
 | **Performance** | HTTP load, latency/error/throughput gates | built-in threaded load generator (stdlib) | `@perf` | none — core install |
@@ -49,19 +51,61 @@ to what `hooks.py`/`catch_all.py` actually do.
 
 ---
 
-## The four woks in detail
+## The five woks in detail
 
 ### Web — the mature wok
 
 What Noodle grew up on: Playwright-driven browser automation with
 accessibility-first locators, POM fallback, self-healing, tracing, network
-capture, clock control and pre-boot script injection. REST testing (`@api`) and the pixel/OCR bridge for canvas and
-browser-embedded terminal UIs (`@terminal`) ride in this wok because they
-share the web session lifecycle. Nothing about it changed in NOOD_0155 —
-the wok concept formalizes the boundary around it.
+capture, clock control and pre-boot script injection. The pixel/OCR bridge
+for canvas and browser-embedded terminal UIs (`@terminal`) rides in this wok
+because it genuinely does share the web session lifecycle.
 
-- Samples: `sample_feature_tests/web/` (8 app packages), `api/`, `terminal/`
+- Samples: `sample_feature_tests/web/` (8 app packages), `terminal/`
 - Unit tests: `unit_tests/woks/web/` (boundary guards) + the whole legacy suite
+
+### API
+
+REST services, **browserless**. `@api` is the one tag that means "no browser
+at all": `hooks.before_scenario` nulls the page and returns before any launch,
+so an API-only suite runs in a CI image with no Playwright install and no
+browser download. Verbs (GET/POST/PUT/PATCH/DELETE), auth (bearer, basic, API
+key, OAuth2 client-credentials with one refresh-and-retry on 401), status /
+body / header assertions, JSON extraction with variable chaining, payload
+files, and per-step timeouts — full reference:
+[steps_dictionary.md § REST API Testing](steps_dictionary.md#rest-api-testing).
+
+Until NOOD_0191 this was filed under the web wok, on the grounds that REST
+"shares the web session lifecycle". It never did, and the mislabelling had a
+real cost: every always-on instruction surface described Noodle as a browser
+framework, so an agent asked to write API tests told the user to go use
+pytest or Postman instead.
+
+### The API wok is a lifecycle, not a gate
+
+Two facts, and conflating them is what caused that mess:
+
+1. **REST steps are plain I/O, available in every scenario.** No tag, no
+   setup, no "API mode" — the same class of thing as `run_command`, a
+   spreadsheet read, or a JDBC call to seed a fixture. Read the runner: a
+   step is only ever refused when `page is None`, and `rest_*` is exempt
+   there too, so REST is never gated at all. Reach for it wherever you'd
+   reach for a shell command.
+2. **The API wok is the browserless lifecycle**, for suites whose subject
+   *is* the API. `@api` means "start no browser" — a CI-image-size and
+   startup-cost decision (no Playwright install, no browser download, no
+   trace) — **not** permission to use REST steps.
+
+So: writing API tests needs no tag. Tag `@api` when you want the browser
+skipped, and only then.
+
+> **Honest gap:** there is no native SQL/DB step family today — the JDBC
+> comparison holds conceptually, but database setup currently goes through
+> `run_command`/`run_script` (both browserless, so they compose the same
+> way). A first-class DB step family is a candidate wok, not a shipped one.
+
+- Samples: `sample_feature_tests/api/` (5 worked feature files)
+- Unit tests: `unit_tests/woks/api/`
 
 ### Mobile
 
@@ -228,6 +272,29 @@ Scenario: Search the catalog for the movie named in the spreadsheet
   When User searches for "{var:TITLE}"
   Then User should see "{var:TITLE}"
 ```
+
+**API seeds, UI verifies** (api + web) — the most common mix, because most
+UI is an API with a face on it. Seed or fetch over REST, then assert it
+rendered:
+
+```gherkin
+@web
+Scenario: A value fetched over REST is verified in the browser
+  When performs a GET call at 'https://en.wikipedia.org/api/rest_v1/page/summary/Vacuum_cleaner'
+  Then the response status should be 200
+  And extracts 'title' from response storing in {var:TITLE}
+  Given User is on 'https://en.wikipedia.org/wiki/{var:TITLE}'
+  Then User should see "{var:TITLE}"
+```
+
+> **Tag it `@web`, never `@api`.** `@api` does not mean "this scenario has
+> API steps in it" — it means **no browser at all**
+> (`hooks.before_scenario` returns before any launch), which is what makes a
+> pure-API suite runnable on a browser-free CI image. REST steps are
+> browserless, so they already run in *any* scenario; adding `@api` to a
+> mixed one takes the browser away and the first web step fails with
+> `This step's action type isn't allow-listed for browserless (@api/@appium)
+> scenarios` — fix by removing the tag, not by rewriting the step.
 
 **Web seeds, perf gates** (web sets up state via REST/browser in one
 scenario; a `@perf` scenario in the same feature then load-tests the
