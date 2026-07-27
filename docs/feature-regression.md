@@ -18,7 +18,7 @@ one command, no MCP or skill file required.
 ## The flow
 
 ```
-noodle feature-regression            # prints the runbook, test cases, schema
+noodle feature-regression            # prints the runbook, exits 2 — it is NOT a run
 noodle feature-regression --init     # fresh per-build workspace (see below)
 noodle feature-regression --score results.json   # verdict, exit 1 = REGRESSED
 ```
@@ -65,6 +65,7 @@ what they cost — any pair works for a demo.
 | `run_s` | The generated test's own execution time — the `run.seconds` field of the author call's JSON. |
 | `development_s` | **Derived by the scorer:** `elapsed_s − run_s` — how long the LLM/agent spent *developing* the test case (prompt → authored `.feature`). This is what the time budget applies to. |
 | `tokens` / `aic` | The **driving agent's own** cost for that TC, **in the unit its host actually bills** (NOOD_0188) — host-reported; the engine cannot see the driving agent. `host` selects it: a `claude…` host is scored on `tokens` (input+output for that TC — Claude Code reports session usage via `/cost`, take the delta across the TC), a `copilot…` host on `aic` (premium requests). Fill the one that matches, leave the other `null`; the scorer flags the missing one as an unmeasured field. Scoring a Claude run in Copilot's unit (or vice-versa) made the cost half of the verdict meaningless on whichever host you weren't using. Absolute cost is not portable across hosts ([llm-performance.md §7](llm-performance.md)) — compare same host to same host. |
+| `cost_basis` | How the host cost was obtained: `"host-reported"` or `"measured: <what>"`. NOOD_0189: a cost of **0** is rejected as "unmeasured cost" unless `cost_basis` starts with `host-reported` — a driving agent always bills something, so a zero placeholder is not a measurement (it used to slip past the `> cap` check while `null` failed loudly). |
 | `corrections` | Accuracy proxy: every re-probe / re-author / re-run needed **after** the first `author --prompt --run` call. 0 is the expectation; a couple is tolerable; more means the engine sent the agent chasing. |
 | `green` / `verified` | The run contract: `failed == 0` **and** `verified: true`. A pass held up by fuzzy healing or lenient matching is not a pass. |
 | `engine_cost` | Noodle's own `NOODLE_MODEL` spend (`noodle cost --json`), separate from the host's AIC. |

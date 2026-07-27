@@ -174,6 +174,16 @@ def score(results: dict, workspace: str | None = None) -> dict:
             label = "tokens" if unit == "tokens" else "AIC"
             fails.append(f"over budget: {tc[cost_field]:,} {label} > "
                          f"{cost_cap:,.0f}")
+        # NOOD_0189 — a driving agent always bills something; cost_field == 0
+        # is a placeholder, and the > cap check waves it through while `null`
+        # would have failed as a missing measurement. Zero is only credible
+        # when the host actually reported it.
+        if tc.get(cost_field) == 0 and not str(
+                tc.get("cost_basis") or "").startswith("host-reported"):
+            fails.append(
+                f"unmeasured cost: {cost_field} = 0 with cost_basis "
+                f"{tc.get('cost_basis') or 'missing'!r} — a placeholder is not "
+                "a measurement (runbook step 7: report what YOUR host billed)")
         if tc.get("corrections") is not None and tc["corrections"] > b["max_corrections"]:
             fails.append(f"inaccurate: {tc['corrections']} corrections > {b['max_corrections']:.0f}")
         if tc.get("green") is False:
@@ -337,6 +347,12 @@ def runbook() -> str:
     ]
     for p in PROMPTS:
         lines += ["", f"--- {p['id']} ({p['mode']}) ---", p["content"]]
+    lines += [
+        "",
+        "This is the protocol, NOT a run — nothing above has executed yet. "
+        "Steps 1-10 are yours to perform; this command exits non-zero so a "
+        "printed runbook can never be reported as a completed benchmark.",
+    ]
     return "\n".join(lines)
 
 

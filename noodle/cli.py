@@ -1851,7 +1851,11 @@ def feature_regression(
         return
     if score_file is None:
         typer.echo(regression.runbook())
-        return
+        # NOOD_0189 — exit 0 let an agent report the printed protocol as a
+        # completed benchmark. This command has no execute mode; the runbook
+        # is an instruction to the caller, never a result. Exit 2, not 1:
+        # 1 already means REGRESSED (--score) / stale install (--init).
+        raise typer.Exit(2)
     # NOOD_0188 — score against the workspace holding the run's artifacts, so
     # the audit can cross-check the green/verified claims against last_run.json.
     verdict = regression.score(json.loads(Path(score_file).read_text()),
