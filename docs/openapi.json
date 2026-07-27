@@ -1,0 +1,2150 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Noodle Engine API",
+    "version": "1.0.0a9",
+    "description": "Drive the Noodle test engine from another system: every MCP tool as a plain JSON endpoint (NOOD_0193), for callers that can't speak MCP.\n\nThis is the ENGINE API \u2014 the caller side. It is not the 'api wok', which is Noodle testing someone else's REST service with @api feature files; nothing here is a test target.\n\nCalls are SYNCHRONOUS: a run returns when it finishes, so set client read timeouts in minutes, not seconds. One call runs at a time per server. Green means `failed == 0` AND `verified == true`."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "noodle-mcp --transport streamable-http"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    },
+    {
+      "apiKeyAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "tools",
+      "description": "the Noodle operations"
+    },
+    {
+      "name": "server",
+      "description": "discovery and liveness"
+    }
+  ],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Liveness + which build is running",
+        "operationId": "health",
+        "tags": [
+          "server"
+        ],
+        "responses": {
+          "200": {
+            "description": "version, pid, workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tools": {
+      "get": {
+        "summary": "Every tool with its JSON Schema",
+        "operationId": "listTools",
+        "tags": [
+          "server"
+        ],
+        "responses": {
+          "200": {
+            "description": "tool descriptors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tools/generate_test": {
+      "post": {
+        "summary": "Create a Gherkin .feature file + page-object skeleton from a plain-English",
+        "description": "Create a Gherkin .feature file + page-object skeleton from a plain-English\n    description of a web test. Rule-based templates by default (login / search /\n    checkbox / dropdown / generic, with quoted values slot-filled); use_llm=True\n    routes generation through the workspace's configured NOODLE_MODEL instead.\n    A bare @tag token in `description` (e.g. \"tag this @smoke\") is added to\n    the generated scenario(s). append_to (an existing feature's file stem,\n    e.g. \"search_suggestion\") adds this test case's scenario(s) to that file\n    instead of writing a separate one \u2014 same app/topic, one more scenario;\n    omit it to always get a new .feature file, e.g. for a different suite or\n    topic (rule-based generation only; ignored with use_llm). Returns the\n    written file paths, whether the test is runnable as-is (runnable=False\n    means <placeholders> still need real values), and the generator's log\n    output. workspace overrides the server's default workspace for this call.",
+        "operationId": "generate_test",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "url": {
+                    "title": "Url",
+                    "type": "string"
+                  },
+                  "description": {
+                    "title": "Description",
+                    "type": "string"
+                  },
+                  "use_llm": {
+                    "default": false,
+                    "title": "Use Llm",
+                    "type": "boolean"
+                  },
+                  "overwrite": {
+                    "default": false,
+                    "title": "Overwrite",
+                    "type": "boolean"
+                  },
+                  "append_to": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Append To"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "required": [
+                  "url",
+                  "description"
+                ],
+                "title": "generate_testArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/run_test": {
+      "post": {
+        "summary": "Run a test WITHOUT the report/serve/RCA tail \u2014 prefer run_and_report,",
+        "description": "Run a test WITHOUT the report/serve/RCA tail \u2014 prefer run_and_report,\n    which wraps this run in the one-call pipeline. target is a feature\n    name, stem substring, or path; omit it to run the last generated/run\n    feature (falls back to the newest .feature). tag runs a tag filter\n    instead. workspace may point at one app package \u2014 that app runs and its\n    artifacts land in its own report/ folder. Pass headless=True when an\n    agent drives (the .env default is headed, for a watching human) and\n    retries=0 until green (the default retry re-runs a failing scenario,\n    doubling failed-lap wall time). browser\n    (chromium|firefox|webkit|safari|edge), parallel (N feature files via\n    behavex, web only) and parallel_scheme (feature|scenario) mirror the CLI\n    flags. Returns exit code + structured pass/fail counts and per-failure\n    details. workspace overrides the server's default.",
+        "operationId": "run_test",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "target": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Target"
+                  },
+                  "tag": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Tag"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  },
+                  "headless": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Headless"
+                  },
+                  "browser": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Browser"
+                  },
+                  "retries": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Retries"
+                  },
+                  "parallel": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Parallel"
+                  },
+                  "parallel_scheme": {
+                    "default": "feature",
+                    "title": "Parallel Scheme",
+                    "type": "string"
+                  }
+                },
+                "title": "run_testArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/get_last_result": {
+      "post": {
+        "summary": "Structured result of the most recent test run: passed/failed counts,",
+        "description": "Structured result of the most recent test run: passed/failed counts,\n    each failure's feature, scenario, failing step and error message, and the\n    total wall-clock seconds. workspace overrides the server's default\n    workspace for this call.",
+        "operationId": "get_last_result",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "title": "get_last_resultArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/run_and_report": {
+      "post": {
+        "summary": "THE execution operation: preflight \u2192 run \u2192 report \u2192 serve, one bounded",
+        "description": "THE execution operation: preflight \u2192 run \u2192 report \u2192 serve, one bounded\n    payload. A missing/placeholder {env:KEY} returns missing_secret_keys with\n    ZERO browser launches. The run hook's reports are freshness-checked\n    once (rebuilt only if stale); serve_reports defaults True \u2014 the workflow\n    ends on served Allure+RCA URLs, never file paths. On red the\n    payload carries rca_compact (verdict + failing step + fix): read that, do\n    not call get_rca separately; on a locator/state failure reproduce that\n    exact state ONCE (probe_page do=[the flow]) and re-author from evidence\n    \u2014 never one guessed fix per red run. Same target and\n    headless/browser/retries/parallel flags as run_test (pass headless=True,\n    retries=0 while iterating). workspace overrides the server's default.",
+        "operationId": "run_and_report",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "target": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Target"
+                  },
+                  "tag": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Tag"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  },
+                  "headless": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Headless"
+                  },
+                  "browser": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Browser"
+                  },
+                  "retries": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Retries"
+                  },
+                  "parallel": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Parallel"
+                  },
+                  "parallel_scheme": {
+                    "default": "feature",
+                    "title": "Parallel Scheme",
+                    "type": "string"
+                  },
+                  "serve_reports": {
+                    "default": true,
+                    "title": "Serve Reports",
+                    "type": "boolean"
+                  }
+                },
+                "title": "run_and_reportArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/preflight": {
+      "post": {
+        "summary": "NOOD_0128 \u2014 check a test is runnable BEFORE launching a browser: every",
+        "description": "NOOD_0128 \u2014 check a test is runnable BEFORE launching a browser: every\n    {env:KEY} it references resolves to a real value (not missing, not a\n    CHANGE_ME/empty placeholder), and no redundant post-navigation waits. Same\n    target resolution as run_test. Returns {ok, missing_secret_keys, errors,\n    warnings}; run_and_report runs this automatically. Use it standalone to\n    tell the user which secret keys to populate in the gitignored secrets.env\n    before a run. workspace overrides the server's default workspace.",
+        "operationId": "preflight",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "target": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Target"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "title": "preflightArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/author_test": {
+      "post": {
+        "summary": "Write a whole test package in ONE transaction (web/<app_name> or",
+        "description": "Write a whole test package in ONE transaction (web/<app_name> or\n    the existing package mapped to base_url \u2014 environments.yaml, POM,\n    feature): validated first; any failure rolls every byte back.\n    feature_content / pom_content are each ONE string.\n    secret_values ({KEY: value}) is WRITE-ONLY (gitignored\n    <app>_secrets.env, never echoed); missing required_secret_keys become\n    placeholders. `prompt`: numbered plain-English steps, expanded\n    DETERMINISTICALLY to a goal (underspecified steps borrow from\n    neighbours, inferences echoed as prompt_expansion.assumptions; a\n    URL derives the three path params).\n\n    ELSE prefer `goal` (mutually exclusive w/ feature_content): {scenario,\n    navigation?: [ordered URLs, an {env:} Given each],\n    actions: [{do: search|suggest|pick|add_to|click|enter|select|check|\n    uncheck|hover|upload|press_key|pick_date|go_back, id?, term/target/\n    value/option/file/key/date; pick binds 'any matching result' to ONE\n    probed result item; add_to = {item_from: pick-id, destination},\n    engine-lowered to observed controls; never invent surface steps}],\n    checks: [{see|not_see|count|any_of|field|item_in_destination|\n    url_contains, min?, value?,\n    expected_from?: pick-id, evidence?: screenshot, after?: action-id}],\n    dismissals?, probe?: {discover}}. item_in_destination re-asserts the\n    bound caption (identity, not count). ONE goal-scoped probe,\n    engine-compiled feature + POM; unproven requests block, never drop.\n    Payloads carry goal_verified, intent_verified + intent_trace; a block\n    names ONE typed next_action \u2014 repair that gap only. Manual\n    feature_content is never intent_verified; allow_unverified_intent is\n    a human-only override.\n    run_after_author=true also runs once (headless, retries=0), serves\n    both reports, returns {author, run}; 0 passed = failure.\n\n    Returns paths, warnings, missing_secret_keys, base_url_key (use that\n    exact {env:} key), and ready+blocking. ready=true = static authoring\n    checks \u2014 never validate/preflight separately; run next. ready=false:\n    fix `blocking`, re-author with overwrite=true. workspace overrides\n    the server default.",
+        "operationId": "author_test",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "app_name": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "App Name"
+                  },
+                  "base_url": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Base Url"
+                  },
+                  "feature_path": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Feature Path"
+                  },
+                  "feature_content": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Feature Content"
+                  },
+                  "pom_content": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Pom Content"
+                  },
+                  "environment_values": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Environment Values"
+                  },
+                  "required_secret_keys": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Required Secret Keys"
+                  },
+                  "secret_values": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Secret Values"
+                  },
+                  "goal": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": true,
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Goal"
+                  },
+                  "run_after_author": {
+                    "default": false,
+                    "title": "Run After Author",
+                    "type": "boolean"
+                  },
+                  "overwrite": {
+                    "default": false,
+                    "title": "Overwrite",
+                    "type": "boolean"
+                  },
+                  "allow_unverified_intent": {
+                    "default": false,
+                    "title": "Allow Unverified Intent",
+                    "type": "boolean"
+                  },
+                  "prompt": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Prompt"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "title": "author_testArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/list_tests": {
+      "post": {
+        "summary": "Inventory of every .feature in the workspace: path, feature name, tags,",
+        "description": "Inventory of every .feature in the workspace: path, feature name, tags,\n    scenario_count. No browser, nothing runs. Scenario NAMES are the bulk of\n    this payload, so they ship only for a query: pass query='<substring>'\n    (matches path, feature, scenario or tag) to get the matching features with\n    their scenario names. workspace overrides the server's default workspace\n    for this call.",
+        "operationId": "list_tests",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  },
+                  "query": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Query"
+                  }
+                },
+                "title": "list_testsArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/validate_feature": {
+      "post": {
+        "summary": "Dry-run Gherkin text against Noodle's deterministic step-pattern table",
+        "description": "Dry-run Gherkin text against Noodle's deterministic step-pattern table\n    without running anything. Returns per-step matched/unmatched so a calling\n    agent can fix unmatched steps before writing the file. workspace overrides\n    the server's default workspace for this call.",
+        "operationId": "validate_feature",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "content": {
+                    "title": "Content",
+                    "type": "string"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "required": [
+                  "content"
+                ],
+                "title": "validate_featureArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/write_feature": {
+      "post": {
+        "summary": "Write caller-authored Gherkin into the workspace (path must be under",
+        "description": "Write caller-authored Gherkin into the workspace (path must be under\n    the tests dir and end in .feature). Content is validated as Gherkin first;\n    steps that would need an LLM fallback at runtime are reported back.\n    workspace overrides the server's default workspace for this call.",
+        "operationId": "write_feature",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "path": {
+                    "title": "Path",
+                    "type": "string"
+                  },
+                  "content": {
+                    "title": "Content",
+                    "type": "string"
+                  },
+                  "overwrite": {
+                    "default": false,
+                    "title": "Overwrite",
+                    "type": "boolean"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "required": [
+                  "path",
+                  "content"
+                ],
+                "title": "write_featureArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/probe_page": {
+      "post": {
+        "summary": "Scout a page BEFORE authoring \u2014 fold ALL discovery into this one call;",
+        "description": "Scout a page BEFORE authoring \u2014 fold ALL discovery into this one call;\n    a second probe is a wasted browser launch. One headless load returns every\n    actionable control (hidden trigger zones included): kind, name, selector,\n    needs_pom with paste-ready pom_yaml, copy-ready suggested_steps (use\n    as-is \u2014 never re-derive via search_step), exact headings for assertions.\n    `click`: reveal-control names pressed in order (case/space-insensitive;\n    raw selectors pass; REAL clicks \u2014 never state-mutating).\n    `do`: ONE stateful transaction \u2014 \"enter <v> in <field>\" /\n    \"select <opt> from <dropdown>\" / \"click <name>\" /\n    \"switch to <new|original> tab\" in order, run for REAL (save/submit\n    included), each delta under \"revealed\"; {env:KEY} resolves engine-side\n    (never paste a raw secret). A click opening a NEW TAB is followed, probed\n    as its own block with the exact switch steps, and the transaction\n    continues there.\n    `open_native_controls`: enumerates <select> options and click-opens\n    custom comboboxes (bounded, never state-mutating) \u2192 `dropdown_options`.\n    `search`: runs the site search, summarizes the results page incl. the\n    \"NN results\" element + count-floor assertion. `suggest` (NOOD_0141):\n    types the term per-character and captures the TYPEAHEAD \u2014 exact strings,\n    row selectors, copy-ready steps; use when the goal picks a suggestion.\n    `follow` (with suggest): clicks the row matching this text (fuzzy),\n    summarizes the landed page; steps carry EXACT row text. `expect`: texts\n    verified on the final page, found/not-found each; hits become\n    `should see` steps. `discover` (NOOD_0136): bounded depth-1 auto-reveal\n    when you DON'T know trigger names (never a state-mutating name); popups,\n    permission prompts, search and requested assertions do NOT imply\n    discover. Iframes/open shadow roots are collected (scoped \"frames\" blocks\n    carry switch-frame; POM can't reach into a frame). Selectors are proven\n    unique in scope; `author_ready: false` = fix the named warning first.\n    Canvas-only/Flutter without semantics = coverage: visual_only, not fake\n    selectors. compact=True (default) = bounded author-ready payload; `brief`\n    sends the step sentences once as `step_templates` + `step_names` (rows\n    needing a POM entry keep their exact step).\n    `find`: only matches, pre-cap \u2014 no spill greps. `url`: several URLs OK\n    (space/comma), one browser, acts on the LAST.",
+        "operationId": "probe_page",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "url": {
+                    "title": "Url",
+                    "type": "string"
+                  },
+                  "click": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Click"
+                  },
+                  "do": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Do"
+                  },
+                  "search": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Search"
+                  },
+                  "suggest": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Suggest"
+                  },
+                  "follow": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Follow"
+                  },
+                  "expect": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Expect"
+                  },
+                  "compact": {
+                    "default": true,
+                    "title": "Compact",
+                    "type": "boolean"
+                  },
+                  "brief": {
+                    "default": false,
+                    "title": "Brief",
+                    "type": "boolean"
+                  },
+                  "open_native_controls": {
+                    "default": false,
+                    "title": "Open Native Controls",
+                    "type": "boolean"
+                  },
+                  "max_reveal_depth": {
+                    "default": 1,
+                    "title": "Max Reveal Depth",
+                    "type": "integer"
+                  },
+                  "discover": {
+                    "default": false,
+                    "title": "Discover",
+                    "type": "boolean"
+                  },
+                  "find": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Find"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "required": [
+                  "url"
+                ],
+                "title": "probe_pageArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/probe_app": {
+      "post": {
+        "summary": "NOOD_0136 \u2014 native-app probe, the probe_page of Appium: start the",
+        "description": "NOOD_0136 \u2014 native-app probe, the probe_page of Appium: start the\n    platform's session (android|ios|windows|mac; app from NOODLE_<PLATFORM>_APP,\n    NOODLE_APPIUM_CAPS / NOODLE_APPIUM_URL honoured like a tagged run),\n    snapshot the accessibility tree ONCE, and return every interactive node\n    normalized: kind, name, lookup strategy (accessibility_id / id / xpath \u2014\n    the same chain steps resolve through), visibility/enabled state, suggested\n    step, and paste-ready POM entries for nameless nodes. Snapshot-only \u2014\n    nothing is tapped; reach deeper app states by running an explicit\n    scenario. A tree with no accessible names returns coverage: visual_only\n    with the @ocr_fallback guidance instead of fabricated selectors. compact\n    (default true, like probe_page) caps the node list at 25 visible-first with\n    a `truncated` note \u2014 author_ready, coverage, warnings and POM entries are\n    never capped; pass compact=false only when the cap hid something.",
+        "operationId": "probe_app",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "platform": {
+                    "title": "Platform",
+                    "type": "string"
+                  },
+                  "compact": {
+                    "default": true,
+                    "title": "Compact",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "platform"
+                ],
+                "title": "probe_appArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/inspect_locator": {
+      "post": {
+        "summary": "Debug WHY a locator phrase does/doesn't resolve (NOOD_0115): opens url",
+        "description": "Debug WHY a locator phrase does/doesn't resolve (NOOD_0115): opens url\n    headless and runs the exact resolution machinery find() uses against\n    `text`, returning every candidate \u2014 source (visible text node / image alt /\n    aria-label / title / POM key / DOM attribute scan), match count, and\n    per-match tag/text/visibility \u2014 plus what find() actually picks and any\n    self-heal tier it needed. Call this when a step's element resolves to the\n    wrong thing or times out despite being on the page (e.g. a caption that\n    exists only as image alt text), instead of writing a throwaway Playwright\n    script to poke at the DOM.",
+        "operationId": "inspect_locator",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "url": {
+                    "title": "Url",
+                    "type": "string"
+                  },
+                  "text": {
+                    "title": "Text",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url",
+                  "text"
+                ],
+                "title": "inspect_locatorArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/search_step": {
+      "post": {
+        "summary": "Find the closest existing Noodle step for a plain-English action",
+        "description": "Find the closest existing Noodle step for a plain-English action\n    description (e.g. \"clear the cart\") from the curated step dictionary.\n    workspace overrides the server's default workspace for this call.",
+        "operationId": "search_step",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "query": {
+                    "title": "Query",
+                    "type": "string"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "required": [
+                  "query"
+                ],
+                "title": "search_stepArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/get_rca": {
+      "post": {
+        "summary": "Root-cause analysis of every failed/errored scenario from the last",
+        "description": "Root-cause analysis of every failed/errored scenario from the last\n    run. compact=True (default, NOOD_0117) is the cheap-evidence-first read:\n    verdict + failing step + suggested fix per failure, a few lines total \u2014\n    usually all a fix needs; read it BEFORE any screenshot (vision tokens)\n    or network capture. compact=False returns the full markdown report.\n    workspace overrides the server's default workspace for this call.",
+        "operationId": "get_rca",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  },
+                  "compact": {
+                    "default": true,
+                    "title": "Compact",
+                    "type": "boolean"
+                  }
+                },
+                "title": "get_rcaArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/log_diagnostic": {
+      "post": {
+        "summary": "NOOD_0147 \u2014 session-end failure self-report, called AT MOST ONCE per",
+        "description": "NOOD_0147 \u2014 session-end failure self-report, called AT MOST ONCE per\n    developed test and ONLY when a trigger fired: hard-fail (dev-fix cap\n    exhausted, still red), first-attempt-fail (first run of the fresh test\n    was red), slow-dev (wall clock over NOODLE_DIAG_SLOW_MIN, default 20\n    min), over-budget (YOUR own session spend over NOODLE_DIAG_COST_BUDGET,\n    default 20 AIC/credits), or manual (the user's prompt asked for a\n    diagnostic). Write everything from session memory \u2014 summary (required),\n    timeline, suspected_cause, fixes_tried, duration_min, attempts, agent\n    ('codex 5.3'), agent_cost ('23 AIC') \u2014 the engine appends the last-run\n    result, compact RCA verdict, llm_cost and version itself, and scrubs\n    secret values. The file lands in the workspace's gitignored\n    diagnostics/ folder, deduped per session and capped at NOODLE_DIAG_MAX\n    (default 25). No trigger fired \u2192 do not call this at all. workspace\n    overrides the server's default workspace for this call.",
+        "operationId": "log_diagnostic",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "app": {
+                    "title": "App",
+                    "type": "string"
+                  },
+                  "triggers": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "title": "Triggers",
+                    "type": "array"
+                  },
+                  "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                  },
+                  "timeline": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Timeline"
+                  },
+                  "suspected_cause": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Suspected Cause"
+                  },
+                  "fixes_tried": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Fixes Tried"
+                  },
+                  "duration_min": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Duration Min"
+                  },
+                  "attempts": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Attempts"
+                  },
+                  "agent": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Agent"
+                  },
+                  "agent_cost": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Agent Cost"
+                  },
+                  "session": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Session"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "required": [
+                  "app",
+                  "triggers",
+                  "summary"
+                ],
+                "title": "log_diagnosticArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/serve_report": {
+      "post": {
+        "summary": "NOOD_0082 \u2014 host the last run's reports (Allure HTML + rca.html under",
+        "description": "NOOD_0082 \u2014 host the last run's reports (Allure HTML + rca.html under\n    one URL root) on localhost, in the background: returns immediately with\n    the URLs to hand to the user. Missing reports are rebuilt from the last\n    run's allure-results first, so re-hosting works from a fresh server too.\n    port=0 (default) picks a free port. report_dir serves an older/extracted\n    report instead (see list_reports for what exists). Always binds 127.0.0.1\n    \u2014 reports can contain credential screenshots. NOOD_0161: the server is a\n    DETACHED child, so its URLs survive this MCP server restarting, and a live\n    server for the same reports root is reused \u2014 the URL stays the same run\n    after run. It lives until stop_report_server or `noodle report stop`.\n    workspace overrides the server's default workspace for this call.",
+        "operationId": "serve_report",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  },
+                  "report_dir": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Report Dir"
+                  },
+                  "port": {
+                    "default": 0,
+                    "title": "Port",
+                    "type": "integer"
+                  }
+                },
+                "title": "serve_reportArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/stop_report_server": {
+      "post": {
+        "summary": "Stop every report server this workspace hosts. NOOD_0161: that includes",
+        "description": "Stop every report server this workspace hosts. NOOD_0161: that includes\n    the detached children serve_report spawns, which outlive this MCP server \u2014\n    an in-process-only stop left them running and unstoppable from here. Call\n    it only once the user is done with the links: a stopped server is exactly\n    the \"this site can't be reached\" the user sees next time they click one.",
+        "operationId": "stop_report_server",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "title": "stop_report_serverArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/list_reports": {
+      "post": {
+        "summary": "NOOD_0082 \u2014 what can be served: the live reports root (whether the",
+        "description": "NOOD_0082 \u2014 what can be served: the live reports root (whether the\n    Allure report and rca.html exist, and when the Allure report was\n    generated) plus the timestamped archives/artifacts_<stamp>.zip snapshots\n    of earlier runs (`noodle report serve <stamp>` re-hosts one). workspace\n    overrides the server's default workspace for this call.",
+        "operationId": "list_reports",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "title": "list_reportsArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/init_workspace": {
+      "post": {
+        "summary": "Scaffold a fresh Noodle test workspace at path (created if missing) \u2014",
+        "description": "Scaffold a fresh Noodle test workspace at path (created if missing) \u2014\n    noodle.yaml, .env, README, AGENTS.md agent instructions, and a\n    noodle_tests/sample_app/ template package (features/, resources/,\n    report/), plus engine glue \u2014 the CLI's `noodle init` without a shell\n    (NOOD_0084). Existing\n    files are never overwritten, so it's safe on a partial workspace. llm\n    (ollama|claude|gemini) and model persist NOODLE_MODEL into the new .env.\n    No workspace resolution here \u2014 the directory doesn't exist yet by\n    definition \u2014 but over streamable-http the path must still fall under a\n    --workspace-root, same trust boundary as every other tool.",
+        "operationId": "init_workspace",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "path": {
+                    "title": "Path",
+                    "type": "string"
+                  },
+                  "llm": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Llm"
+                  },
+                  "model": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Model"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "title": "init_workspaceArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/scan_repo": {
+      "post": {
+        "summary": "NOOD_0192 \u2014 what is this repo, and what can Noodle test in it?",
+        "description": "NOOD_0192 \u2014 what is this repo, and what can Noodle test in it?\n\n    For the \"review this repo and write me tests for the new features\" ask,\n    which names no URL and no steps. A deterministic marker-file scan (no LLM,\n    no code execution, nothing written): stacks, frameworks, how the repo says\n    it serves itself (npm scripts / compose / Makefile), any OpenAPI spec WITH\n    its endpoint list \u2014 that is the API test plan the developer already wrote\n    \u2014 where tests already live, the candidate woks, and `questions`: what is\n    still missing before a test can be authored. Settle those with the\n    developer (or read them out of the code \u2014 you can, we can't), then call\n    author_test with the URL and numbered steps. Noodle never guesses a URL.\n    path defaults to the server's workspace.",
+        "operationId": "scan_repo",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "path": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Path"
+                  }
+                },
+                "title": "scan_repoArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/cost_estimate": {
+      "post": {
+        "summary": "Pre-flight LLM token/dollar estimate for a file (NOOD_0084): the",
+        "description": "Pre-flight LLM token/dollar estimate for a file (NOOD_0084): the\n    model-correct input-token count plus the input-cost dollar floor (output\n    tokens are unknowable pre-run). target is a prompt or .feature file,\n    resolved workspace-relative. model defaults to the workspace .env's\n    NOODLE_MODEL. This is the estimate half of `noodle cost`; the last run's\n    actual spend is get_last_result's llm_cost. workspace overrides the\n    server's default workspace for this call.",
+        "operationId": "cost_estimate",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "target": {
+                    "title": "Target",
+                    "type": "string"
+                  },
+                  "model": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Model"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "required": [
+                  "target"
+                ],
+                "title": "cost_estimateArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/server_info": {
+      "post": {
+        "summary": "Identity of this server process: installed noodle version, start time",
+        "description": "Identity of this server process: installed noodle version, start time\n    (UTC), pid, and default workspace. A running server never hot-reloads \u2014\n    call this when results look inconsistent with the code you just changed:\n    a started_at older than your last deploy/pull means the process is\n    serving stale code and needs a restart (see docs/mcp-guide.md).",
+        "operationId": "server_info",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {},
+                "title": "server_infoArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/read_docs": {
+      "post": {
+        "summary": "Framework documentation lookup (NOOD_0089) \u2014 keeps agent context lean:",
+        "description": "Framework documentation lookup (NOOD_0089) \u2014 keeps agent context lean:\n    call this when you need Noodle detail instead of guessing or pasting docs\n    into prompts. No args \u2192 the list of available docs, each with a one-line\n    summary and its byte cost. name (e.g. 'agent-playbook') \u2192 that doc, whole\n    when it is small; a large doc returns its SECTION INDEX instead\n    (NOOD_0158) \u2014 pick one and call again with section='<heading or its\n    number>' rather than pulling 57 KB into context. query \u2192 matching lines\n    (with doc + section + line) across all docs, for one fact, not a file.",
+        "operationId": "read_docs",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "name": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Name"
+                  },
+                  "query": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Query"
+                  },
+                  "section": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Section"
+                  }
+                },
+                "title": "read_docsArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    }
+  }
+}

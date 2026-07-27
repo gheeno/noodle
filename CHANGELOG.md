@@ -4,6 +4,103 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a9] — 2026-07-27
+
+**NOOD_0193** — feature: the MCP server's tools are also reachable as plain
+HTTP, for callers that can't speak MCP.
+
+### Added
+- `noodle-mcp --transport streamable-http` now also serves `GET /api/health`,
+  `GET /api/tools` and `POST /api/tools/<name>` alongside `/mcp`, on the same
+  port, behind the same `NOODLE_MCP_API_KEY` gate and the same
+  `--workspace-root` containment. No new flag, nothing extra to start.
+  A Java service, a `curl` step in CI, or a dashboard's `fetch` can call any
+  of the 23 tools with one POST — `/mcp` needs an `initialize` handshake, an
+  `mcp-session-id` header and SSE parsing, and answers a bare `tools/call`
+  with `400 Missing session ID`.
+- One dispatcher over the existing tool registry (`noodle/mcp/rest.py`), not a
+  hand-written route per tool: a tool added to `server.py` shows up on both
+  doorways at once, keeps its payload budget (NOOD_0164) and audit event
+  (NOOD_0172), and the surfaces cannot drift apart.
+
+- `GET /api/openapi.json` (OpenAPI 3.1) and `GET /api/docs` (Swagger UI).
+  The spec is **generated from the tool registry**, never hand-written, so it
+  can't describe an API Noodle doesn't have; a committed copy lives at
+  `docs/openapi.json` for generating clients with no server running
+  (`python -m noodle.mcp.rest > docs/openapi.json`, and a unit test fails if
+  it's stale). Generate a Java/.NET/Node client straight from it.
+- `docs/engine-api-guide.md` — setup guide for a developer who doesn't know Noodle:
+  install from the clone, start the server, then a worked example per
+  operation (author a test, update one, run single or parallel, get the
+  reports), plus how to read `failed`/`verified` and the gotchas.
+- **README § API mode** — the engine API is now one of the three ways to
+  drive Noodle on the front page, next to MCP mode and manual mode, with the
+  two commands that stand a server up and call it. Someone who clones this
+  repo and asks an agent "how do I use it" now finds the integration path
+  without opening the docs table.
+- **architecture.md § 2.5, "The engine surfaces"** — a new diagram for what
+  *drives* Noodle (CLI · MCP server · engine API · LSP) and how they converge
+  on one engine, plus the `Integrate` row in the component map. The doc
+  described the inside of a run in eight diagrams and the ways to start one in
+  none.
+
+### Fixed
+- **Three architecture diagrams didn't render at all.** Mermaid 11 reads a
+  bare `@` in an edge label as an edge-ID token, so `-->|@visual|` produced a
+  parse-error box on GitHub instead of the resolution-hierarchy and the two
+  LLM-layer diagrams. Labels are quoted now; all 15 diagrams across the docs
+  were rendered through `mermaid-cli` to confirm, and a unit test fails on the
+  next unquoted tag.
+- **Docs said "four woks"** — API became its own wok in NOOD_0191, but the
+  wok diagram still drew REST inside the web box, and README/woks.md still
+  counted four. Corrected, with the "REST steps work in any scenario, `@api`
+  only skips the browser" distinction stated where the diagram is.
+- Tool calls no longer block the whole server. FastMCP invokes sync tool
+  functions inline on the event loop, so a browser run stopped `/api/health`
+  from answering for its full duration — a liveness probe would have concluded
+  the pod was dead and restarted it mid-run. Tools now run in a worker thread,
+  serialized by one lock so behaviour is otherwise unchanged (concurrent runs
+  would race on `NOODLE_RUN_ID` and the workspace's single `report/` dir).
+  Caught by running a test *through* the API that called back into the same
+  server: red before, green after.
+- **CI, project-repo pipeline** (`ci/azure/noodle-tests.yml`) — three defects
+  found reviewing the two-repo model (engine repo + project repo on one Linux
+  agent), which otherwise works: verified end to end by installing the engine
+  non-editable from a path and running a workspace at another path — Allure,
+  RCA, junit and shard discovery all landed where the publish steps look.
+  - `keyVaultUrl` installed green and then died at `before_all` with "the Azure
+    SDK is missing": the template took the one secrets knob but never installed
+    the `azure` extra behind it. It now folds `[azure]` in itself (merging with
+    any existing `extras`), treating an unexpanded `$(VAR)` as "no vault" like
+    the engine does.
+  - `playwright install --with-deps` apt-gets system libraries and so needs
+    root, which a locked-down self-hosted agent doesn't grant — the job died
+    before any test ran, contradicting ci-project-repo.md § 7's "no sudo"
+    promise. Guarded by a `sudo -n` probe with a browser-only fallback and a
+    warning naming the one-time `playwright install-deps` fix.
+  - the copy-paste `ref: refs/tags/` examples still pinned `1.0.0a7`, two
+    bumps stale — pinning them is the NOOD_0133 failure in a new costume. Now
+    current, with a unit test tying them to `pyproject.toml`, and § 3
+    documents that the engine repo must actually be **tagged** (an
+    unresolvable `ref:` fails at compile time, before there's a log to read).
+
+### Notes
+- This is a second doorway, not a second API. When the caller shares the
+  machine, `noodle run --json` remains the cheaper path — no server, no key,
+  no port. `/api/*` is for remote callers that MCP doesn't reach.
+- `verdict.html` is deliberately NOT exposed: it's the engine-wide regression
+  benchmark (NOOD_0185, "did this Noodle build regress?"), not a per-run
+  report, and stays the `noodle feature-regression` CLI command. A caller's
+  per-run verdict is `failed`/`verified` in the run payload.
+- **"API" now means two things, so the docs always qualify it**: the **api
+  wok** is Noodle testing someone's REST service (`@api`); the **engine API**
+  is another system driving Noodle over HTTP. Pinned in
+  [glossary.md](docs/glossary.md), cross-referenced from both sides, and
+  guarded by a unit test — the guide is named `engine-api-guide.md` rather than
+  `api-guide.md` precisely so nobody looking for the wok opens it.
+- Docs: [engine-api-guide.md](docs/engine-api-guide.md),
+  [mcp-guide.md § 8.1](docs/mcp-guide.md#81-plain-http-for-non-mcp-callers-nood_0193).
+
 ## [1.0.0a8] — 2026-07-27
 
 **NOOD_0192** — feature: the api wok authors from a prompt (alone or mixed

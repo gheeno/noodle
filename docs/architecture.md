@@ -17,6 +17,7 @@ is the deep dive behind it.
 
 1. [Mental model — vs Selenium / Selenide / Appium](#1-mental-model)
 2. [The component map](#2-the-component-map)
+   — including [the engine surfaces](#the-engine-surfaces--how-something-drives-noodle): CLI, MCP, engine API, LSP
 3. [A step's lifecycle, start to finish](#3-a-steps-lifecycle)
 4. [The resolution hierarchy — who handles each step](#4-the-resolution-hierarchy)
 5. [The LLM layer — model, triggers, the client](#5-the-llm-layer)
@@ -101,26 +102,37 @@ Everything below is organized by **wok** — Noodle's formal capability
 domains (the name is a pun on "WOrK area"; full concept doc:
 [woks.md](woks.md)). A wok is a self-contained area Noodle can test in, with
 its own engines, step vocabulary, optional deps, samples and per-wok unit
-tests (`unit_tests/woks/<wok>/`) — while all four share one Gherkin dialect,
+tests (`unit_tests/woks/<wok>/`) — while all five share one Gherkin dialect,
 one screenshot pipeline, and one Allure + RCA reporting stack. The registry
 is code: `noodle/wok.py` (`noodle wok` lists them).
 
 ```mermaid
 flowchart TD
     FEATURE["📄 .feature — same Gherkin everywhere"]
-    WEB["🌐 Web wok<br/>Playwright · REST · OCR bridge<br/>@web @api @terminal"]
+    WEB["🌐 Web wok<br/>Playwright · OCR bridge<br/>@web @terminal"]
+    APIW["🔌 API wok<br/>REST client, browserless<br/>@api"]
     MOBW["📱 Mobile wok<br/>Appium (UiAutomator2 / XCUITest)<br/>@appium @android @ios"]
     DESKW["🖥️ Desktop wok<br/>Visual agent (OpenCV+OCR+PyAutoGUI) ·<br/>Appium (WinAppDriver/Mac2) · .xlsx reader<br/>@visual @windows @mac"]
     PERFW["📈 Performance wok<br/>built-in load generator<br/>@perf"]
-    REPALL["Allure + RCA reports · screenshots<br/>(perf: rendered latency chart)"]
+    REPALL["Allure + RCA reports · screenshots<br/>(api: request/response pair;<br/>perf: rendered latency chart)"]
 
-    FEATURE --> WEB & MOBW & DESKW & PERFW --> REPALL
+    FEATURE --> WEB & APIW & MOBW & DESKW & PERFW --> REPALL
     DESKW -. "browserless steps compose:<br/>.xlsx value → web scenario" .-> WEB
     PERFW -. "metrics → {var:...}" .-> WEB
+    APIW -. "REST steps run in ANY scenario<br/>— @api only skips the browser" .-> WEB
 
     style FEATURE fill:#2d4a3e,color:#b8f5d8,stroke:#4aaa80
     style REPALL fill:#3a2a4a,color:#e8d8f5,stroke:#8a6aaa
 ```
+
+**API is its own wok, not a corner of web** (NOOD_0191): an `@api` scenario
+starts no browser, no context and no tracing, so a browserless REST suite
+needs no Playwright install. The two facts that get conflated: REST *steps*
+are plain I/O available in **every** scenario with no tag at all (like
+`run_command` or a spreadsheet read), while the `@api` *wok* is the
+browserless lifecycle for suites whose subject **is** the API. Not to be
+confused with the **engine API** — see [§2.5](#the-engine-surfaces--how-something-drives-noodle)
+below, and [glossary.md](glossary.md).
 
 Routing is tag-driven per scenario (`hooks.before_scenario` +
 `steps/catch_all.py`; the registry's `wok_for_tags()` mirrors it and
@@ -216,8 +228,75 @@ flowchart TD
 | **Network capture** | `noodle/hooks.py` (`_wire_capture_listeners`) | Per-scenario console/page errors, failed requests, requests, websocket frames — dumped to `artifacts/network/<scenario>.json` for **every** web scenario (pass or fail) and attached to that scenario's Allure result. |
 | **Secrets/config** | `noodle/secrets_akv.py`, `environments.yaml` | Base URLs + secrets (Azure Key Vault or `secrets.env`) resolved into `{env:X}` refs. |
 | **Log** | `noodle/log.py` | One logger, `NOODLE_LOG_LEVEL`, mirrored to `artifacts/logs/noodle.log` for the run. `NOODLE_LOG_FORMAT=json` emits OTel-shaped structured events (run/scenario/step/llm/locator/mcp) with `run_id` correlation and secret redaction — full reference: [logging.md](logging.md). |
-| **Drive** | `noodle/cli.py` | The `noodle` command — authoring (`init`, `init-mcp`, `author`, `probe`, `probe-app`, `inspect`, `record`, `repl`, `steps`, `step-search`), running (`run`, `validate`, `list`, `doctor`, `cost`), and reporting (`report …`, `rca-report`, `summary`, `artifacts`, `clean`, `archive`, `diagnostic …`) + retry/quarantine exit code. Full list: [cli-reference.md](cli-reference.md). |
+| **Drive** | `noodle/cli.py` | The `noodle` command — authoring (`init`, `init-mcp`, `author`, `scan`, `task`, `probe`, `probe-app`, `inspect`, `record`, `repl`, `steps`, `step-search`), running (`run`, `validate`, `list`, `wok`, `doctor`, `update`, `cost`, `feature-regression`), and reporting (`report …`, `rca-report`, `summary`, `artifacts`, `clean`, `archive`, `diagnostic …`) + retry/quarantine exit code. Full list: [cli-reference.md](cli-reference.md). |
+| **Integrate** | `noodle/mcp/server.py` + `noodle/mcp/rest.py` | `noodle-mcp` — the same tool registry served two ways: MCP (stdio or streamable-http) for AI agents, and the plain-HTTP **engine API** (`/api/*`) for callers that can't speak MCP. See [§2.5](#the-engine-surfaces--how-something-drives-noodle). |
 | **Edit** | `noodle/lsp/` + `vscode-extension/` | LSP step validation, tag/variable autocomplete, syntax highlighting. |
+
+### The engine surfaces — how something *drives* Noodle
+
+Everything above is what happens *inside* a run. This is what starts one.
+Four surfaces, one engine — none of them is a reimplementation, they all
+land on the same code path:
+
+```mermaid
+flowchart TD
+    HUM["🧑 Human<br/>terminal"] --> CLI
+    AGENT["🤖 AI coding agent<br/>Claude Code · Copilot · MAF"] --> MCPS
+    SVC["☕ Remote service<br/>Java · .NET · Node · CI job"] --> REST
+    IDE["📝 VS Code"] --> LSP
+
+    CLI["CLI — noodle/cli.py<br/>noodle run · author · report<br/>--json for scripts"]
+    MCPS["MCP server — noodle/mcp/server.py<br/>stdio or streamable-http<br/>tools: author_test, run_and_report, …"]
+    REST["Engine API — noodle/mcp/rest.py<br/>POST /api/tools/NAME · GET /api/tools<br/>/api/openapi.json · /api/docs (Swagger)"]
+    LSP["LSP — noodle/lsp/<br/>validate · autocomplete<br/>(edits, never runs)"]
+
+    ENGINE["Noodle engine<br/>behave · resolver · agents · reporting"]
+
+    CLI --> ENGINE
+    MCPS --> ENGINE
+    REST -. "one dispatcher over<br/>mcp.call_tool — no route per tool" .-> MCPS
+    LSP -. "resolver only,<br/>no execution" .-> ENGINE
+
+    ENGINE --> OUT["Allure + RCA reports · artifacts/"]
+
+    style ENGINE fill:#2d4a3e,color:#b8f5d8,stroke:#4aaa80
+    style OUT fill:#3a2a4a,color:#e8d8f5,stroke:#8a6aaa
+    style REST fill:#1e3a5f,color:#b8d8f5,stroke:#4a80aa
+    style MCPS fill:#1e3a5f,color:#b8d8f5,stroke:#4a80aa
+```
+
+| Surface | Start it with | For | Guide |
+|---|---|---|---|
+| **CLI** | `noodle run …` | humans, CI scripts (`--json` for machine-readable output) | [cli-reference.md](cli-reference.md) |
+| **MCP server** | `noodle-mcp` (stdio) | an AI agent on the same machine | [mcp-guide.md](mcp-guide.md) |
+| **MCP over HTTP** | `noodle-mcp --transport streamable-http` | a remote agent that speaks MCP | [mcp-guide.md](mcp-guide.md) |
+| **Engine API** | same process, `/api/*` routes | a remote **non-MCP** caller — Java/.NET/Node/CI | [engine-api-guide.md](engine-api-guide.md) |
+| **LSP** | the VS Code extension | authoring feedback while typing | [manual.md](manual.md) |
+
+Two things worth knowing about the engine API (NOOD_0193):
+
+- **It adds no API.** `/api/*` is a second *doorway* onto the MCP tool
+  registry, dispatching through one handler over `mcp.call_tool` — so a tool
+  added to `server.py` appears on both doorways at once and keeps its payload
+  budget (NOOD_0164) and audit event (NOOD_0172). It exists because `/mcp`
+  answers a bare `tools/call` with `400 Missing session ID`, which no plain
+  HTTP client can get past. Same port, same `NOODLE_MCP_API_KEY` gate, same
+  `--workspace-root` containment, no new flag.
+- **Tools run off the event loop.** FastMCP runs sync tools inline, so a test
+  run would block the whole ASGI server — `/api/health` included, which is
+  what a liveness probe hits before an orchestrator restarts the pod
+  mid-run. `rest.dispatch` hands each call to a worker thread, serialized by
+  one lock (concurrent runs would otherwise race on `NOODLE_RUN_ID` and the
+  workspace's single `report/`).
+
+`docs/openapi.json` is **generated** from the tool registry
+(`python -m noodle.mcp.rest`), with a unit test failing when the committed
+copy goes stale — so the spec can't describe an API Noodle doesn't have.
+
+> **"API" means two things** and they point in opposite directions: the
+> **api wok** is Noodle *testing* someone's REST service (`@api`); the
+> **engine API** is another system *driving* Noodle (`/api/*`). Pinned in
+> [glossary.md](glossary.md).
 
 ---
 
@@ -275,7 +354,7 @@ flowchart TD
     end
 
     OUT0 --> L1{"② Route by tag"}
-    L1 -->|@visual| VIS
+    L1 -->|"@visual"| VIS
     L1 -->|web default| WEB
 
     subgraph WEB["③ Web — find the element (locator.find)"]
@@ -465,7 +544,7 @@ flowchart TD
 
     ROUTE -->|web · auto| PW["Playwright accessibility<br/>LOCAL → POM → ask_vision()"]
     ROUTE -->|web · full| VL["ask_vision() — primary locator<br/>accessibility as safety net"]
-    ROUTE -->|@visual| CV["OpenCV + OCR<br/>LOCAL"]
+    ROUTE -->|"@visual"| CV["OpenCV + OCR<br/>LOCAL"]
 
     T1 -.calls.-> CLIENT["llm/client.py → LiteLLM"]
     T1F -.calls.-> CLIENT
@@ -501,7 +580,7 @@ flowchart TD
     T1 --> ROUTE
 
     ROUTE -->|web| PW["Playwright accessibility<br/>role / label / text · LOCAL"]
-    ROUTE -->|@visual| CV["OpenCV template + OCR<br/>LOCAL"]
+    ROUTE -->|"@visual"| CV["OpenCV template + OCR<br/>LOCAL"]
 
     PW -->|found| ACT["run web action"]
     PW -->|not found| POM["POM YAML · LOCAL"]

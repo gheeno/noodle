@@ -33,6 +33,7 @@ asked over MCP, in the REPL, or in a later session.
 6. [Why it's shaped this way](#6-why-its-shaped-this-way)
 7. [MAF integration (local, stdio)](#7-maf-integration-local-stdio)
 8. [MAF / Azure AI Foundry integration (remote, Streamable HTTP)](#8-maf--azure-ai-foundry-integration-remote-streamable-http)
+   - 8.1 [Plain HTTP for non-MCP callers](#81-plain-http-for-non-mcp-callers-nood_0193)
 9. [Security model](#9-security-model)
 10. [Operational gotchas (found the hard way)](#10-operational-gotchas-found-the-hard-way)
 11. [Troubleshooting](#11-troubleshooting)
@@ -174,6 +175,10 @@ Two transports; pick by where the host runs.
 |---|---|---|
 | `stdio` (default) | host and Noodle share a machine — Claude Code, Copilot, local MAF agent | host spawns the process |
 | `streamable-http` | host is remote — Azure AI Foundry Agent Service, MAF `MCPStreamableHTTPTool`, containerised setups | `http://<host>:<port>/mcp` |
+
+A caller that can't speak MCP at all — a Java service, `curl` in a CI job —
+uses the plain-JSON `/api/*` routes the same process serves; see
+[§8.1](#81-plain-http-for-non-mcp-callers-nood_0193).
 
 **stdio** — the host's MCP config spawns the server. Generic shape:
 
@@ -601,6 +606,89 @@ approvals on for those and auto-approving the read-only tools
 (`list_tests`, `get_last_result`, `search_step`, `validate_feature`,
 `get_rca`, `probe_page` — it opens a browser but only reads the page) is a
 sensible split.
+
+### 8.1 Plain HTTP for non-MCP callers (NOOD_0193)
+
+`/mcp` is a network API, but it's an *MCP* one: a caller must `initialize`,
+carry the `mcp-session-id` it gets back, and read SSE frames. POST a bare
+`tools/call` and you get `400 Bad Request: Missing session ID`. That's fine
+from an MCP SDK and impossible from a Java service on a platform that blocks
+MCP, a Jenkins `curl` step, or a dashboard's `fetch`.
+
+The same process therefore serves the same tools as ordinary JSON, on the
+same port, behind the same API key and the same `--workspace-root`
+containment — no flag, nothing extra to start:
+
+```mermaid
+flowchart LR
+    A["AI agent<br/>Claude Code, MAF, Foundry"] -- "MCP: initialize →<br/>session-id → tools/call (SSE)" --> G
+    J["Java service"] -- "POST /api/tools/NAME<br/>plain JSON, one request" --> G
+    C["CI step / dashboard<br/>curl, fetch"] --> G
+
+    subgraph proc["one noodle-mcp process — one port"]
+        G{{"API-key gate<br/>Bearer / x-api-key<br/>else 401"}}
+        G --> M["/mcp<br/>MCP transport"]
+        G --> R["/api/*<br/>rest.py dispatcher"]
+        M --> REG["the one tool registry — 23 tools<br/>payload budget + audit event"]
+        R --> REG
+        REG --> CORE["noodle.repl.core"]
+    end
+
+    CORE --> E["Noodle engine<br/>Playwright / REST / Appium<br/>→ Allure + RCA reports"]
+```
+
+Two doorways, one room. `/api/*` is not a second implementation — the
+dispatcher hands off to the same registry `/mcp` uses, which is why a new tool
+appears on both at once.
+
+| Route | Returns |
+|---|---|
+| `GET /api/health` | `server_info` — version, pid, workspace. Also the liveness probe |
+| `GET /api/tools` | every tool with its `input_schema` — generate a client from it |
+| `POST /api/tools/<name>` | that tool's payload; the request body is its arguments (`{}` or empty for none) |
+| `GET /api/openapi.json` | OpenAPI 3.1 spec, generated from the tool registry. Committed copy: [`docs/openapi.json`](openapi.json) |
+| `GET /api/docs` | Swagger UI over that spec — click through and call tools from a browser |
+
+```bash
+curl -X POST http://host:8080/api/tools/run_and_report \
+  -H "Authorization: Bearer $NOODLE_MCP_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"target": "login", "headless": true, "retries": 0}'
+```
+
+Status codes: `401` unauthenticated, `404` unknown tool, `400` malformed body,
+`500` with the exception text when a tool itself fails. Tool names, arguments
+and payloads are exactly the ones in [§4](#4-the-tools--what-to-call-when) —
+one dispatcher over the same registry, so a tool added there appears here on
+its own and the two doorways can't drift.
+
+**Concurrency:** one tool call runs at a time (a second request queues), but it
+runs off the event loop, so `/api/health` and `/api/tools` keep answering during
+a run — a liveness probe won't decide the pod is dead mid-suite. Scale with one
+server per workspace; concurrent runs would collide on the workspace's single
+`report/` dir.
+
+**Calls are synchronous, and a run takes minutes.** `run_and_report` launches
+real browsers and returns when the run is done — set the client's read timeout
+in *minutes*, not the usual 30 seconds, or the caller times out while the run
+happily continues server-side. There is no job id to poll; the response body is
+the result. Read `failed == 0` **and** `verified == true` — a pass behind fuzzy
+healing reports `verified: false` and is not green (see
+[§4](#4-the-tools--what-to-call-when)).
+
+**Prefer the CLI when the caller shares the machine.** `noodle run --json`
+gives the same JSON with no server to host, no key to rotate and no port to
+firewall. `/api/*` earns its keep when the caller is *remote* and can't speak
+MCP — that, and only that, is the gap it fills.
+
+This surface is **the engine API** — the thing other systems call to drive
+Noodle. Keep it distinct from the **api wok**, which is Noodle testing someone
+else's REST service ([woks.md § API](woks.md#api)); the vocabulary is pinned in
+[glossary.md](glossary.md#api-means-two-different-things--say-which-nood_0193).
+
+Setting it up for a developer who doesn't know Noodle, with a worked example
+per operation (author, update, run serial/parallel, reports):
+[engine-api-guide.md](engine-api-guide.md).
 
 ## 9. Security model
 

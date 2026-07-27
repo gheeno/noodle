@@ -7,7 +7,7 @@
 #       - repository: noodle
 #         type: git                  # or 'github' + endpoint: <service connection>
 #         name: Tooling/noodle
-#         ref: refs/tags/1.0.0a7     # pin the engine — a moving ref is not a build
+#         ref: refs/tags/1.0.0a9     # pin the engine — a moving ref is not a build
 #
 #   jobs:
 #     - template: ci/azure/noodle-tests.yml@noodle
@@ -152,8 +152,33 @@ jobs:
       # tests needs none of it, and every extra is install time on every run.
       - bash: |
           set -euo pipefail
-          pip install "$(noodleRoot)${{ parameters.extras }}" -c "$(noodleRoot)/constraints.txt"
-          playwright install chromium --with-deps
+          EXTRAS='${{ parameters.extras }}'
+          KV='${{ parameters.keyVaultUrl }}'
+          # NOOD_0193 — Key Vault needs the `azure` extra, and asking every
+          # project to remember `extras: '[azure]'` NEXT TO keyVaultUrl is a
+          # footgun: without it the run dies at before_all with "the Azure SDK
+          # is missing", after the install step went green. Fold it in here.
+          # An unexpanded '$(VAR)' means the variable was never set — the same
+          # rule hooks._load_keyvault uses to decide there is no vault.
+          case "$KV" in
+            ''|'$'*) ;;
+            *) if [ -z "$EXTRAS" ]; then EXTRAS='[azure]'
+               elif ! printf '%s' "$EXTRAS" | grep -q azure; then EXTRAS="${EXTRAS%]},azure]"
+               fi
+               echo "Key Vault configured — installing with $EXTRAS" ;;
+          esac
+          pip install "$(noodleRoot)$EXTRAS" -c "$(noodleRoot)/constraints.txt"
+          # --with-deps apt-gets Playwright's system libraries, which needs
+          # root. MS-hosted agents have passwordless sudo; a locked-down
+          # self-hosted one does not, and this used to kill the job before any
+          # test ran. The browser download itself needs no root, so fall back
+          # to it and let the agent image supply the libs.
+          if sudo -n true 2>/dev/null; then
+            playwright install chromium --with-deps
+          else
+            echo "##[warning]No passwordless sudo — installing the browser without system deps. If Chromium fails to launch, have an admin run 'playwright install-deps' on this agent image once."
+            playwright install chromium
+          fi
           noodle --version
         displayName: 'Install Noodle (pinned)'
 
