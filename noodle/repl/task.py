@@ -39,14 +39,30 @@ import re
 # whole text and the earliest MATCH POSITION wins, so "update the test, then
 # run it" routes to update. A tie goes to the earlier entry here.
 _INTENTS: list[tuple[str, re.Pattern]] = [
+    # NOOD_0192 — "review this repo and generate tests for the new features"
+    # is the AI-SDLC opener, and it names TWO intents. Earliest match wins by
+    # source position, so the repo half routes first and comes back with the
+    # stack, how the repo serves itself, and the questions still open — which
+    # is what the caller needs before a generate can succeed at all.
+    ("scan", re.compile(
+        r"\b(?:review|scan|inspect|analyz|analys|look\s+at|explore|"
+        r"understand|what(?:'s|\s+is)\s+in)\w*\b"
+        r"(?:(?!\brepo\b|\bcodebase\b|\bproject\b).){0,30}?"
+        r"\b(?:repo(?:sitory)?|code\s*base|project)\b|"
+        r"\btech(?:nology)?\s+stack\b", re.I | re.S)),
+    # NOOD_0192 — the nouns are plural too. "generate new API tests" matched
+    # NOTHING (\btest\b can't match "tests"), so every plural ask fell through
+    # to the generate DEFAULT — right answer, no confidence, and invisible in
+    # `also_matched` when another intent was named first.
     ("update", re.compile(
         r"\b(?:update|amend|modify|revise|extend|adjust|edit|fix|repair|"
-        r"correct|change)\b(?:(?!\btest\b|\bscenario\b|\bfeature\b).){0,40}?"
-        r"\b(?:test|scenario|feature|spec)\b", re.I | re.S)),
+        r"correct|change)\b(?:(?!\btests?\b|\bscenarios?\b|\bfeatures?\b)"
+        r".){0,40}?\b(?:tests?|scenarios?|features?|specs?)\b", re.I | re.S)),
     ("generate", re.compile(
         r"\b(?:write|create|generate|author|add|build|make|new|draft|"
-        r"scaffold)\b(?:(?!\btest\b|\bscenario\b).){0,40}?"
-        r"\b(?:test|scenario|feature|spec|coverage|case)\b", re.I | re.S)),
+        r"scaffold)\b(?:(?!\btests?\b|\bscenarios?\b).){0,40}?"
+        r"\b(?:tests?|scenarios?|features?|specs?|coverage|cases?)\b",
+        re.I | re.S)),
     ("verdict", re.compile(
         r"\b(?:did\s+(?:it|they|the\s+tests?)\s+pass|is\s+it\s+green|"
         r"verdict|pass(?:ed)?\s+or\s+fail(?:ed)?|what(?:'s|\s+is|\s+was)\s+"
@@ -64,7 +80,7 @@ _INTENTS: list[tuple[str, re.Pattern]] = [
 # are complete instructions. `generate`/`update` carry a payload we compile.
 _VERB_ONLY = {"run", "report", "verdict"}
 
-INTENTS = ("generate", "update", "run", "report", "verdict")
+INTENTS = ("scan", "generate", "update", "run", "report", "verdict")
 
 # The first numbered step, at line start or inline. A caller that says
 # "create a test: 1. Go to ... 2. Search for ..." has written a routing
@@ -85,20 +101,25 @@ def steps_of(text: str) -> str:
 # web grammar. A developer asked an agent for API tests and was told "Noodle
 # is a web UI testing framework, use pytest or Postman" — wrong since
 # NOOD_0007, but the only vocabulary it had been shown was clicks and
-# searches. The prompt compiler is web-only by design; what it must not do is
-# imply the PRODUCT is.
+# searches. NOOD_0192 removed this list's premise for the api wok — that one
+# compiles from a prompt now, so its hint names the cheap door first; the rest
+# still redirect to feature_content.
 _WOKS = [
     ("api", re.compile(
         r"\b(?:api|apis|rest|restful|endpoints?|http|https?\s+call|"
         r"swagger|openapi|graphql|payload|webhooks?|"
         r"(?:GET|POST|PUT|PATCH|DELETE)\s+/|status\s+code)\b", re.I),
      "steps_dictionary', query='REST",
-     "REST is browserless: tag the scenario @api, then "
-     "`Given sets {var:REST_BASE_URL} to '{env:API_BASE_URL}'` / "
-     "`When performs a GET call at '/path'` / "
-     "`Then the response status should be 200`. Author it with "
-     "feature_content (goal/prompt mode is web-only), or see "
-     "sample_feature_tests/api/ for the five worked files."),
+     # NOOD_0192 — the api wok authors from a PROMPT now, same as web. This
+     # hint used to send every API request to hand-written Gherkin.
+     "REST is browserless. Send it as numbered steps like any other test: "
+     "`1. GET https://host/path` / `2. Verify the response status is 200` — "
+     "an api-only prompt compiles to an @api scenario (no browser started), "
+     "and mixing web steps into the same prompt gives you a cross-wok test. "
+     "Hand-authored feature_content is still the door for headers, auth and "
+     "{var:} chaining (`Given sets {var:REST_BASE_URL} to "
+     "'{env:API_BASE_URL}'`; sample_feature_tests/api/ has the worked "
+     "files)."),
     ("mobile", re.compile(
         r"\b(?:appium|android|ios|mobile\s+app|native\s+app|emulator|"
         r"simulator|apk|\.ipa)\b", re.I),
@@ -151,6 +172,9 @@ def contract() -> dict:
     return {
         "command": "noodle task \"<text>\" --workspace <ws> --json",
         "intents": {
+            "scan": "what is this repo — stack, how it serves itself, "
+                    "OpenAPI endpoints, and the questions still open before "
+                    "a test can be authored",
             "generate": "write a new test — needs a URL and numbered steps",
             "update": "rewrite an existing test — same payload, overwrites",
             "run": "execute the tests and serve both reports",
@@ -162,11 +186,13 @@ def contract() -> dict:
         # and declines the request — which is exactly what happened once.
         "woks": {
             "_": "Noodle is universal; these are independent, none a "
-                 "sub-mode of another. The prompt/goal grammar below is the "
-                 "web wok's — other woks author with feature_content.",
+                 "sub-mode of another. The prompt/goal grammar below covers "
+                 "web AND api (including both in one scenario) — the other "
+                 "woks author with feature_content.",
             "web": "browser UI via Playwright, tag @web (default)",
             "api": "REST, browserless (no Playwright needed), tag @api — "
-                   "read_docs('steps_dictionary', query='REST')",
+                   "prompt-authorable: `GET <url>` + `verify the response "
+                   "status is 200`",
             "mobile": "native via Appium, tag @appium + @android/@ios — "
                       "read_docs('woks')",
             "desktop": "tag @windows/@mac/@visual — read_docs('woks')",
@@ -315,6 +341,23 @@ def route(text: str, *, workspace: str = ".", headless: bool = True,
     cls = classify(text or "")
     intent = cls["intent"]
     from noodle.repl import core
+
+    if intent == "scan":
+        # NOOD_0192 — the repo question, answered from marker files. ok:true
+        # with open `questions` is the normal reply: the scan succeeded AND
+        # something is still missing before a test can be authored.
+        from noodle import repo_scan
+        rep = repo_scan.scan(workspace)
+        if not rep.get("ok"):
+            return _envelope(intent, cls, workspace, error=rep.get("error"),
+                             need=["a_readable_repo_path"],
+                             next="re-send with --workspace <repo dir>")
+        return _envelope(intent, cls, workspace, ok=True,
+                         **{k: v for k, v in rep.items()
+                            if k not in ("ok", "root")},
+                         repo=rep["root"],
+                         need=["answers_to_questions"] if rep["questions"]
+                         else [])
 
     if intent in ("generate", "update"):
         return _author(text, cls, workspace, overwrite=(intent == "update"),

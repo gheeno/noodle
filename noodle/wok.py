@@ -83,8 +83,10 @@ WOKS: dict[str, Wok] = {
     "api": Wok(
         name="api",
         title="API",
-        blurb="REST services, browserless. NB: REST steps run in ANY "
-              "scenario without this tag — @api only skips the browser.",
+        blurb="REST services, browserless. Prompt-authorable: "
+              "`1. GET <url>` / `2. Verify the response status is 200`. "
+              "NB: REST steps run in ANY scenario without this tag — "
+              "@api only skips the browser.",
         engines=("REST client (stdlib http, @api) — no browser, no driver",),
         tags=("api", "rest"),
         extras=(),

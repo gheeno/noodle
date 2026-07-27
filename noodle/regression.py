@@ -34,18 +34,19 @@ from pathlib import Path
 # NOOD_0191 — tc3 covers the other real shape: CROSS-WOK. "Fetch or seed over
 # the API, then prove it rendered in the UI" is the most common mix in a real
 # suite (most UI is an API with a face on it), and nothing guarded it end to
-# end. What it actually exercises, verified by mutation when it landed
-# (breaking rest_extract_json turned tc3 red and left tc1/tc2 green): the REST
-# client itself, {var:} chaining from a response field into a later web step,
-# {env:} resolution across both step families in one scenario, and the
-# feature_content authoring door — which nothing else in the benchmark
-# touches. It does NOT exercise the runner's browserless `rest_*` exemption:
-# this scenario is @web, so `page` is never None and that guard never fires
-# (unit_tests/woks/api/ covers it instead).
+# end. It exercises the REST client, {env:} resolution across both step
+# families in one scenario, and the compiler's cross-wok step ORDER (the REST
+# preamble ahead of the navigation Given).
 #
-# feature_content mode because that is the honest path for a cross-wok test
-# today — the prompt/goal compiler is web-only, so this IS hand-authored
-# Gherkin, and the benchmark should measure the door a real user would use.
+# NOOD_0192 — it is a PROMPT now. It was feature_content because the prompt
+# compiler was web-only, so a cross-wok test genuinely had to be hand-authored
+# Gherkin — which meant the benchmark's one cross-wok case measured no
+# generation at all and reported LINES as "—". With the api verbs in the
+# grammar this is the same flow through the door a user actually uses, so all
+# three cases now measure what the engine generates. What was lost with the
+# hand-authored version is covered where it belongs: `{var:}` chaining from a
+# response field and the feature_content door are unit-tested
+# (unit_tests/woks/api/), not benchmarked.
 PROMPTS = [
     {"id": "tc1_search_suggestion", "mode": "prompt",
      "content": """1. Go to the URL https://en.wikipedia.org/wiki/Main_Page
@@ -60,28 +61,12 @@ PROMPTS = [
 4. Verify "Password"
 5. Verify "Confirm password"
 6. Verify "Email address\""""},
-    {"id": "tc3_api_seeds_ui_verifies", "mode": "feature_content",
-     "app_name": "wikipedia_crosswok",
-     "base_url": "https://en.wikipedia.org",
-     "feature_path": "noodle_tests/web/wikipedia_crosswok/features/"
-                     "api_seeds_ui_verifies.feature",
-     "environment_values": {"WIKI_API": "https://en.wikipedia.org/api/rest_v1",
-                            "WIKI": "https://en.wikipedia.org/wiki"},
-     # @web, NOT @api: @api means "start no browser", which would kill the UI
-     # half. REST steps need no tag at all — they are plain I/O, legal in
-     # every scenario (docs/woks.md § The API wok is a lifecycle, not a gate).
-     "content": """@web
-Feature: Cross-wok — the API supplies the data, the UI proves it
-
-  Scenario: A value fetched over REST is verified in the browser
-    Given sets {var:REST_BASE_URL} to '{env:WIKI_API}'
-    When performs a GET call at '/page/summary/Vacuum_cleaner'
-    Then the response status should be 200
-    And extracts 'title' from response storing in {var:TITLE}
-    Given User is on '{env:WIKI}/{var:TITLE}'
-    Then User should see "{var:TITLE}"
-    And User should see "From Wikipedia, the free encyclopedia"
-"""},
+    {"id": "tc3_api_seeds_ui_verifies", "mode": "prompt",
+     "content": """1. GET https://en.wikipedia.org/api/rest_v1/page/summary/Vacuum_cleaner
+2. Verify the response status is 200
+3. Go to the URL https://en.wikipedia.org/wiki/Vacuum_cleaner
+4. Close any popup that may appear
+5. Verify "From Wikipedia, the free encyclopedia\""""},
 ]
 
 # Per-test-case ceilings — the definition of "not regressed": on time and

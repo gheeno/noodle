@@ -217,6 +217,42 @@ def probe_launcher(path: str, timeout: float = 10.0) -> dict:
     return parse_build_line(out) or {"error": f"unrecognized --version output: {out[:200]!r}"}
 
 
+# NOOD_0192 — the shell-agnostic PATH question. `uv tool update-shell` already
+# writes the right thing for bash, zsh, fish and PowerShell, so there is no
+# per-shell install path to build; what was missing is a check that the
+# LOGIN shell — the one the tester actually types in — can find `noodle`.
+# A fish user whose config was never updated gets a green doctor from a zsh
+# terminal and "command not found" in their own, which reads as "noodle is
+# broken on fish". Only the fallback wording is shell-specific.
+_PATH_FIX = {
+    "fish": "uv tool update-shell  (fish fallback: "
+            "fish_add_path (uv tool dir --bin))",
+}
+_PATH_FIX_DEFAULT = "uv tool update-shell"
+
+
+def login_shell_report(timeout: float = 20.0) -> dict:
+    """Can $SHELL — as a LOGIN shell, reading its own config — run `noodle`?
+
+    {shell, checked, found, fix}. `checked: False` means the question was not
+    answerable here (Windows, no $SHELL, shell not executable), never a
+    failure. Read-only: it runs `noodle --version`, and writes nothing.
+    """
+    import subprocess
+    shell = os.environ.get("SHELL") or ""
+    name = Path(shell).name or "unknown"
+    fix = _PATH_FIX.get(name, _PATH_FIX_DEFAULT)
+    if os.name == "nt" or not shell or not os.access(shell, os.X_OK):
+        return {"shell": name, "checked": False, "fix": fix}
+    try:
+        p = subprocess.run([shell, "-lc", "noodle --version"],
+                           capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return {"shell": name, "checked": False, "fix": fix}
+    return {"shell": name, "checked": True, "found": p.returncode == 0,
+            "fix": fix}
+
+
 def warn_if_stale(echo) -> None:
     """One loud non-fatal line from `noodle init`/`noodle run` when the
     running build can't track the source. Diagnose and continue."""

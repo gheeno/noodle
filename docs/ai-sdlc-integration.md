@@ -188,9 +188,26 @@ noodle task --contract --json          # intents, grammar, envelope — fetch on
 noodle task "<whatever the agent wants>" -w tests/noodle --json
 ```
 
-It routes free text to generate / update / run / report / verdict, and when it
-can't compile the text it returns `need` and `next` instead of guessing — the
-agent fills them in and re-sends. That works over plain `subprocess`, in a
+It routes free text to scan / generate / update / run / report / verdict, and
+when it can't compile the text it returns `need` and `next` instead of
+guessing — the agent fills them in and re-sends.
+
+**Starting from a dev repo instead of a workspace (NOOD_0192).** The real
+opener is *"review this repo and write tests for the new features"* — no URL,
+no steps, no boundary. That routes to `scan`
+([`noodle scan`](cli-reference.md#noodle-scan) / `scan_repo` over MCP), which
+reports the stack, how the repo says it serves itself, the OpenAPI endpoint
+list and where tests already live, then asks the questions that are still
+open. Settle those — your agent can read the code, we can't — and re-send as
+numbered steps. API tests are prompt-authorable like web ones since
+NOOD_0192, and both can live in one scenario
+([woks.md § cross-wok](woks.md#cross-wok-composition)):
+
+```bash
+noodle task "review this repo" -w . --json
+noodle task "write a test: 1. GET http://localhost:8000/orders
+2. Verify the response status is 200" -w tests/noodle --json
+``` That works over plain `subprocess`, in a
 pipeline step, or inside a container, with no protocol and no server. Details:
 [cli-reference.md § noodle task](cli-reference.md#noodle-task).
 

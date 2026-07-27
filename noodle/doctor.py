@@ -188,7 +188,30 @@ def install_checks() -> list[Check]:
             "may be stale too",
             remediation="noodle update"))
     checks.append(_launcher_check())
+    checks.append(_login_shell_check())
     return checks
+
+
+def _login_shell_check() -> Check:
+    """NOOD_0192 — is `noodle` on PATH in the shell the tester actually uses?
+
+    Every other install check asks about the build THIS process resolved,
+    which is answered from inside a working shell by definition. A fish user
+    who never ran `uv tool update-shell` gets all-green here and "command not
+    found" in their own terminal. warn, never fail: a PATH gap is a one-line
+    fix, not a broken install.
+    """
+    r = install_check.login_shell_report()
+    if not r.get("checked"):
+        return Check("install.login-shell", "install", "info",
+                     f"login-shell PATH not checked (shell: {r['shell']})")
+    if r.get("found"):
+        return Check("install.login-shell", "install", "pass",
+                     f"`noodle` resolves in your login shell ({r['shell']})")
+    return Check("install.login-shell", "install", "warn",
+                 f"`noodle` is NOT on PATH in your login shell ({r['shell']}) "
+                 "— it works here but not in a new terminal",
+                 remediation=f"{r['fix']}, then open a NEW terminal")
 
 
 # --- engine profile ----------------------------------------------------------

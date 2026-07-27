@@ -81,6 +81,41 @@ real cost: every always-on instruction surface described Noodle as a browser
 framework, so an agent asked to write API tests told the user to go use
 pytest or Postman instead.
 
+**Authored from a prompt, like any other test (NOOD_0192).** The cheap
+deterministic path — plain-English numbered steps → compiled `.feature` —
+used to be web-only, so an API test could only be hand-written Gherkin: never
+intent-verified, never size-measured, and a different workflow to remember
+for the same job.
+
+```
+1. GET https://api.example.com/orders
+2. Verify the response status is 200
+3. Verify the response body contains "total"
+```
+
+```gherkin
+@api
+Feature: GET /orders, status 200
+
+  Scenario: GET /orders, status 200
+    When performs a GET call at 'https://api.example.com/orders'
+    Then the response status should be 200
+    And the response body should contain 'total'
+```
+
+An **api-only** prompt (every step an API step) needs no URL step and no
+`base_url`: the package is named after the endpoint, `@api` is applied
+automatically, **no probe runs and no browser is ever launched** — authoring
+an API test works on a machine with no Playwright install. Mix web steps into
+the same prompt and you get a cross-wok test instead
+([below](#cross-wok-composition)).
+
+Grammar: `GET|POST|PUT|PATCH|DELETE <url>` · `call the api at <url>` ·
+`go to <url> via rest` · `verify the response status is <code>` ·
+`verify the response body contains <text>`. Headers, auth, `{var:}` chaining
+and payload files stay `feature_content` territory — the full step table is
+one `read_docs('steps_dictionary', query='REST')` away.
+
 ### The API wok is a lifecycle, not a gate
 
 Two facts, and conflating them is what caused that mess:
@@ -274,8 +309,24 @@ Scenario: Search the catalog for the movie named in the spreadsheet
 ```
 
 **API seeds, UI verifies** (api + web) — the most common mix, because most
-UI is an API with a face on it. Seed or fetch over REST, then assert it
-rendered:
+UI is an API with a face on it. Since NOOD_0192 this comes straight out of a
+prompt, REST steps and web steps in one list:
+
+```
+1. GET https://en.wikipedia.org/api/rest_v1/page/summary/Vacuum_cleaner
+2. Verify the response status is 200
+3. Go to the URL https://en.wikipedia.org/wiki/Vacuum_cleaner
+4. Close any popup that may appear
+5. Verify "From Wikipedia, the free encyclopedia"
+```
+
+The compiler keeps **your order**: API calls you put before the first web
+step compile ahead of the navigation `Given`, because "fetch it, then prove
+the UI shows it" is a sequence, not a set. The scenario is tagged `@web`
+automatically — see the box below for why that matters.
+
+Hand-authored, the same shape reaches further (`{var:}` chaining from a
+response field into a later web step):
 
 ```gherkin
 @web

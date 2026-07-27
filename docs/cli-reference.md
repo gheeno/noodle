@@ -496,10 +496,15 @@ noodle record [OPTIONS]
 ## noodle task
 
 One door for a driving agent (NOOD_0191): free text in, one JSON envelope
-out. A deterministic keyword scan picks the intent — `generate`, `update`,
-`run`, `report` or `verdict` — and dispatches to the command you'd have run
-yourself. No recognized verb defaults to `generate`. It adds no authoring
-logic and makes **no LLM call**.
+out. A deterministic keyword scan picks the intent — `scan`, `generate`,
+`update`, `run`, `report` or `verdict` — and dispatches to the command you'd
+have run yourself. No recognized verb defaults to `generate`. It adds no
+authoring logic and makes **no LLM call**.
+
+When the text names two intents, the earliest one in the sentence wins and
+the other comes back in `also_matched`. That is why *"review this repo and
+generate new API tests"* routes to `scan` (see below) — the repo question is
+asked first, and its answer is what a `generate` needs anyway.
 
 ```
 noodle task "<text>" [OPTIONS]
@@ -535,6 +540,44 @@ name — surface facts come from the prompt or from probe evidence, never from
 translation. A routing sentence in front of a step list (`create a test: 1. Go
 to …`) is stripped before compiling, since that sentence is what routed the
 call.
+
+## noodle scan
+
+What is this repo, and what can Noodle test in it (NOOD_0192)? A
+deterministic scan of marker files — **no LLM, no code execution, nothing
+written**.
+
+```
+noodle scan [path] [--json | --no-json]
+```
+
+```
+  📁 /work/orders-service
+  · stack: node, python (fastapi, react)
+  · woks:  web, api
+  · serve: npm run dev
+  · spec:  api/openapi.yaml (14 endpoints)
+      GET /orders
+      POST /orders
+      …
+  · tests: api/tests
+  → ask: which base URL does it answer on once served (e.g. `npm run dev` → http://localhost:PORT)?
+  → ask: web tests, API tests, or both? (this repo has a UI and an API — …)
+  → ask: which change is under test — a branch/diff range, a ticket, or a list of features?
+```
+
+**`questions` is the point.** A developer standing in their own repo says
+*"review this repo and write tests for the new features"*, which names no
+URL, no steps and no boundary. The scan reports what it can read off the repo
+(stack, framework, how the repo says it serves itself, the OpenAPI endpoint
+list — that IS the API test plan, already written down, and where tests
+already live) and asks for the rest instead of guessing. Answer the
+questions, then send the steps to [`noodle task`](#noodle-task) or
+`noodle author --prompt`.
+
+Gitignored directories are skipped, so generated output never dominates the
+report. Available over MCP as `scan_repo`, and as the `scan` intent of
+`noodle task`.
 
 ## noodle summary
 

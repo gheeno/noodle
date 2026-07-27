@@ -65,7 +65,17 @@ _ACTION_KEYS = {"search": {"do", "id", "term"},
                 "upload": {"do", "id", "target", "file"},
                 "press_key": {"do", "id", "key", "target"},
                 "pick_date": {"do", "id", "target", "date"},
-                "go_back": {"do", "id"}}
+                "go_back": {"do", "id"},
+                # NOOD_0192 — the cross-wok verb. REST steps are browserless
+                # and legal in ANY scenario, so one action kind unlocks both
+                # missing shapes at once: a PURE API test (api actions only →
+                # @api, no browser, no probe) and the common mix — call the
+                # API, then prove the UI shows it. The runtime has had the
+                # rest_* steps since NOOD_0029; only the cheap deterministic
+                # authoring path was web-only, so every API test — the whole
+                # api wok — dropped to hand-written Gherkin, which is never
+                # intent-verified and never measured for size.
+                "api": {"do", "id", "method", "url", "body"}}
 _ACTION_REQUIRED = {"search": {"term"}, "suggest": {"term", "option"},
                     "pick": set(), "click": {"target"},
                     "add_to": {"item_from", "destination"},
@@ -73,8 +83,11 @@ _ACTION_REQUIRED = {"search": {"term"}, "suggest": {"term", "option"},
                     "check": {"target"}, "uncheck": {"target"},
                     "hover": {"target"}, "upload": {"target", "file"},
                     "press_key": {"key"}, "pick_date": {"target", "date"},
-                    "go_back": set()}
+                    "go_back": set(), "api": {"url"}}
 _PICK_STRATEGIES = {"first_actionable"}
+# NOOD_0192 — what the REST client's rest_call step accepts. GET is the
+# default so `{do: api, url: ...}` is the whole minimal call.
+_HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 # NOOD_0188 — actions that name a surface control, so they resolve through the
 # probe's canonical spelling and earn a POM entry. `press_key` is here only
 # when it carries an optional target (focus first); `go_back` never is.
@@ -92,14 +105,20 @@ _TARGETED_ACTIONS = ("click", "enter", "select", "check", "uncheck",
 # NOOD_0188 — "not_see" (text absent: the empty-state/removal case, which
 # `see` cannot express) and "url_contains" (the flow landed where it should —
 # the navigation half of a journey, previously unassertable from a goal).
+# NOOD_0192 — the api wok's two assertions: "status" (the response code) and
+# "response_contains" (a string in the body). Both are runtime-asserted by
+# nature — the probe drives a browser, it never calls the API — and a `status`
+# check is what makes a pure-API goal satisfy the assertion-required rule
+# without a browser ever launching.
 _CHECK_KEYS = {"see", "count", "any_of", "field", "value", "min", "name",
                "after", "item_in_destination", "expected_from", "evidence",
-               "not_see", "url_contains"}
+               "not_see", "url_contains", "status", "response_contains"}
 # The check KINDS — exactly one per check. Single source (NOOD_0188): this
 # tuple was hand-repeated in validate(), its error string and intent_trace(),
 # so a new kind silently fell through to the any_of branch in three places.
 _CHECK_KINDS = ("see", "not_see", "count", "any_of", "field",
-                "item_in_destination", "url_contains")
+                "item_in_destination", "url_contains", "status",
+                "response_contains")
 # NOOD_0163 — the landing-page anchor. NOOD_0158 made an unanchored check
 # observe the END state, which is right for the outcome but left a check on
 # text the LANDING page shows with nowhere to go: it compiled after the
@@ -225,6 +244,23 @@ def normalize(goal) -> tuple[dict, list[str]]:
             notes.append("add_to without item_from → inserted the implied "
                          f"pick {pid!r} (any result of the search) and "
                          "wired item_from to it")
+    # NOOD_0192 — an api assertion belongs beside its call, not stranded at
+    # the end of a browser flow. With exactly one api action there is only one
+    # response it could mean, so anchor it there; with more, the author says.
+    acts_in = g.get("actions")
+    api_idx = [i for i, a in enumerate(acts_in)
+               if isinstance(a, dict) and a.get("do") == "api"] \
+        if isinstance(acts_in, list) else []
+    api_id = None
+    if len(api_idx) == 1:
+        api_id = acts_in[api_idx[0]].get("id")
+        if api_id is None:
+            acts = [dict(a) if isinstance(a, dict) else a for a in acts_in]
+            taken = {a.get("id") for a in acts if isinstance(a, dict)}
+            api_id = next(i for i in ("call", "call1", "api_call")
+                          if i not in taken)
+            acts[api_idx[0]]["id"] = api_id
+            g["actions"] = acts
     checks = g.get("checks")
     acts_now = [a for a in (g.get("actions") or []) if isinstance(a, dict)]
     add_to = [a for a in acts_now if a.get("do") == "add_to"]
@@ -237,6 +273,12 @@ def normalize(goal) -> tuple[dict, list[str]]:
                 new_checks.append(c)
                 continue
             c = dict(c)
+            # NOOD_0192 — bind the api assertion to the sole api call.
+            if ("status" in c or "response_contains" in c) \
+                    and c.get("after") is None and api_id:
+                c["after"] = api_id
+                notes.append(f"api check anchored after {api_id!r} (the "
+                             "goal's only api call)")
             # item_in_destination: true — "in the destination" with the
             # destination left implicit; unambiguous when exactly ONE add_to
             # action names it.
@@ -330,6 +372,17 @@ def validate(goal) -> list[str]:
             if isinstance(src, str) and src.strip() and src not in pick_ids:
                 errs.append(f"actions[{i}] (add_to): item_from={src!r} names "
                             "no earlier pick action id")
+        elif do == "api":
+            # NOOD_0192 — the method is the only closed set here; the url may
+            # be absolute or a path relative to {var:REST_BASE_URL}, which is
+            # the REST client's own contract, not ours to re-litigate.
+            m = a.get("method")
+            if m is not None and str(m).upper() not in _HTTP_METHODS:
+                errs.append(f"actions[{i}] (api): unknown method {m!r} "
+                            f"(valid: {', '.join(_HTTP_METHODS)})")
+            if "'" in str(a.get("url", "")):
+                errs.append(f"actions[{i}] (api): url must not contain a "
+                            "single quote (it delimits the compiled step)")
         aid = a.get("id")
         if aid is not None:
             if aid in ids:
@@ -411,12 +464,25 @@ def validate(goal) -> list[str]:
             errs.append(f"checks[{i}]: expected_from only applies to "
                         "item_in_destination checks — a count/see check "
                         "cannot claim item identity")
+        if kind in ("status", "response_contains") and \
+                not any(isinstance(a, dict) and a.get("do") == "api"
+                        for a in actions):
+            # NOOD_0192 — an api assertion with no api action asserts against
+            # whatever response happened to be last, which is nothing.
+            errs.append(f"checks[{i}]: {kind} needs an api action in the "
+                        "goal — there is no response to assert against")
         if kind == "any_of":
             alts = c["any_of"]
             if not isinstance(alts, list) or not alts or \
                     not all(isinstance(x, str) and x.strip() for x in alts):
                 errs.append(f"checks[{i}]: any_of must be a non-empty list of "
                             "strings")
+        elif kind == "status":
+            code = c["status"]
+            if not isinstance(code, int) or isinstance(code, bool) \
+                    or not 100 <= code <= 599:
+                errs.append(f"checks[{i}]: status must be an HTTP status "
+                            "code (an integer, 100-599)")
         elif not isinstance(c[kind], str) or not c[kind].strip():
             errs.append(f"checks[{i}]: {kind} must be a non-empty string")
         if kind == "field":
@@ -463,6 +529,28 @@ def validate(goal) -> list[str]:
             not isinstance(goal["allow_no_assertion"], bool):
         errs.append("allow_no_assertion must be true or false")
     return errs
+
+
+def needs_browser(goal: dict) -> bool:
+    """NOOD_0192 — False only for a PURE-API goal: every action is an api
+    call and every check is an api assertion. One predicate, used by the
+    authoring transaction (skip the probe, no browser ever launches) and by
+    the compiler (tag @api, emit no navigation Given) — two decisions that
+    must never disagree about the same goal."""
+    actions = [a for a in (goal.get("actions") or []) if isinstance(a, dict)]
+    checks = [c for c in (goal.get("checks") or []) if isinstance(c, dict)]
+    return (not actions
+            or bool(goal.get("navigation"))
+            or any(a.get("do") != "api" for a in actions)
+            or any(not ({"status", "response_contains"} & set(c))
+                   for c in checks))
+
+
+def browserless_evidence(goal: dict) -> dict:
+    """The evidence dict for a goal that launches no browser — the same
+    evidence() pass over an empty page, so api actions/checks land in
+    `runtime_asserted` by exactly the code path a mixed goal uses."""
+    return evidence(goal, {"pages": [{}]})
 
 
 def navigation_urls(goal: dict) -> list[str]:
@@ -948,6 +1036,12 @@ def evidence(goal: dict, probe_result: dict) -> dict:
     if nav_block:
         blocking.append(nav_block)
     for i, a in enumerate(actions):
+        if a["do"] == "api":
+            # NOOD_0192 — nothing for a page probe to prove: the probe drives
+            # a browser, the call is HTTP. Its correctness is proven at run
+            # time by the status/body assertion that must accompany it, so it
+            # neither blocks authoring nor claims probe evidence.
+            continue
         if a["do"] == "add_to":
             # NOOD_0156 — semantic mutation lowering: resolve the requested
             # "add the picked item to <destination>" to the exact probed
@@ -1119,6 +1213,11 @@ def evidence(goal: dict, probe_result: dict) -> dict:
     gate = _runtime_gate(actions)
     captions = {k: v["caption"] for k, v in bound.items()}
     for i, c in enumerate(goal.get("checks") or []):
+        if "status" in c or "response_contains" in c:
+            # NOOD_0192 — same reason as the api action: runtime-proven by
+            # the REST client, never by the page probe.
+            runtime.append(_check_step(c)[0])
+            continue
         if "item_in_destination" in c:
             # NOOD_0156 — identity in the destination is always runtime-proven
             # (the probe never mutates state), but its INPUTS are validated
@@ -1363,6 +1462,15 @@ def infer_postcondition(goal: dict, ev: dict) -> dict:
                      f'"{last.get("date")}"'}]
         return out
 
+    if do == "api":
+        # NOOD_0192 — an unasserted API call proves nothing: a 500 with a
+        # body is still "a call that happened". The postcondition is the
+        # author's to state, and it is one word.
+        out["blocking"].append(
+            "the api call has no assertion — add a check saying what the "
+            "response must be (status: 200, or response_contains: '<text>')")
+        return out
+
     if do in ("check", "uncheck", "upload", "hover", "press_key", "go_back"):
         # NOOD_0188 — these have no deterministic self-evident postcondition
         # (a checkbox's own state isn't proof the app DID anything, and a
@@ -1427,7 +1535,9 @@ def intent_summary(goal: dict, ev: dict) -> dict:
                      ("do", "id", "target", "term", "value", "option",
                       # NOOD_0188 — the new verbs' payload keys, or the intent
                       # contract would silently drop what was actually asked.
-                      "file", "key", "date")
+                      "file", "key", "date",
+                      # NOOD_0192 — the api call's own payload.
+                      "url", "method")
                      if a.get(k) is not None})
     prereqs = []
     for p in ev.get("permission_prompts") or []:
@@ -1503,6 +1613,11 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
         elif do == "add_to":
             key = aid or f"add_to:{a.get('destination', '')}"
             ok, evid = key in mplans, "probe:mutation-path"
+        elif do == "api":
+            # NOOD_0192 — the call is proven by the run, not the page probe;
+            # its assertion is the check entry below. Never "missing" for
+            # want of a control it doesn't have.
+            ok, evid = True, "runtime:rest-call"
         elif not a.get("target"):
             # NOOD_0188 — press_key/go_back name no control: they act on the
             # focused element or on history, so there is nothing for a probe
@@ -1513,7 +1628,7 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
         else:
             ok, evid = f'{do}:{a.get("target", "")}' in proven, "probe:control"
         what = a.get("target") or a.get("term") or a.get("destination") \
-            or a.get("key") or ""
+            or a.get("key") or a.get("url") or ""
         trace.append({"requirement": f"{do} {what}".strip(),
                       "node": f"actions[{i}]",
                       "evidence": evid if ok else "missing", "ok": bool(ok)})
@@ -1536,10 +1651,16 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
         elif kind == "item_in_destination":
             cap = bound.get(c.get("expected_from", ""), {}).get("caption", "")
             ok = bool(cap) and any(cap in s for s in runtime)
+        elif kind in ("status", "response_contains"):
+            # NOOD_0192 — proven by the REST client at run time; it must
+            # appear verbatim in the runtime-asserted list.
+            ok = any(str(c[kind]) in s for s in runtime)
         else:
             ok = f"any_of[{i}]" in proven or bool(runtime)
         entry = {"requirement": f"check {kind}", "node": f"checks[{i}]",
-                 "evidence": ("probe+runtime" if ok else "missing"),
+                 "evidence": (("runtime:rest-client"
+                               if kind in ("status", "response_contains")
+                               else "probe+runtime") if ok else "missing"),
                  "ok": bool(ok)}
         if c.get("evidence") == "screenshot":
             entry["screenshot"] = True
@@ -1615,6 +1736,13 @@ def _check_step(c: dict, captions: dict | None = None) -> tuple[str, str | None]
         # ("the item is gone from the cart", "no error is shown") had no
         # expressible form, so those goals dropped to hand-written Gherkin.
         body, pom = f'the user should not see "{c["not_see"]}"', None
+    elif "status" in c:
+        # NOOD_0192 — the api wok's assertions, in the REST client's own
+        # phrasing (resolver/patterns.py rest_assert_status / rest_assert_body).
+        body, pom = f"the response status should be {c['status']}", None
+    elif "response_contains" in c:
+        body, pom = (f"the response body should contain "
+                     f"'{c['response_contains']}'", None)
     elif "url_contains" in c:
         # NOOD_0188 — "the flow landed where it should". Navigation was
         # driveable from a goal but never assertable from one.
@@ -1680,6 +1808,12 @@ def _action_step(a: dict, target: str) -> str:
         return f'User selects "{a["date"]}" from the "{target}" calendar'
     if do == "go_back":
         return "User goes back"
+    if do == "api":
+        # NOOD_0192 — rest_call. The url may be absolute or a path relative to
+        # {var:REST_BASE_URL}; both are the same step.
+        return (f"performs a {str(a.get('method', 'GET')).upper()} call at "
+                f"'{a['url']}'"
+                + (f" with body '{a['body']}'" if a.get("body") else ""))
     raise ValueError(
         f"_action_step has no branch for do={do!r} — add one (a silent "
         "fallthrough would compile a wrong-but-matching step)")
@@ -1694,22 +1828,23 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
     NOOD_0156 — `nav_keys` (from navigation_env) emits ONE ordered navigation
     Given per requested URL; without a navigation contract the single
     base-URL Given is unchanged."""
-    steps: list[tuple[str, str]] = [
-        ("Given", f'User is on "{{env:{k}}}"')
-        for k in (nav_keys or [base_url_key])]
+    steps: list[tuple[str, str]] = []
     dismissals = goal.get("dismissals") or []
-    perms = list(dict.fromkeys(
-        [*ev.get("permission_prompts", []),
-         *(_DISMISS_PERM[d] for d in dismissals if d in _DISMISS_PERM)]))
-    for perm in perms:
-        if perm in _PERM_STEP:
-            steps.append(("When", _PERM_STEP[perm]))
-    if ev.get("popups_closed") or "popups" in dismissals:
-        steps.append(("When", _POPUP_STEP))
-
     pom_entries: dict[str, list[str]] = {}
     checks = goal.get("checks") or []
     actions = goal.get("actions") or []
+    # NOOD_0192 — is a browser involved at all? An api-only goal compiles to
+    # @api: no navigation Given, no dismissals, no POM — and hooks then starts
+    # no browser for it, which is exactly what makes a pure-API suite runnable
+    # on a browser-free CI image.
+    web = needs_browser(goal) or bool(nav_keys)
+    # The API calls asked for BEFORE the first web action are a preamble:
+    # "fetch or seed over REST, then prove it in the UI" is the commonest
+    # cross-wok shape, and emitting the navigation first would invert the
+    # user's own order. Everything after the first web action stays in place.
+    pre = 0
+    while pre < len(actions) and actions[pre]["do"] == "api":
+        pre += 1
     bound = ev.get("bound_targets") or {}
     captions = {k: v.get("caption", "") for k, v in bound.items()}
 
@@ -1769,13 +1904,39 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
                 pom_name, [f"{pom_name}:",
                            f'  css: {_yaml_str(_any_of_selector(c["any_of"]))}'])
 
+    def _anchored(aid):
+        for c in checks:
+            if aid is not None and c.get("after") == aid:
+                _emit_check(c)
+
+    # NOOD_0192 — the REST preamble, ahead of any navigation.
+    for a in actions[:pre]:
+        steps.append(("When", _action_step(a, "")))
+        _anchored(a.get("id"))
+
+    if web:
+        for k in (nav_keys or [base_url_key]):
+            steps.append(("Given", f'User is on "{{env:{k}}}"'))
+        perms = list(dict.fromkeys(
+            [*ev.get("permission_prompts", []),
+             *(_DISMISS_PERM[d] for d in dismissals if d in _DISMISS_PERM)]))
+        for perm in perms:
+            if perm in _PERM_STEP:
+                steps.append(("When", _PERM_STEP[perm]))
+        if ev.get("popups_closed") or "popups" in dismissals:
+            steps.append(("When", _POPUP_STEP))
+
     # NOOD_0163 — the landing page is the only page an action can't anchor to,
     # so `after: start` is emitted here, before anything is clicked.
     for c in checks:
         if c.get("after") == _START:
             _emit_check(c)
 
-    for a in actions:
+    for a in actions[pre:]:
+        if a["do"] == "api":
+            steps.append(("When", _action_step(a, "")))
+            _anchored(a.get("id"))
+            continue
         if a["do"] == "add_to":
             # NOOD_0156 — semantic mutation, lowered to the exact probed
             # chain: the (at most one) probe-proven prerequisite reveal, then
@@ -1890,7 +2051,7 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
         if c.get("after") is None:
             _emit_check(c)
 
-    lines = ["@web", f"Feature: {goal['scenario']}", "",
+    lines = ["@web" if web else "@api", f"Feature: {goal['scenario']}", "",
              f"  Scenario: {goal['scenario']}"]
     prev = None
     for kw, body in steps:

@@ -66,7 +66,12 @@ _WEBSITE_REF = re.compile(
 _PAREN = re.compile(r"\(([^()]{3,})\)")
 _CONJ = re.compile(r"\s+(?:and(?:\s+then)?|then)\s+", re.I)
 
-VERBS_HELP = ("go to / open url / then url <url>; search for <term>; "
+VERBS_HELP = ("go to / open url / then url <url>; "
+              # NOOD_0192 — the api wok reads the same as the web one.
+              "GET|POST|PUT|PATCH|DELETE <url> | call the api at <url> | "
+              "go to <url> via rest; verify the response status is <code>; "
+              "verify the response body contains <text>; "
+              "search for <term>; "
               "click <name>; click the suggestion <option> (after a search); "
               "enter <value> in <field>; "
               "select <option> from <list>; add [<item>] to <destination>; "
@@ -81,6 +86,34 @@ VERBS_HELP = ("go to / open url / then url <url>; search for <term>; "
 # nav (an "open url X" clause must never become a click on "url X"),
 # dismiss before click, verify before click.
 _VERBS = [
+    # NOOD_0192 — the api verbs come FIRST: every one of them names a URL, and
+    # `nav`/`click` would otherwise swallow "go to <url> via rest" as a browser
+    # navigation. Each carries named groups (method/url) because three shapes
+    # share one kind. A match whose url isn't URL-shaped falls through to the
+    # rest of the table — "gets the coffee" is still a click.
+    ("api", re.compile(
+        r"^(?:(?:sends?|makes?|performs?|issues?|submits?|runs?|does)\s+)?"
+        r"(?:a\s+|an\s+)?(?P<method>GET|POST|PUT|PATCH|DELETE)\b"
+        r"(?:\s+(?:api|rest|http)?\s*(?:call|request))?"
+        r"(?:\s+(?:to|at|on|against|for))?\s+(?P<url>\S+)$", re.I)),
+    ("api", re.compile(
+        r"^(?:calls?|hits?|queries|requests?|fetch(?:es)?|gets?)\s+"
+        r"(?:the\s+)?(?:rest\s+)?(?:api|endpoint|service|url|resource)?\s*"
+        r"(?:at|on|to|from)?\s+(?P<url>\S+)"
+        r"(?:\s+(?:via|over|using|through)\s+(?:the\s+)?"
+        r"(?:rest|api|http))?$", re.I)),
+    # the user's own phrasing: "go to <url> via rest"
+    ("api", re.compile(
+        r"^(?:go(?:es)?\s+to|open(?:s)?|visit(?:s)?|navigate(?:s)?\s+to)\s+"
+        r"(?:the\s+)?(?:url\s+)?(?P<url>\S+)\s+"
+        r"(?:via|over|using|through)\s+(?:the\s+)?(?:rest|api|http)"
+        r"(?:\s+call)?$", re.I)),
+    # a bare status claim with no verify verb in front of it
+    ("api_status", re.compile(
+        r"^(?:the\s+)?(?:(?:response|api|call|request|it|url)\s*)?"
+        r"(?:status(?:\s+code)?\s*)?"
+        r"(?:should\s+(?:be|equal|return)|is|was|returns?|=)\s*"
+        r"(?P<code>\d{3})$", re.I)),
     ("nav_url", re.compile(
         r"^(?:open(?:s)?|then|go(?:es)?\s+to|visit(?:s)?|"
         r"navigate(?:s)?\s+to|launch(?:es)?)?\s*(?:the\s+)?url\s+(\S+)$",
@@ -146,6 +179,16 @@ _VERBS = [
 _KEY_CANON = {"return": "Enter", "esc": "Escape", "arrowup": "ArrowUp",
               "arrowdown": "ArrowDown", "arrowleft": "ArrowLeft",
               "arrowright": "ArrowRight"}
+# NOOD_0192 — the two api assertions as a `verify <...>` tail ("see if url is
+# 200", "verify the response body contains 'Apple'").
+_STATUS_CLAIM = re.compile(
+    r"^(?:the\s+)?(?:(?:response|api|call|request|it|url)\s*)?"
+    r"(?:status(?:\s+code)?\s*)?"
+    r"(?:should\s+(?:be|equal|return)|is|was|returns?|=)\s*"
+    r"(?P<code>\d{3})$", re.I)
+_BODY_CLAIM = re.compile(
+    r"^(?:the\s+)?(?:response|api|payload)\s+(?:body\s+)?"
+    r"(?:should\s+)?(?:contains?|includes?|has)\s+(?P<needle>.+)$", re.I)
 _HAS = re.compile(
     r"^(?:the\s+)?(.+?)\s+(?:has|have|contains?|shows?|includes?|lists?)\s+"
     r"(?:a\s+|an\s+|the\s+)?(.+)$", re.I)
@@ -290,7 +333,18 @@ def _parse_clause(c: dict) -> dict:
         if not m:
             continue
         node["kind"] = kind
-        if kind == "nav_url":
+        if kind == "api":
+            # NOOD_0192 — url-shaped or it isn't an API call; anything else
+            # keeps walking the table (so "gets the coffee" stays a click).
+            url = _clean(m.group("url")).rstrip(".")
+            if not _URLISH.match(url):
+                node["kind"] = "unknown"
+                continue
+            node["url"] = _normalize_url(url)
+            node["method"] = (m.groupdict().get("method") or "GET").upper()
+        elif kind == "api_status":
+            node["status"] = int(m.group("code"))
+        elif kind == "nav_url":
             target = _clean(m.group(1)).rstrip(".")
             if _URLISH.match(target):
                 node.update(kind="nav", url=_normalize_url(target))
@@ -393,7 +447,8 @@ def expand(text: str, base_url: str | None = None) -> dict:
     picks: dict[int, dict] = {}         # node index (of minting clause) → pick
     adds: dict[int, dict] = {}          # node index → add_to action
     consumed: set[str] = set()          # search ids already feeding a pick
-    counters = {"search": 0, "pick": 0, "add": 0}
+    api_calls: list[dict] = []          # NOOD_0192 — in prompt order
+    counters = {"search": 0, "pick": 0, "add": 0, "api": 0}
     pending_evidence = False
 
     def _cover(n, status, node_ids=()):
@@ -474,6 +529,24 @@ def expand(text: str, base_url: str | None = None) -> dict:
         if n["kind"] == "nav":
             urls.append(n["url"])
             _cover(n, "navigation")
+            continue
+        # NOOD_0192 — the api wok, straight through: the call is an action,
+        # the status claim is its check. No probe, no page, no inference.
+        if n["kind"] == "api":
+            act = {"do": "api", "id": _mint("api"), "method": n["method"],
+                   "url": n["url"]}
+            api_calls.append(act)
+            actions.append(act)
+            _cover(n, "action", [act["id"]])
+            continue
+        if n["kind"] == "api_status":
+            if not api_calls:
+                _refuse(n, "a status assertion needs an api call before it",
+                        conflict=True)
+                continue
+            checks.append({"status": n["status"],
+                           "after": api_calls[-1]["id"]})
+            _cover(n, "check")
             continue
         if n["kind"] == "search":
             act = {"do": "search", "id": _mint("search"), "term": n["term"]}
@@ -701,7 +774,31 @@ def expand(text: str, base_url: str | None = None) -> dict:
                     r"^(?:the\s+)?(?:url|address|link)\s+"
                     r"(?:contains?|includes?|has|is|ends?\s+with)\s+(.+)$",
                     text, re.I)
-                if url_m:
+                # NOOD_0192 — "see if url is 200" is an HTTP status claim, and
+                # it must be read BEFORE url_contains, whose "url is <x>" arm
+                # would compile it into a browser assertion that the address
+                # bar contains "200".
+                status_m = _STATUS_CLAIM.match(text)
+                body_m = _BODY_CLAIM.match(text)
+                if status_m or body_m:
+                    if not api_calls:
+                        _refuse(n, "an api assertion needs an api call "
+                                   "before it", conflict=True)
+                        continue
+                    if status_m:
+                        check = {"status": int(status_m.group("code")),
+                                 "after": api_calls[-1]["id"]}
+                        assumptions.append(
+                            f"step {no} '{n['raw']}': asserting the response "
+                            f"status is {status_m.group('code')}")
+                    else:
+                        needle = _clean(body_m.group("needle")).strip("\"'")
+                        check = {"response_contains": needle,
+                                 "after": api_calls[-1]["id"]}
+                        assumptions.append(
+                            f"step {no} '{n['raw']}': asserting the response "
+                            f"body contains '{needle}'")
+                elif url_m:
                     part = _clean(url_m.group(1)).strip("\"'")
                     check = {"url_contains": part}
                     assumptions.append(
@@ -739,7 +836,15 @@ def expand(text: str, base_url: str | None = None) -> dict:
                 "unrecognized": unrecognized, "unresolved": unresolved,
                 "conflicts": conflicts, "assumptions": assumptions,
                 "clauses": clauses, "coverage": coverage, "goal": None}
+    # NOOD_0192 — a pure-API prompt has no page to open, so its package is
+    # named after the endpoint it calls. Without this the api wok could never
+    # be reached from a prompt at all: "no URL in the prompt" for a prompt
+    # made entirely of URLs.
     first_url = urls[0] if urls else None
+    api_only = bool(api_calls) and not urls and not any(
+        a["do"] != "api" for a in actions)
+    if not first_url and not base_url and api_only:
+        base_url = api_calls[0]["url"]
     if not first_url and not base_url:
         return {"ok": False,
                 "error": "no URL in the prompt and no base_url given — "
@@ -747,7 +852,11 @@ def expand(text: str, base_url: str | None = None) -> dict:
                 "unrecognized": [], "unresolved": [], "conflicts": [],
                 "assumptions": assumptions, "clauses": clauses,
                 "coverage": coverage, "goal": None}
-    if not dismissals:
+    if api_only:
+        # no browser, so no popups to dismiss — an empty list keeps the goal
+        # honest about what it does.
+        dismissals = []
+    elif not dismissals:
         dismissals = ["location_prompt", "popups"]
         assumptions.append(
             "dismissals defaulted to location_prompt + popups (both are "
@@ -772,6 +881,8 @@ def expand(text: str, base_url: str | None = None) -> dict:
             labels.append(f"press {a['key']}")
         elif a["do"] == "go_back":
             labels.append("go back")
+        elif a["do"] == "api":
+            labels.append(f"{a['method']} {urlsplit(a['url']).path or '/'}")
         elif a["do"] in ("click", "enter", "select", "check", "uncheck",
                          "hover", "upload", "pick_date"):
             # NOOD_0188 — every targeted verb reaches the scenario title; a
@@ -781,6 +892,8 @@ def expand(text: str, base_url: str | None = None) -> dict:
     for c in checks:
         if "item_in_destination" in c:
             labels.append(f"verify {c['item_in_destination']}")
+        elif "status" in c:
+            labels.append(f"status {c['status']}")
     scenario = ", ".join(labels)[:80] or "prompt flow"
 
     goal = {"scenario": scenario, "dismissals": dismissals,
