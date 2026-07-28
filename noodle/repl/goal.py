@@ -1120,6 +1120,7 @@ def evidence(goal: dict, probe_result: dict) -> dict:
     # string is in the rendered text, entire.
     expect_found = {_norm(e.get("text")) for e in (pg.get("expect") or [])
                     if e.get("found")}
+    searched = any(a["do"] in ("search", "suggest") for a in actions)
 
     blocking, proven, runtime, bound, resolved = [], {}, [], {}, {}
     mplans: dict[str, dict] = {}
@@ -1361,8 +1362,13 @@ def evidence(goal: dict, probe_result: dict) -> dict:
             continue
         at_end = _check_scope(c, goal) == "search"
         scope = search_scope if at_end else initial_scope
-        # An expect verdict answers only for the page the probe ended on.
-        expect = expect_found if at_end else set()
+        # An expect verdict answers only for the page the probe ended on —
+        # the search landing page when the goal searches, else the initial
+        # page (NOOD_0196). Only a check anchored BEFORE a search must ignore
+        # it; discarding it for every non-search goal blocked body text the
+        # probe had literally proven, because the structured capture carries
+        # headings and controls, not prose.
+        expect = expect_found if at_end or not searched else set()
         if "see" in c:
             hit = c["see"] if _norm(c["see"]) in expect \
                 else _find_text(c["see"], scope)
