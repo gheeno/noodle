@@ -218,7 +218,7 @@ def test_blocked_by_overlay_is_a_known_category():
 def _ws(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n")
+    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n", encoding="utf-8")
     return ws
 
 
@@ -243,10 +243,10 @@ def test_feature_mode_reports_stale_env_keys_without_pruning(tmp_path):
     ws = _ws(tmp_path)
     assert _author(ws)["ok"]
     env_p = ws / "noodle_tests/web/shop/resources/shop_environments.yaml"
-    env_p.write_text(env_p.read_text() + "STALE_X: v\n")
+    env_p.write_text(env_p.read_text(encoding="utf-8") + "STALE_X: v\n", encoding="utf-8")
     r = _author(ws, overwrite=True)
     assert r["stale_env_keys"] == ["STALE_X"]
-    assert "STALE_X" in env_p.read_text()     # NOOD_0129 merge contract kept
+    assert "STALE_X" in env_p.read_text(encoding="utf-8")     # NOOD_0129 merge contract kept
 
 
 def test_unused_pom_keys_and_ready_meaning_are_surfaced(tmp_path):
@@ -272,7 +272,7 @@ def test_goal_overwrite_prunes_stale_env_and_orphaned_pom(tmp_path,
     app = ws / "noodle_tests/web/shop"
     env_p = app / "resources/shop_environments.yaml"
     pom_p = app / "resources/pageobjects/login_pom.yaml"
-    env_p.write_text(env_p.read_text() + "STALE_X: v\n")
+    env_p.write_text(env_p.read_text(encoding="utf-8") + "STALE_X: v\n", encoding="utf-8")
     assert pom_p.is_file()
     monkeypatch.setattr(core, "probe_page", _goal_probe_result)
     r = core.author_test(app_name="Shop", base_url="http://localhost:9",
@@ -280,11 +280,11 @@ def test_goal_overwrite_prunes_stale_env_and_orphaned_pom(tmp_path,
                          workspace=str(ws))
     assert r["ok"] and r["ready"], r
     assert r["pruned_env_keys"] == ["STALE_X"]
-    assert "STALE_X" not in env_p.read_text()
+    assert "STALE_X" not in env_p.read_text(encoding="utf-8")
     assert not pom_p.exists()                 # orphaned POM removed
     assert r["removed_stale_pom"]
     # the app URL key survives — referenced by the compiled feature
-    assert "shop" in env_p.read_text().lower()
+    assert "shop" in env_p.read_text(encoding="utf-8").lower()
 
 
 def test_goal_overwrite_keeps_keys_other_features_reference(tmp_path,
@@ -293,13 +293,13 @@ def test_goal_overwrite_keeps_keys_other_features_reference(tmp_path,
     assert _author(ws)["ok"]
     app = ws / "noodle_tests/web/shop"
     (app / "features/other.feature").write_text(
-        '@web\nFeature: O\n  Scenario: s\n    Given User is on "{env:API_BASE}"\n')
+        '@web\nFeature: O\n  Scenario: s\n    Given User is on "{env:API_BASE}"\n', encoding="utf-8")
     env_p = app / "resources/shop_environments.yaml"
-    env_p.write_text(env_p.read_text() + "API_BASE: http://api:1\n")
+    env_p.write_text(env_p.read_text(encoding="utf-8") + "API_BASE: http://api:1\n", encoding="utf-8")
     monkeypatch.setattr(core, "probe_page", _goal_probe_result)
     r = core.author_test(app_name="Shop", base_url="http://localhost:9",
                          feature_path="login", goal=_GOAL, overwrite=True,
                          workspace=str(ws))
     assert r["ok"], r
-    assert "API_BASE" in env_p.read_text()    # another feature needs it
+    assert "API_BASE" in env_p.read_text(encoding="utf-8")    # another feature needs it
     assert "pruned_env_keys" not in r

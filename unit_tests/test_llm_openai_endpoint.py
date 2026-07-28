@@ -156,7 +156,7 @@ def test_valid_types_mirrors_the_runner_dispatch():
     import re
     from pathlib import Path
     runner = Path(step_resolver.__file__).parent.parent / "orchestrator" / "runner.py"
-    dispatched = set(re.findall(r"t == '([a-z0-9_]+)'", runner.read_text()))
+    dispatched = set(re.findall(r"t == '([a-z0-9_]+)'", runner.read_text(encoding="utf-8")))
     assert dispatched == set(step_resolver.VALID_TYPES)
 
 

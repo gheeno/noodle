@@ -49,7 +49,7 @@ def _base_urls() -> dict:
         if not path.exists():
             continue
         try:
-            data = yaml.safe_load(path.read_text()) or {}
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         except Exception:
             continue
         for key, value in data.items():
@@ -89,14 +89,14 @@ def write_environment(results_dir: Path) -> Path:
     for app, url in _base_urls().items():
         props[f"base.url.{app}"] = url
     path = Path(results_dir) / "environment.properties"
-    path.write_text("".join(f"{k}={v}\n" for k, v in sorted(props.items())))
+    path.write_text("".join(f"{k}={v}\n" for k, v in sorted(props.items())), encoding="utf-8")
     return path
 
 
 def write_categories(results_dir: Path) -> Path:
     """categories.json — noodle's failure taxonomy for the Categories widget."""
     path = Path(results_dir) / "categories.json"
-    path.write_text(json.dumps(CATEGORIES, indent=2) + "\n")
+    path.write_text(json.dumps(CATEGORIES, indent=2) + "\n", encoding="utf-8")
     return path
 
 

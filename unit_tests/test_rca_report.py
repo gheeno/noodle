@@ -125,7 +125,7 @@ def _write_result(tmp_path, **overrides):
         "status": overrides.get("status", "failed"),
         "stop": overrides.get("stop", 1000),
     }
-    (tmp_path / f"{result['uuid']}-result.json").write_text(json.dumps(result))
+    (tmp_path / f"{result['uuid']}-result.json").write_text(json.dumps(result), encoding="utf-8")
 
 
 def test_collect_skips_passed_scenarios(tmp_path):

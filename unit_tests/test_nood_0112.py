@@ -43,7 +43,7 @@ def test_prompt_template_keeps_shell_opt_out_field():
 
 
 def test_playbook_section_0_matches():
-    playbook = _flat((REPO / "docs" / "agent-playbook.md").read_text())
+    playbook = _flat((REPO / "docs" / "agent-playbook.md").read_text(encoding="utf-8"))
     assert "max 2 sentences" in playbook
     assert "current intent" in playbook
     assert "do not output the shell command" in playbook
@@ -51,7 +51,7 @@ def test_playbook_section_0_matches():
 
 
 def test_copilot_digest_matches():
-    digest = _flat((REPO / ".github" / "copilot-instructions.md").read_text())
+    digest = _flat((REPO / ".github" / "copilot-instructions.md").read_text(encoding="utf-8"))
     assert "max 2 sentences" in digest
     assert "current intent" in digest
     assert "not to output shell commands" in digest

@@ -182,7 +182,7 @@ class TestFindBehaveBase:
 
 class TestRecordOutputDefault:
     def test_default_output_uses_configured_tests_dir(self, tmp_path):
-        (tmp_path / "noodle.yaml").write_text("tests_dir: sample_feature_tests\n")
+        (tmp_path / "noodle.yaml").write_text("tests_dir: sample_feature_tests\n", encoding="utf-8")
         from typer.testing import CliRunner
 
         from noodle.cli import app
@@ -202,7 +202,7 @@ class TestRecordOutputDefault:
         assert captured["output_path"] == str(tmp_path / "sample_feature_tests" / "recorded.feature")
 
     def test_explicit_output_overrides_default(self, tmp_path):
-        (tmp_path / "noodle.yaml").write_text("tests_dir: sample_feature_tests\n")
+        (tmp_path / "noodle.yaml").write_text("tests_dir: sample_feature_tests\n", encoding="utf-8")
         from typer.testing import CliRunner
 
         from noodle.cli import app

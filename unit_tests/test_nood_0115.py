@@ -186,7 +186,7 @@ def helpers_py(tmp_path):
         "def parse_int(text):\n"
         "    import re\n"
         "    return int(re.search(r'\\d+', text).group(0))\n"
-    )
+    , encoding="utf-8")
     return f
 
 

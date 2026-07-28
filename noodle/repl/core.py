@@ -47,7 +47,7 @@ def _state_path(workspace: str = ".") -> Path:
 
 def load_state(workspace: str = ".") -> dict:
     try:
-        data = json.loads(_state_path(workspace).read_text())
+        data = json.loads(_state_path(workspace).read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
@@ -57,7 +57,7 @@ def save_state(state: dict, workspace: str = ".") -> None:
     p = _state_path(workspace)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({k: v for k, v in state.items()
-                             if k in _DURABLE_KEYS}, indent=2) + "\n")
+                             if k in _DURABLE_KEYS}, indent=2) + "\n", encoding="utf-8")
 
 
 # --- shared helpers ----------------------------------------------------------
@@ -116,7 +116,7 @@ def find_feature(cfg: dict, workspace: str, name: str) -> str | None:
             candidate = base / name
             if candidate.is_file() or candidate.is_dir():
                 try:
-                    return str(candidate.relative_to(workspace))
+                    return candidate.relative_to(workspace).as_posix()
                 except ValueError:
                     return str(candidate)  # name was already absolute
         return None
@@ -124,10 +124,10 @@ def find_feature(cfg: dict, workspace: str, name: str) -> str | None:
         return None
     for f in fdir.rglob("*.feature"):
         if name.lower() in f.stem.lower():
-            return str(f.relative_to(workspace))
+            return f.relative_to(workspace).as_posix()
     for d in fdir.rglob(name):
         if d.is_dir():
-            return str(d.relative_to(workspace))
+            return d.relative_to(workspace).as_posix()
     return None
 
 
@@ -149,7 +149,7 @@ def resolve_target(target: str | None, workspace: str = ".") -> dict:
     candidates = sorted(fdir.rglob("*.feature"),
                         key=lambda p: p.stat().st_mtime, reverse=True)
     if candidates:
-        return {"feature": str(candidates[0].relative_to(workspace))}
+        return {"feature": candidates[0].relative_to(workspace).as_posix()}
     return {"error": f"no .feature files under {cfg['tests_dir']}"}
 
 
@@ -188,20 +188,20 @@ def create_test(description: str, url: str, *, use_llm: bool = False,
     wok_tag = None
     if not append_to:
         from noodle import wok as _wok
-        feat_text = Path(feat).read_text()
+        feat_text = Path(feat).read_text(encoding="utf-8")
         inferred = _wok.infer_tag(description, feat_text)
         if inferred not in _wok.routing_tags_in(feat_text):
-            Path(feat).write_text(_wok.retag_feature(feat_text, inferred))
+            Path(feat).write_text(_wok.retag_feature(feat_text, inferred), encoding="utf-8")
             wok_tag = inferred
-    texts = [Path(feat).read_text()]
+    texts = [Path(feat).read_text(encoding="utf-8")]
     if Path(pom).exists():
-        texts.append(Path(pom).read_text())
+        texts.append(Path(pom).read_text(encoding="utf-8"))
     runnable = not any(generate._PLACEHOLDER_RE.search(t) for t in texts)
     # NOOD_0055 — persist workspace-relative paths, same shape write_feature
     # stores: resolve_target rejoins them with the workspace, and a cwd-relative
     # path breaks as soon as another process (MCP server vs REPL) loads the state.
-    rel_feat = os.path.relpath(feat, workspace)
-    rel_pom = os.path.relpath(pom, workspace)
+    rel_feat = Path(os.path.relpath(feat, workspace)).as_posix()
+    rel_pom = Path(os.path.relpath(pom, workspace)).as_posix()
     state = load_state(workspace)
     state.update(last_feature=rel_feat, last_pom=rel_pom,
                  last_app=Path(feat).parent.parent.name)
@@ -331,7 +331,7 @@ def _resolved_env(app_dirs, workspace: str) -> dict:
         if not p.is_file():
             return
         try:
-            data = yaml.safe_load(p.read_text()) or {}
+            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         except Exception:
             return
         if isinstance(data, dict):
@@ -455,7 +455,7 @@ def preflight(target: str | None = None, workspace: str = ".", *,
     refs, warnings = [], []
     from noodle.repl import validate
     for f in files:
-        text = f.read_text()
+        text = f.read_text(encoding="utf-8")
         for k in validate.env_refs(text):
             if k not in refs:
                 refs.append(k)
@@ -604,7 +604,7 @@ def _cached_probe(workspace: str, urls: str, act_on: str, args: dict,
             / f"{key}.json")
     try:
         if path.is_file() and (time.time() - path.stat().st_mtime) < ttl:
-            cached = json.loads(path.read_text())
+            cached = json.loads(path.read_text(encoding="utf-8"))
             from noodle.log import logger
             logger.info("\n  ♻️  Reusing the probe from this lap "
                         f"(same transaction, <{ttl:.0f}s old)")
@@ -614,7 +614,7 @@ def _cached_probe(workspace: str, urls: str, act_on: str, args: dict,
     result = run()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(result, indent=2, default=str))
+        path.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
     except (OSError, TypeError, ValueError):
         pass
     return result, False
@@ -863,7 +863,7 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             dbg = Path(workspace) / _paths.artifacts_root() / "probe_goal.json"
             try:
                 dbg.parent.mkdir(parents=True, exist_ok=True)
-                dbg.write_text(json.dumps(probe_result, indent=2, default=str))
+                dbg.write_text(json.dumps(probe_result, indent=2, default=str), encoding="utf-8")
             except OSError:
                 pass
         goal_ev = (goal_mod.browserless_evidence(goal) if browserless
@@ -934,7 +934,7 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     env_map = {}
     if env_path.is_file():
         try:
-            env_map = yaml.safe_load(env_path.read_text()) or {}
+            env_map = yaml.safe_load(env_path.read_text(encoding="utf-8")) or {}
         except Exception:
             env_map = {}
     env_map[app] = supplied_url
@@ -957,9 +957,9 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         refs = {r.upper() for r in validate.env_refs(content)}
         for f in features_dir.glob("*.feature"):
             if f != feat_dest:
-                refs |= {r.upper() for r in validate.env_refs(f.read_text())}
+                refs |= {r.upper() for r in validate.env_refs(f.read_text(encoding="utf-8"))}
         for pf in (res_dir / "pageobjects").glob("*.yaml"):
-            refs |= {r.upper() for r in validate.env_refs(pf.read_text())}
+            refs |= {r.upper() for r in validate.env_refs(pf.read_text(encoding="utf-8"))}
         keep = refs | {app.upper()} | {
             str(k).upper() for k in (environment_values or {})}
         stale_env_keys = [k for k in env_map if str(k).upper() not in keep]
@@ -1016,7 +1016,7 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
                 if config.is_secret_path(path):
                     config.write_private(tmp, text)
                 else:
-                    tmp.write_text(text)
+                    tmp.write_text(text, encoding="utf-8")
                 os.replace(tmp, path)
             except OSError:
                 tmp.unlink(missing_ok=True)
@@ -1040,7 +1040,7 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             # Merge supplied values in place + append still-missing placeholders,
             # preserving existing keys/comments. Written through _write (temp +
             # os.replace) so it joins the same backup/rollback transaction.
-            base = (secrets_path.read_text() if secrets_path.is_file()
+            base = (secrets_path.read_text(encoding="utf-8") if secrets_path.is_file()
                     else generate._SECRETS_EXAMPLE)
             _write(secrets_path, _apply_secrets(base, supplied_secrets, new_secret_keys))
         _write(feat_dest, content)
@@ -1053,7 +1053,7 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
 
     ws_res = Path(workspace).resolve()
     def rel(p):
-        return os.path.relpath(p, ws_res)
+        return Path(os.path.relpath(p, ws_res)).as_posix()
     state = load_state(workspace)
     state.update(last_feature=rel(feat_dest), last_pom=rel(pom_path), last_app=app)
     save_state(state, workspace)
@@ -1291,7 +1291,7 @@ def cost_estimate(target: str, *, model: str | None = None,
     if not p.is_file():
         return {"ok": False, "error": f"no such file: {target}"}
     try:
-        est = _cost.estimate(p.read_text(), model=model)
+        est = _cost.estimate(p.read_text(encoding="utf-8"), model=model)
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     return {"ok": True, "target": str(p), **est}
@@ -1311,10 +1311,10 @@ def list_tests(workspace: str = ".", query: str | None = None) -> dict:
     q = (query or "").lower()
     out = []
     for f in sorted(fdir.rglob("*.feature")):
-        text = f.read_text()
+        text = f.read_text(encoding="utf-8")
         feat_m = re.search(r"^\s*Feature:\s*(.+)$", text, re.M)
         entry = {
-            "path": str(f.relative_to(workspace)),
+            "path": f.relative_to(workspace).as_posix(),
             "feature": feat_m.group(1).strip() if feat_m else "",
             "scenarios": [s.strip() for s in re.findall(
                 r"^\s*Scenario(?: Outline)?:\s*(.+)$", text, re.M)],
@@ -1382,7 +1382,7 @@ def write_feature(path: str, content: str, *, overwrite: bool = False,
         return {"ok": False, "error": f"{path} exists — pass overwrite=true to replace"}
     if not allow_unverified_intent:
         try:
-            rel = str(dest.relative_to(Path(workspace).resolve()))
+            rel = dest.relative_to(Path(workspace).resolve()).as_posix()
         except ValueError:
             rel = path
         # NOOD_0187 — blocked contracts only (same scoping as author_test's
@@ -1412,8 +1412,8 @@ def write_feature(path: str, content: str, *, overwrite: bool = False,
         from noodle.repl import validate
         content = validate.annotate_llm_image_steps(content)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(content if content.endswith("\n") else content + "\n")
-    rel = str(dest.relative_to(Path(workspace).resolve()))
+    dest.write_text(content if content.endswith("\n") else content + "\n", encoding="utf-8")
+    rel = dest.relative_to(Path(workspace).resolve()).as_posix()
     state = load_state(workspace)
     state["last_feature"] = rel
     save_state(state, workspace)

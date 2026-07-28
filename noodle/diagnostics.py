@@ -138,7 +138,7 @@ def run_attempts(workspace: str = ".") -> dict | None:
     path = _paths.last_run_root(workspace) / "reports" / "rca-history.jsonl"
     records = []
     try:
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding="utf-8").splitlines():
             try:
                 r = json.loads(line)
             except json.JSONDecodeError:
@@ -235,7 +235,7 @@ def track_run(workspace: str, target: str, failed: bool) -> list[str]:
         now = datetime.now(timezone.utc)
         f = Path(workspace) / _STATE
         try:
-            state = json.loads(f.read_text())
+            state = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             state = {}
         key = str(target or "<workspace>")
@@ -272,7 +272,7 @@ def track_run(workspace: str, target: str, failed: bool) -> list[str]:
                 fired.append("slow-dev")
             state.pop(key, None)
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(json.dumps(state) + "\n")
+        f.write_text(json.dumps(state) + "\n", encoding="utf-8")
         return fired
     except Exception:
         return []

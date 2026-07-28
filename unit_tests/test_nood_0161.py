@@ -51,7 +51,7 @@ def test_rejection_carries_the_example(tmp_path):
 
 def test_both_skill_cards_carry_the_example():
     for card in CARDS:
-        text = card.read_text()
+        text = card.read_text(encoding="utf-8")
         assert "goal:" in text and "do: search" in text, card
         assert "never a string" in text, card
 
@@ -128,8 +128,8 @@ def test_serve_report_spawns_a_detached_child_not_a_thread(tmp_path, monkeypatch
     from noodle.reporting import builder
     reports = tmp_path / "artifacts" / "reports"
     reports.mkdir(parents=True)
-    (reports / "rca.html").write_text("<h1>rca</h1>")
-    (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n")
+    (reports / "rca.html").write_text("<h1>rca</h1>", encoding="utf-8")
+    (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n", encoding="utf-8")
 
     # NOOD_0162 — the in-process thread is gone entirely, not just unused.
     assert not hasattr(builder, "start_report_server")

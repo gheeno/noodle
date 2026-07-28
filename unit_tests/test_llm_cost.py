@@ -102,7 +102,7 @@ def test_load_total_sums_parallel_worker_files(tmp_path):
             "by_purpose": {"llm": {"calls": 1, "input_tokens": tokens[0],
                                    "output_tokens": tokens[1], "usd": 0.01}},
             "model": "anthropic/claude-sonnet-5",
-        }))
+        }), encoding="utf-8")
 
     total = cost.load_total(tmp_path)
     assert total["calls"] == 2

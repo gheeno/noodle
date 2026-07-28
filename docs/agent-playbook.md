@@ -313,6 +313,50 @@ POM key either: each distinct locator gets its own (`result titles`,
 `result titles 2`, …), so the second check can't inherit the first's
 selector.
 
+**`any_of` upgrades itself when every member is probe-proven**
+(NOOD_0195). If the probed page renders each alternative in full, the check
+compiles to one literal `the user sees "<member>"` per member and no
+synthesized locator — an AND, not an OR, which is what a prompt listing
+expected products actually asks for. The count form
+(`should see at least N "result titles"`) survives only where a member was
+seen in part or not at all. This is a correctness fix, not a style one: a
+count assertion resolves no single element, so the evidence checker can
+neither centre it in the screenshot nor confirm a fresh match — a session
+shipped `passed: 1, failed: 0, verified: false` behind an author that had
+said `ready: true`. Need OR, not AND? Ask for one member, or keep the
+members the probe cannot prove in full.
+
+What counts as "probe-proven in full": the goal's internal probe now hands
+every literal your `see`/`any_of` checks name to `--expect` (up to 8), an
+exact full-text search of the page it ended on — so a long product title no
+longer depends on a structured capture that truncates at ~60 characters.
+Failing that, a heading, a control name, or a search-result caption that
+contains the whole string counts. A caption the probe truncated still proves
+the check (it matches as a fragment) but not the upgrade, so that check keeps
+the count form. Fragments must be at least two whole words: a control
+literally named `a` used to satisfy a 41-character product title, and a live
+goal reached `ready: true` on exactly that.
+
+A `suggest` goal probes the page the suggestion LANDS on (`--follow`), so
+checks after it are proven or blocked like any other — they are no longer
+runtime-asserted by default. An unanchored check takes its evidence from that
+landed page too, matching where it compiles to; use `after: start` for a
+landing-page assertion.
+
+**Goal mode probes for you.** `author_test(goal=…)` runs its own probe with
+the goal's own terms. A separate `probe_page` before a `goal:` spec is
+double-billing, and it is worse than wasteful when the two disagree: the
+same session probed `"Vacuum cleaner"` while the goal said `"Vaccum
+cleaner"`, got a correctly-spelled suggestion list back, and used it to
+confirm its own typo against a site whose typeahead is genuinely misspelled.
+Probe standalone only when there is no goal spec, or when a goal blocked
+naming a control you must inspect — and then pass the goal's strings
+byte-for-byte. Related: strings the user supplied in quotes are **data**.
+Never fix their spelling, casing, spacing or punctuation. A `suggest` option
+that misses now names the closest captured spelling
+(`did you mean 'vaccum cleaner'?`), so the repair is a one-word edit rather
+than a re-derivation from the captured list.
+
 Every app-under-test is a self-contained folder — the full contract is in
 [feature-packages.md](feature-packages.md#the-package-contract). Create what
 the scenario actually needs, nothing more:

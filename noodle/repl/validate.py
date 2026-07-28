@@ -248,7 +248,7 @@ def lint_pom_scopes(root: Path) -> list[str]:
         sorted(root.rglob("resources/pageobjects/*_pom.yaml"))
     for pom_path in pom_files:
         try:
-            data = yaml.safe_load(pom_path.read_text()) or {}
+            data = yaml.safe_load(pom_path.read_text(encoding="utf-8")) or {}
         except Exception:
             continue                          # unparseable YAML fails elsewhere
         if not isinstance(data, dict):
@@ -264,7 +264,7 @@ def lint_pom_scopes(root: Path) -> list[str]:
             continue                          # nothing to compare against
         urls = []
         for feat in features_dir.glob("*.feature"):
-            urls.extend(_URLISH_RE.findall(feat.read_text()))
+            urls.extend(_URLISH_RE.findall(feat.read_text(encoding="utf-8")))
         if not urls:
             continue
         pattern = re.compile(re.escape(stem), re.IGNORECASE)
@@ -352,14 +352,14 @@ def lint_pom_orphan_keys(root: Path) -> list[str]:
                 break
         if scope not in features_cache:
             features_cache[scope] = "\n".join(
-                f.read_text().lower() for f in scope.rglob("*.feature"))
+                f.read_text(encoding="utf-8").lower() for f in scope.rglob("*.feature"))
         return features_cache[scope]
 
     pom_files = [root] if root.suffix in (".yaml", ".yml") else sorted(
         set(root.rglob("*_pom.yaml")) | set(root.rglob("pom.yaml")))
     for pom_path in pom_files:
         try:
-            data = yaml.safe_load(pom_path.read_text()) or {}
+            data = yaml.safe_load(pom_path.read_text(encoding="utf-8")) or {}
         except Exception:
             continue                          # unparseable YAML fails elsewhere
         if not isinstance(data, dict):

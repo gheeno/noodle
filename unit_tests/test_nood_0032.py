@@ -363,11 +363,11 @@ def test_windows_mac_features_excluded_from_web_shards(tmp_path):
     spec.loader.exec_module(lf)
 
     win = tmp_path / "w.feature"
-    win.write_text("@windows\nFeature: W\n  Scenario: s\n    Given x\n")
+    win.write_text("@windows\nFeature: W\n  Scenario: s\n    Given x\n", encoding="utf-8")
     mac = tmp_path / "m.feature"
-    mac.write_text("@mac\nFeature: M\n  Scenario: s\n    Given x\n")
+    mac.write_text("@mac\nFeature: M\n  Scenario: s\n    Given x\n", encoding="utf-8")
     web = tmp_path / "web.feature"
-    web.write_text("Feature: X\n  Scenario: s\n    Given x\n")
+    web.write_text("Feature: X\n  Scenario: s\n    Given x\n", encoding="utf-8")
     assert not lf.is_web_shard(win)
     assert not lf.is_web_shard(mac)
     assert lf.is_web_shard(web)

@@ -13,6 +13,7 @@ modes become structurally impossible, whichever model is driving.
 Everything here is pure Python over a probe result — unit-testable without
 a browser. core.author_test wires it to the real probe/run.
 """
+import difflib
 import re
 
 # --- goal schema -------------------------------------------------------------
@@ -333,8 +334,15 @@ def validate(goal) -> list[str]:
             continue
         do = a.get("do")
         if do not in _ACTION_KEYS:
+            # NOOD_0195 — point at the nearest verb. Every rejection already
+            # ships vocabulary(), but a list of 15 doesn't say which one the
+            # invented name meant ('pick_suggestion' → 'suggest', one composite
+            # action, not the two the author reached for).
+            near = difflib.get_close_matches(str(do), sorted(_ACTION_KEYS),
+                                             1, 0.5)
             errs.append(f"actions[{i}]: unknown do {do!r} "
-                        f"(valid: {', '.join(sorted(_ACTION_KEYS))})")
+                        + (f"— did you mean {near[0]!r}? " if near else "")
+                        + f"(valid: {', '.join(sorted(_ACTION_KEYS))})")
             continue
         for k in set(a) - _ACTION_KEYS[do]:
             errs.append(f"actions[{i}] ({do}): unknown field {k!r}")
@@ -611,8 +619,30 @@ def probe_args(goal: dict) -> dict:
     gate = _runtime_gate(actions)
     clicks = [a["target"] for i, a in enumerate(actions)
               if a["do"] == "click" and (gate is None or i < gate)]
+    # NOOD_0195 — FOLLOW the suggestion (NOOD_0142), don't just read the list.
+    # Without this the probe stopped at the typeahead and closed it, so a
+    # `suggest` goal only ever saw the LANDING page: every check on the page
+    # the suggestion navigates to had no evidence source at all. Verified live
+    # — a control literally named "a" then "proved" two 41-character product
+    # titles through _find_text's reverse containment, and `ready: true` rested
+    # on that. Following is read-only navigation, the same contract `pick`
+    # already has, and it costs one page load.
+    follow = next((a["option"] for a in actions if a["do"] == "suggest"), None)
+    # NOOD_0195 — ask the probe to VERIFY the exact strings the checks name
+    # (--expect, NOOD_0142: a full-text search of the page it ended on). The
+    # structured captures are lossy — result captions truncate at ~60 chars,
+    # so a 68-character product title could never be proven whole from them,
+    # and the literal upgrade that needs full-render proof could never fire on
+    # the flow it was written for. An expect verdict is exact and cheap: one
+    # FOUND/NOT-FOUND per string, no extra page load.
+    # ponytail: capped at 8 — the strings ride the probe payload, and a goal
+    # naming more than 8 literals is asking for a suite, not a scenario.
+    expect = [t for c in (goal.get("checks") or []) if isinstance(c, dict)
+              for t in ([c["see"]] if isinstance(c.get("see"), str)
+                        else [x for x in (c.get("any_of") or [])
+                              if isinstance(x, str)])][:8]
     return {"search": search, "suggest": suggest, "pick": pick,
-            "mutate": mutate,
+            "mutate": mutate, "follow": follow, "expect": expect or None,
             "click": clicks or None,
             "open_native_controls": any(a["do"] == "select" for a in actions),
             "discover": bool((goal.get("probe") or {}).get("discover"))}
@@ -620,12 +650,21 @@ def probe_args(goal: dict) -> dict:
 
 def _runtime_gate(actions: list) -> int | None:
     """Index of the first action whose effect the probe does NOT perform:
-    enter/select values are never typed, a suggestion CLICK-THROUGH never
-    happens (--suggest types and reads the list, then closes it — NOOD_0141),
-    and everything AFTER a pick runs on the landed page the probe only
-    snapshots (NOOD_0156 — the add-to-cart click itself would mutate state,
-    so the probe never performs it). Every check anchored at or after the
-    gate is runtime-asserted (proven by the run), never claimed probe-proven.
+    enter/select values are never typed, and everything AFTER a pick runs on
+    the landed page the probe only snapshots (NOOD_0156 — the add-to-cart
+    click itself would mutate state, so the probe never performs it). Every
+    check anchored at or after the gate is runtime-asserted (proven by the
+    run), never claimed probe-proven.
+
+    NOOD_0195 — `suggest` LEFT this list. It was here because the probe typed
+    the term, read the list and closed it without clicking through
+    (NOOD_0141); probe_args now passes `follow`, so the probe lands on the
+    suggestion's own results page — the same position `search` leaves it in,
+    and `search` never gated. While it did gate, every check after a suggest
+    was silently routed to runtime-asserted: never proven, never blocked,
+    never eligible for the literal upgrade. That is a `ready: true` that
+    checked nothing. A follow that finds no matching row sets
+    `suggest_warning`, which blocks below before any check is evaluated.
 
     NOOD_0188 — the new form/navigation verbs join it on the same rule: every
     one of them either writes state (check/uncheck/upload/pick_date), can
@@ -633,7 +672,7 @@ def _runtime_gate(actions: list) -> int | None:
     (go_back). `hover` is deliberately NOT here — like a reveal click it only
     exposes controls, which is exactly what the probe is for."""
     for i, a in enumerate(actions):
-        if a.get("do") in ("enter", "select", "suggest", "pick", "add_to",
+        if a.get("do") in ("enter", "select", "pick", "add_to",
                            "check", "uncheck", "upload", "press_key",
                            "pick_date", "go_back"):
             return i
@@ -781,6 +820,20 @@ def _block_texts(blk: dict) -> list[str]:
     for c in blk.get("controls", []):
         if c.get("name"):
             texts.append(c["name"])
+    # NOOD_0195 — search-result captions. A results page keeps its product
+    # titles in structured `result_items`, never in headings or control names,
+    # so a `see`/`any_of` naming a real product hard-blocked with "no probed
+    # heading or control shows that text" while the probe was holding the
+    # caption all along. Verified live on canadiantire.ca: both requested
+    # products were in result_items, neither was reachable from here.
+    # ponytail: captions are truncated to ~60 chars by the probe, so a longer
+    # title matches only through _find_text's reverse direction and never
+    # earns the _find_literal upgrade — it falls back to the count form, which
+    # is verifiable now. Raise the probe's caption cap if that fallback ever
+    # costs more than the payload bytes would.
+    for it in blk.get("result_items") or []:
+        if it.get("caption"):
+            texts.append(it["caption"])
     return texts
 
 
@@ -923,13 +976,35 @@ def _observed_count(rsum: dict) -> int | None:
 
 
 def _find_text(needle: str, blocks: list[dict]) -> str | None:
+    """The probed page shows the requested text — either in full (`n in tn`),
+    or as a shortened rendering of it (`tn in n`, a truncated caption).
+
+    NOOD_0195 — the reverse direction needs a floor. Bare character
+    containment let a control literally named "a" satisfy a 41-character
+    product title, and evidence() recorded that as proven: a live goal reached
+    `ready: true` on a one-letter match. A fragment must be at least two whole
+    words of the needle; anything a single word long is noise, and a
+    single-word needle is provable by the forward direction anyway."""
     n = _norm(needle)
+    if not n:
+        return None
     for blk in blocks:
         for t in _block_texts(blk):
             tn = _norm(t)
-            if n and (n in tn or tn in n):
+            if n in tn or (tn in n and len(tn.split()) >= 2):
                 return t
     return None
+
+
+def _find_literal(needle: str, blocks: list[dict]) -> bool:
+    """NOOD_0195 — strict containment: some probed text carries the WHOLE
+    needle. _find_text above also matches when the probe saw only a prefix
+    ("Hoover WindTunnel 2" for a full product title), which is fine for
+    readiness but would compile a `see` step for text the page never renders
+    in full."""
+    n = _norm(needle)
+    return bool(n) and any(n in _norm(t) for blk in blocks
+                           for t in _block_texts(blk))
 
 
 def _find_control(target: str, blocks: list[dict]) -> dict | None:
@@ -943,16 +1018,24 @@ def _find_control(target: str, blocks: list[dict]) -> dict | None:
 
 
 def _check_scope(check: dict, goal: dict) -> str:
-    """'search' when the check anchors at/after the search action, else
-    'initial'."""
+    """'search' when the check observes the page the search/suggest landed on,
+    else 'initial'.
+
+    NOOD_0195 — `suggest` counts, not just `search`: probe_args now follows the
+    suggestion, so that page is real evidence. And an UNANCHORED check scopes
+    there too: NOOD_0158 made it assert the END state and compile_goal emits it
+    after every action, but the evidence pass still matched it against the
+    landing page — so it was checked against one page and run against another.
+    An `after:` anchor before the search still scopes to the landing page,
+    which is what `after: start` is for."""
     actions = goal.get("actions") or []
     search_i = next((i for i, a in enumerate(actions)
-                     if a["do"] == "search"), None)
+                     if a["do"] in ("search", "suggest")), None)
     if search_i is None:
         return "initial"
     after = check.get("after")
     if after is None:
-        return "initial"
+        return "search"
     anchor_i = next((i for i, a in enumerate(actions)
                      if a.get("id") == after), -1)
     return "search" if anchor_i >= search_i else "initial"
@@ -1030,6 +1113,13 @@ def evidence(goal: dict, probe_result: dict) -> dict:
     initial_scope = [blk for blk, ph, _ in blocks if ph in ("initial", "reveal")]
     search_scope = [blk for blk, ph, _ in blocks if ph == "search"]
     picked_blk = next((blk for blk, ph, _ in blocks if ph == "picked"), None)
+    # NOOD_0195 — the probe's --expect verdicts: an exact full-text search of
+    # the page the probe ENDED on, so they only ever answer for a check that
+    # observes that page (scope 'search'). Where a structured capture is lossy
+    # this is the authoritative source, and a FOUND is full-render proof — the
+    # string is in the rendered text, entire.
+    expect_found = {_norm(e.get("text")) for e in (pg.get("expect") or [])
+                    if e.get("found")}
 
     blocking, proven, runtime, bound, resolved = [], {}, [], {}, {}
     mplans: dict[str, dict] = {}
@@ -1137,9 +1227,17 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                 or next((s for s in sg["suggestions"]
                          if want in _norm(s) or _norm(s) in want), None)
             if canon is None:
+                # NOOD_0195 — name the nearest captured spelling. A one-edit
+                # miss is the commonest cause (a site's typeahead is misspelled
+                # and the prompt, or the agent "correcting" it, is not), and
+                # without the pointer the repair is a re-derivation from an
+                # eight-item list rather than a one-word edit.
+                near = difflib.get_close_matches(a["option"],
+                                                 sg["suggestions"], 1, 0.6)
                 blocking.append(
                     f'suggest: option {a["option"]!r} not among the captured '
-                    f'suggestions {sg["suggestions"][:8]}')
+                    f'suggestions {sg["suggestions"][:8]}'
+                    + (f' — did you mean {near[0]!r}?' if near else ""))
             else:
                 proven[f'suggest:{a["term"]}'] = canon
             continue
@@ -1261,9 +1359,13 @@ def evidence(goal: dict, probe_result: dict) -> dict:
             # its landing URL. Blocking on them would be a false negative.
             runtime.append(_check_step(c)[0])
             continue
-        scope = search_scope if _check_scope(c, goal) == "search" else initial_scope
+        at_end = _check_scope(c, goal) == "search"
+        scope = search_scope if at_end else initial_scope
+        # An expect verdict answers only for the page the probe ended on.
+        expect = expect_found if at_end else set()
         if "see" in c:
-            hit = _find_text(c["see"], scope)
+            hit = c["see"] if _norm(c["see"]) in expect \
+                else _find_text(c["see"], scope)
             if hit is None:
                 blocking.append(f'check "{c["see"]}": no probed heading or '
                                 "control shows that text")
@@ -1288,13 +1390,23 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                     proven[f"count:{c['count']}"] = rsum["text"]
         else:  # any_of — distinct matching alternatives, not one match ≥ min
             want = c.get("min", 1)
+            blks = scope or initial_scope
             texts = set()
             for alt in c["any_of"]:
-                hit = _find_text(alt, scope or initial_scope)
+                hit = alt if _norm(alt) in expect else _find_text(alt, blks)
                 if hit is not None:
                     texts.add(_norm(hit))
             if len(texts) >= want:
                 proven[f"any_of[{i}]"] = sorted(texts)
+                # NOOD_0195 — every member rendered IN FULL on the probed page:
+                # the compiler emits one literal `see` per member instead of a
+                # count assertion. A count resolves no single element, so the
+                # evidence checker can neither centre it in the shot nor
+                # confirm a fresh exact match — the run passed and reported
+                # verified:false, behind an author that had said ready:true.
+                if all(_norm(alt) in expect or _find_literal(alt, blks)
+                       for alt in c["any_of"]):
+                    proven[f"any_of_literal[{i}]"] = list(c["any_of"])
             else:
                 blocking.append(
                     "check any_of " + "/".join(c["any_of"])
@@ -1867,7 +1979,25 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
             locator_names[sel] = name
         return {**c, "name": name}
 
+    # NOOD_0195 — which any_of checks the probe proved member-by-member. Keyed
+    # by identity: evidence() and compile_goal always read the SAME checks list
+    # (core.author_test rebuilds goal and re-runs evidence together), so the
+    # index the proven key carries and the dict here are the same object.
+    literal_members = {
+        id(c): (ev.get("proven") or {}).get(f"any_of_literal[{i}]")
+        for i, c in enumerate(checks)}
+
     def _emit_check(c: dict):
+        members = literal_members.get(id(c))
+        if members:
+            # One literal assertion per expected item — each resolves its own
+            # element, so each can be scrolled into view and shot. This is an
+            # AND: the probe saw all of them, so all of them are assertable.
+            for alt in members:
+                body, _ = _check_step({"see": alt,
+                                       "evidence": c.get("evidence")})
+                steps.append(("Then", body))
+            return
         c = _named(c)
         dest = c.get("item_in_destination") if "item_in_destination" in c \
             else None

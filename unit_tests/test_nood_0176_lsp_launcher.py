@@ -16,7 +16,7 @@ _EXT_JS = (Path(__file__).resolve().parent.parent
 
 
 def _scripts():
-    return tomllib.loads(_PYPROJECT.read_text())["project"]["scripts"]
+    return tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"]["scripts"]
 
 
 def test_noodle_lsp_console_script_declared():
@@ -33,5 +33,5 @@ def test_lsp_server_main_exists():
 
 def test_extension_prefers_the_console_script():
     # Guard the extension actually reaches for noodle-lsp, not just `-m`.
-    js = _EXT_JS.read_text()
+    js = _EXT_JS.read_text(encoding="utf-8")
     assert "noodle-lsp" in js and "findServer" in js

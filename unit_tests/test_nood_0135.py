@@ -46,7 +46,7 @@ _POM = 'match: {}\nlogin form:\n  css: "form"\n'
 def _ws(tmp_path: Path) -> Path:
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n")
+    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n", encoding="utf-8")
     return ws
 
 
@@ -62,7 +62,7 @@ def _author(ws, **over):
 def _env_map(ws, app="shop"):
     p = (ws / "noodle_tests" / "web" / app / "resources"
          / f"{app}_environments.yaml")
-    return yaml.safe_load(p.read_text())
+    return yaml.safe_load(p.read_text(encoding="utf-8"))
 
 
 # --- Wave 0/1: the environment stores the FULL supplied URL ------------------
@@ -108,7 +108,7 @@ def test_overwrite_recovery_corrects_origin_only_file(tmp_path):
     res = ws / "noodle_tests" / "web" / "shop" / "resources"
     res.mkdir(parents=True)
     (res / "shop_environments.yaml").write_text(
-        "shop: https://example.test\nOTHER_KEY: keepme\n")
+        "shop: https://example.test\nOTHER_KEY: keepme\n", encoding="utf-8")
     r = _author(ws, app_name="Totally Different")
     assert r["ok"] and r["app"] == "shop"
     m = _env_map(ws)
@@ -126,12 +126,12 @@ def test_cli_author_writes_full_url_byte_for_byte(tmp_path):
     spec = tmp_path / "spec.json"
     spec.write_text(json.dumps({
         "app_name": "Shop", "base_url": url, "feature_path": "login",
-        "feature_content": _FEATURE, "pom_content": _POM}))
+        "feature_content": _FEATURE, "pom_content": _POM}), encoding="utf-8")
     r = CliRunner().invoke(cli_app, ["author", "--spec", str(spec),
                                      "-w", str(ws)])
     assert r.exit_code == 0, r.output
     raw = (ws / "noodle_tests" / "web" / "shop" / "resources"
-           / "shop_environments.yaml").read_text()
+           / "shop_environments.yaml").read_text(encoding="utf-8")
     assert f"shop: {url}\n" in raw
 
 
@@ -148,7 +148,7 @@ def test_generate_stub_preserves_full_url():
 def test_scaffold_resources_preserves_full_url(tmp_path):
     app_dir = tmp_path / "web" / "shop"
     generate._scaffold_resources(app_dir, "shop", "https://h.example/x/y?q=1")
-    text = (app_dir / "resources" / "shop_environments.yaml").read_text()
+    text = (app_dir / "resources" / "shop_environments.yaml").read_text(encoding="utf-8")
     assert text == "shop: https://h.example/x/y?q=1\n"
 
 

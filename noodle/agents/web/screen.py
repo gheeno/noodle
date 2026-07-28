@@ -209,7 +209,7 @@ def first_number(text):
 
 
 def read_number(page, target=None):
-    text = read_text(page, target)
+    text = read_text(page, target, encoding="utf-8")
     num = first_number(text)
     if num is None:
         raise AssertionError(
@@ -233,7 +233,7 @@ def _norm_ws(s):
 
 
 def assert_image_text(page, target, text):
-    got = read_text(page, target)
+    got = read_text(page, target, encoding="utf-8")
     if _norm_ws(text) not in _norm_ws(got):
         raise AssertionError(
             f"Expected '{target}' to show '{text}' — not found by OCR.\n"
@@ -241,7 +241,7 @@ def assert_image_text(page, target, text):
 
 
 def assert_image_text_hidden(page, target, text):
-    got = read_text(page, target)
+    got = read_text(page, target, encoding="utf-8")
     if _norm_ws(text) in _norm_ws(got):
         raise AssertionError(
             f"Expected '{target}' NOT to show '{text}' — but OCR found it.\nURL: {page.url}")

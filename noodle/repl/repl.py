@@ -108,8 +108,12 @@ def _remember_created(state: dict, feat, pom, workspace: str) -> None:
     core.resolve_target/write_feature use: a cwd-relative path breaks as soon
     as a different process (MCP server, a REPL started elsewhere) reads
     agent_state.json."""
-    state["last_feature"] = os.path.relpath(feat, workspace)
-    state["last_pom"] = os.path.relpath(pom, workspace)
+    # NOOD_0195 — POSIX: these are cross-process identifiers persisted in
+    # agent_state.json / returned in payloads, not OS paths. os.path.relpath
+    # yields backslashes on Windows, so a path written by the MCP server no
+    # longer matched one written by the REPL.
+    state["last_feature"] = Path(os.path.relpath(feat, workspace)).as_posix()
+    state["last_pom"] = Path(os.path.relpath(pom, workspace)).as_posix()
 
 
 def _ws_path(workspace: str, rel) -> Path:
@@ -127,9 +131,9 @@ def _autorun_after_create(state: dict, workspace: str, llm: str | None) -> None:
     feat, pom = state.get("last_feature"), state.get("last_pom")
     if not feat:
         return
-    texts = [_ws_path(workspace, feat).read_text()]
+    texts = [_ws_path(workspace, feat).read_text(encoding="utf-8")]
     if pom and _ws_path(workspace, pom).exists():
-        texts.append(_ws_path(workspace, pom).read_text())
+        texts.append(_ws_path(workspace, pom).read_text(encoding="utf-8"))
     if any(generate._PLACEHOLDER_RE.search(t) for t in texts):
         print(f"→ Run: noodle run {feat}   (fill in the <placeholders> first)")
         return
@@ -218,7 +222,7 @@ def _lookup_app_url(cfg: dict, workspace: str, app: str) -> str | None:
     if env_path is None:
         return None
     try:
-        data = yaml.safe_load(env_path.read_text()) or {}
+        data = yaml.safe_load(env_path.read_text(encoding="utf-8")) or {}
     except Exception:
         return None
     return data.get(app)

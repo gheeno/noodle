@@ -161,7 +161,7 @@ class _GotoPage:
 def test_navigate_resolves_local_html_to_file_uri(tmp_path):
     from noodle.agents.web import actions
     f = tmp_path / "app.html"
-    f.write_text("<html></html>")
+    f.write_text("<html></html>", encoding="utf-8")
     page = _GotoPage()
     actions.navigate(page, str(f))
     assert page.url.startswith("file://") and page.url.endswith("/app.html")

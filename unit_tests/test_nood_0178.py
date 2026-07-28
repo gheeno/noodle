@@ -173,7 +173,7 @@ def test_pages_is_advisory_when_the_context_is_gone():
 def test_perm_shim_is_installed_on_the_context_not_the_page():
     """A page-level init script never reaches a tab that page opens."""
     src = REPO / "noodle/agents/web/probe.py"
-    body = src.read_text()
+    body = src.read_text(encoding="utf-8")
     assert "page.context.add_init_script(_PERM_JS)" in body
     assert "page.add_init_script(_PERM_JS)" not in body
 
@@ -517,7 +517,7 @@ def test_the_new_verb_is_documented_on_every_probe_surface():
         "cli --do help": _do_help(),
         "mcp probe_page": (server.probe_page.__doc__ or "").lower(),
         "repl probe_page": (core.probe_page.__doc__ or "").lower(),
-        "agent-playbook": (REPO / "docs/agent-playbook.md").read_text().lower(),
+        "agent-playbook": (REPO / "docs/agent-playbook.md").read_text(encoding="utf-8").lower(),
     }
     for name, text in surfaces.items():
         assert "tab" in text, name

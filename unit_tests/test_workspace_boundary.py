@@ -16,12 +16,12 @@ def test_global_pom_path_does_not_escape_workspace_missing_root_pom(tmp_path):
     # An unrelated ancestor directory that happens to have its own pom.yaml —
     # stands in for a sibling/parent project, or noodle's own repo checkout.
     (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "pom.yaml").write_text("pages: {}\n")
+    (tmp_path / "tests" / "pom.yaml").write_text("pages: {}\n", encoding="utf-8")
 
     workspace = tmp_path / "workspace"
     feature_dir = workspace / "tests" / "web" / "app" / "features"
     feature_dir.mkdir(parents=True)
-    (workspace / "noodle.yaml").write_text("tests_dir: tests\n")
+    (workspace / "noodle.yaml").write_text("tests_dir: tests\n", encoding="utf-8")
     # Deliberately no tests/pom.yaml or pom.yaml inside the workspace itself.
 
     pom.set_context(str(feature_dir))
@@ -40,9 +40,9 @@ def test_find_behave_base_does_not_escape_workspace_missing_root_markers(tmp_pat
     workspace = tmp_path / "workspace"
     feature_dir = workspace / "tests" / "web" / "app" / "features"
     feature_dir.mkdir(parents=True)
-    (workspace / "noodle.yaml").write_text("tests_dir: tests\n")
+    (workspace / "noodle.yaml").write_text("tests_dir: tests\n", encoding="utf-8")
     feature_file = feature_dir / "sample.feature"
-    feature_file.write_text("Feature: sample\n")
+    feature_file.write_text("Feature: sample\n", encoding="utf-8")
     # Deliberately no steps/ or environment.py inside the workspace itself.
 
     result = _find_behave_base(feature_file)

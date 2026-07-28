@@ -60,7 +60,7 @@ def test_short_and_placeholder_values_are_not_registered(capsys):
 def test_hooks_load_secrets_registers_file_values(tmp_path):
     from noodle import hooks
     secrets = tmp_path / "app_secrets.env"
-    secrets.write_text("APP_PASSWORD=s3cr3t-from-file\nAPP_BLANK=CHANGE_ME\n")
+    secrets.write_text("APP_PASSWORD=s3cr3t-from-file\nAPP_BLANK=CHANGE_ME\n", encoding="utf-8")
     hooks._load_secrets(secrets)
     assert "s3cr3t-from-file" in log._secret_values
     assert "CHANGE_ME" not in log._secret_values  # placeholder skipped
@@ -98,6 +98,6 @@ def test_init_scaffolds_gitignore_covering_the_secrets_file(tmp_path):
     from noodle.cli import app
     result = CliRunner().invoke(app, ["init", str(tmp_path)])
     assert result.exit_code == 0
-    gi = (tmp_path / ".gitignore").read_text()
+    gi = (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "**/resources/*_secrets.env" in gi
     assert "secrets.env" in gi

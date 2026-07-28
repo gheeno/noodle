@@ -24,7 +24,7 @@ CFG = {"tests_dir": "tests", "env_file": ".env",
 
 @pytest.fixture
 def ws(tmp_path, monkeypatch):
-    (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n")
+    (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -43,7 +43,7 @@ def test_load_state_missing_or_corrupt(ws):
     assert core.load_state(str(ws)) == {}
     p = ws / "artifacts" / "agent_state.json"
     p.parent.mkdir(parents=True)
-    p.write_text("{not json")
+    p.write_text("{not json", encoding="utf-8")
     assert core.load_state(str(ws)) == {}
 
 
@@ -51,13 +51,13 @@ def test_resolve_target_order(ws):
     fdir = ws / "tests" / "web" / "app" / "features"
     fdir.mkdir(parents=True)
     old = fdir / "old.feature"
-    old.write_text("Feature: old\n")
+    old.write_text("Feature: old\n", encoding="utf-8")
     assert "error" in core.resolve_target(None, str(ws)) or True  # has files now
     # newest-mtime fallback
     import os
     import time
     new = fdir / "new.feature"
-    new.write_text("Feature: new\n")
+    new.write_text("Feature: new\n", encoding="utf-8")
     os.utime(old, (time.time() - 100, time.time() - 100))
     assert core.resolve_target(None, str(ws))["feature"].endswith("new.feature")
     # persisted state wins over mtime
@@ -73,7 +73,7 @@ def test_resolve_target_directory(ws):
     # NOOD_0065 — a directory is a valid run target (MCP "run tests/web/app")
     fdir = ws / "tests" / "web" / "app" / "features"
     fdir.mkdir(parents=True)
-    (fdir / "a.feature").write_text("Feature: a\n")
+    (fdir / "a.feature").write_text("Feature: a\n", encoding="utf-8")
     # path form, relative to workspace and to tests_dir
     assert core.resolve_target("tests/web/app", str(ws))["feature"] == "tests/web/app"
     assert core.resolve_target("web/app", str(ws))["feature"] == "tests/web/app"
@@ -109,7 +109,7 @@ def test_last_result_structured(ws):
         "labels": [{"name": "feature", "value": "Login"}],
         "steps": [{"name": "When User clicks", "status": "failed"}],
         "statusDetails": {"message": "boom"},
-    }))
+    }), encoding="utf-8")
     r = core.last_result(str(ws))
     assert r["failed"] == 1 and r["passed"] == 0
     assert r["failures"][0]["step"] == "When User clicks"
@@ -121,7 +121,7 @@ def test_list_tests_inventory(ws):
     fdir.mkdir(parents=True)
     (fdir / "a.feature").write_text(
         "@web\nFeature: A\n\n  @smoke\n  Scenario: first\n"
-        "  Scenario Outline: second\n")
+        "  Scenario Outline: second\n", encoding="utf-8")
     tests = core.list_tests(str(ws))["tests"]
     assert tests[0]["feature"] == "A"
     # NOOD_0162 — index first: names only for a query.
@@ -135,7 +135,7 @@ def test_list_tests_inventory(ws):
 def test_run_test_resolves_and_reports(ws, monkeypatch):
     fdir = ws / "tests" / "web" / "app" / "features"
     fdir.mkdir(parents=True)
-    (fdir / "a.feature").write_text("Feature: A\n")
+    (fdir / "a.feature").write_text("Feature: A\n", encoding="utf-8")
     calls = []
 
     class _Proc:
@@ -155,7 +155,7 @@ def test_run_test_resolves_and_reports(ws, monkeypatch):
 def test_run_test_headless_override(ws, monkeypatch):
     fdir = ws / "tests" / "web" / "app" / "features"
     fdir.mkdir(parents=True)
-    (fdir / "a.feature").write_text("Feature: A\n")
+    (fdir / "a.feature").write_text("Feature: A\n", encoding="utf-8")
     calls = []
 
     class _Proc:
@@ -265,7 +265,7 @@ def test_dispatch_loose_create_no_llm(ws, capsys):
     state = {}
     repl.dispatch(EXAMPLE_PROMPT, CFG, str(ws), None, state)
     feat = Path(state["last_feature"])
-    text = (ws / feat).read_text() if not feat.is_absolute() else feat.read_text()
+    text = (ws / feat).read_text(encoding="utf-8") if not feat.is_absolute() else feat.read_text(encoding="utf-8")
     assert 'Given User is on "https://example.com"' in text
     assert 'When User enters "office chair" in the search field' in text
     assert 'Then User should see "office chair"' in text
@@ -282,7 +282,7 @@ def test_dispatch_still_rejects_gibberish(ws, capsys):
 def test_dispatch_run_the_test_uses_persisted_state(ws, monkeypatch):
     fdir = ws / "tests" / "web" / "app" / "features"
     fdir.mkdir(parents=True)
-    (fdir / "known.feature").write_text("Feature: K\n")
+    (fdir / "known.feature").write_text("Feature: K\n", encoding="utf-8")
     core.save_state({"last_feature": "tests/web/app/features/known.feature"}, str(ws))
     ran = []
     monkeypatch.setattr(repl, "_noodle",
@@ -386,7 +386,7 @@ def test_cli_summary_json(ws):
     d.mkdir(parents=True)
     (d / "x-result.json").write_text(json.dumps(
         {"name": "s", "status": "passed", "historyId": "h",
-         "start": 0, "stop": 1000}))
+         "start": 0, "stop": 1000}), encoding="utf-8")
     res = CliRunner().invoke(app, ["summary", "--json", "-w", str(ws)])
     data = json.loads(res.output)
     assert data["passed"] == 1 and data["failed"] == 0
@@ -398,7 +398,7 @@ def test_cli_list_json(ws):
     from noodle.cli import app
     fdir = ws / "tests" / "web" / "app" / "features"
     fdir.mkdir(parents=True)
-    (fdir / "a.feature").write_text("Feature: A\n  Scenario: s\n")
+    (fdir / "a.feature").write_text("Feature: A\n  Scenario: s\n", encoding="utf-8")
     res = CliRunner().invoke(app, ["list", "--json", "-w", str(ws)])
     data = json.loads(res.output)
     assert data["tests"][0]["feature"] == "A"
@@ -416,7 +416,7 @@ def test_cli_validate_resolve_json(ws):
     (fdir / "a.feature").write_text(
         '@web\nFeature: A\n  Scenario: s\n'
         '    Given User is on "https://x.com"\n'
-        '    When User frobnicates wildly\n')
+        '    When User frobnicates wildly\n', encoding="utf-8")
     res = CliRunner().invoke(
         app, ["validate", "tests", "--resolve", "--json", "-w", str(ws)])
     data = json.loads(res.output)
@@ -431,7 +431,7 @@ def test_write_last_run_json(ws):
     d.mkdir(parents=True)
     (d / "x-result.json").write_text(json.dumps(
         {"name": "s", "status": "passed", "historyId": "h",
-         "start": 0, "stop": 1000}))
+         "start": 0, "stop": 1000}), encoding="utf-8")
     cli._write_last_run(str(d), 0, str(ws))
-    data = json.loads((ws / "artifacts" / "last_run.json").read_text())
+    data = json.loads((ws / "artifacts" / "last_run.json").read_text(encoding="utf-8"))
     assert data["passed"] == 1 and data["exit_code"] == 0 and data["at"]

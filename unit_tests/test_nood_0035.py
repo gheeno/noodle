@@ -88,7 +88,7 @@ def test_failed_screenshot_raw_copy_is_removed_once_annotated(monkeypatch, tmp_p
 # --- noodle report serve -----------------------------------------------------
 
 def test_report_serve_serves_the_built_html(tmp_path):
-    (tmp_path / "index.html").write_text("<h1>hi from the report</h1>")
+    (tmp_path / "index.html").write_text("<h1>hi from the report</h1>", encoding="utf-8")
     httpd = builder._make_server(str(tmp_path), host="127.0.0.1", port=0)
     port = httpd.server_address[1]
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)

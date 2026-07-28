@@ -20,7 +20,12 @@ _procs: list[subprocess.Popen] = []
 def launch(command: str) -> None:
     """Start `command` detached (stdout/stderr to the framework log fds).
     ponytail: shlex split, no shell — a pipeline needs `runs the command` instead."""
-    proc = subprocess.Popen(shlex.split(command),
+    # NOOD_0195 — shlex.split is POSIX-mode: it treats '\' as an escape, so a
+    # Windows command ("C:\Python\python.exe -c ...") came back with its
+    # separators eaten and Popen raised WinError 2. Windows takes a command
+    # LINE, not an argv, so hand CreateProcess the string as-is there.
+    args = command if os.name == "nt" else shlex.split(command)
+    proc = subprocess.Popen(args,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     _procs.append(proc)
     logger.info(f"\n  🚀 Launched app: {command!r} (pid {proc.pid})")

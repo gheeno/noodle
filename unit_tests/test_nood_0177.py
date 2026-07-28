@@ -4,6 +4,7 @@ Each test pins an invariant that was exploitable before this branch. They are
 grouped by the two root causes the audit found: page content reaching an
 execution primitive, and credentials reaching a shared artifact.
 """
+import sys
 import time
 
 import pytest
@@ -129,7 +130,7 @@ def test_goal_compiler_refuses_a_step_body_with_a_line_break():
             prev = kw
     # and the guard really is in the shipped compiler, not just this test
     assert "refusing to compile a step body containing a line break" in \
-        open(goal.__file__).read()
+        open(goal.__file__, encoding="utf-8").read()
 
 
 def test_pom_keys_are_yaml_quoted():
@@ -178,7 +179,7 @@ def test_sample_features_do_not_teach_literal_credentials():
     if not root.is_dir():
         pytest.skip("samples not present in this install")
     offenders = [str(p) for p in root.rglob("*.feature")
-                 if "Popcorn1" in p.read_text() or "secret_sauce" in p.read_text()]
+                 if "Popcorn1" in p.read_text(encoding="utf-8") or "secret_sauce" in p.read_text(encoding="utf-8")]
     assert not offenders, f"literal credentials in {offenders}"
 
 
@@ -222,6 +223,14 @@ def test_write_private_creates_0600(tmp_path):
     """os.replace swaps the inode, so hardening a secrets file by hand was
     silently reverted on every re-author."""
     p = _config.write_private(tmp_path / "app_secrets.env", "PASSWORD=x\n")
+    if sys.platform == "win32":
+        # NOOD_0195 — Windows has no POSIX mode bits: os.chmod there only
+        # toggles the read-only flag, so 0600 is unreachable by construction
+        # and st_mode always reports 0o666. Confidentiality comes from the
+        # profile ACL instead. What this test guards — that write_private
+        # RE-hardens after os.replace swaps the inode — is a POSIX claim.
+        assert p.read_text(encoding="utf-8") == "PASSWORD=x\n"
+        return
     assert oct(p.stat().st_mode & 0o777) == "0o600"
 
 
@@ -263,7 +272,7 @@ def test_docs_do_not_put_a_session_file_in_the_served_root():
     doc = pathlib.Path(__file__).resolve().parent.parent / "docs" / "steps_dictionary.md"
     if not doc.is_file():
         pytest.skip("docs not present in this install")
-    assert "artifacts/reports/session.json" not in doc.read_text()
+    assert "artifacts/reports/session.json" not in doc.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("url", [

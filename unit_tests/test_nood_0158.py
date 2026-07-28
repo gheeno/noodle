@@ -157,8 +157,8 @@ _DOC = ("# Title\n\npreamble line\n\n"
 
 @pytest.fixture()
 def docs_dir(tmp_path, monkeypatch):
-    (tmp_path / "big-doc.md").write_text(_DOC + ("filler line of prose\n" * 900))
-    (tmp_path / "small-doc.md").write_text("# Small\n\njust a little text\n")
+    (tmp_path / "big-doc.md").write_text(_DOC + ("filler line of prose\n" * 900), encoding="utf-8")
+    (tmp_path / "small-doc.md").write_text("# Small\n\njust a little text\n", encoding="utf-8")
     monkeypatch.setattr(mcp_server, "_docs_dir", lambda: tmp_path)
     return tmp_path
 

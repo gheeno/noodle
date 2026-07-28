@@ -148,6 +148,19 @@ def match_seq() -> int:
     return _match_seq
 
 
+def note_match(page, phrase: str, loc, source: str):
+    """NOOD_0195 — register an element resolved OUTSIDE find(), so a step that
+    doesn't go through the resolver can still produce valid evidence. Callers
+    must have proven the element real (assert_count only calls this when it
+    counted at least one visible match); `source` must not name a fuzzy tier,
+    or hooks will rightly mark the shot invalid."""
+    global _last_match, _match_seq, _last_match_url
+    _last_match = (phrase, loc)
+    _last_match_url = _page_url(page)
+    _set_source(source)
+    _match_seq += 1
+
+
 # NOOD_0153 — follow mode: after every successful resolution, scroll the
 # matched element into view so a headed run's viewport tracks what the engine
 # is acting on (instead of the up-and-down hunting testers reported).

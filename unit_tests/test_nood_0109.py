@@ -160,7 +160,7 @@ def test_lint_flags_stripped_suffix_key(tmp_path):
     tag field", but the fill pattern looks up 'asset tag'."""
     app = _app(tmp_path)
     (app / "resources" / "pageobjects" / "devpanel_pom.yaml").write_text(
-        'match: {}\nasset tag field:\n  css: "#server"\n')
+        'match: {}\nasset tag field:\n  css: "#server"\n', encoding="utf-8")
     (warning,) = validate.lint_pom_orphan_keys(tmp_path)
     assert "asset tag field" in warning
     assert "'asset tag'" in warning
@@ -172,7 +172,7 @@ def test_lint_keeps_dropdown_and_menu_keys(tmp_path):
     flagging those keys would advise a rename that breaks the lookup."""
     app = _app(tmp_path)
     (app / "resources" / "pom.yaml").write_text(
-        'device type dropdown:\n  css: ".ng-select"\nfile menu:\n  css: "#m"\n')
+        'device type dropdown:\n  css: ".ng-select"\nfile menu:\n  css: "#m"\n', encoding="utf-8")
     assert validate.lint_pom_orphan_keys(tmp_path) == []
 
 
@@ -184,7 +184,7 @@ def test_lint_scans_pages_and_shared_blocks(tmp_path):
         "    match: {url_contains: login}\n"
         "    username input: {css: '#u'}\n"
         "shared:\n"
-        "  cookie button: {css: '#c'}\n")
+        "  cookie button: {css: '#c'}\n", encoding="utf-8")
     warnings = validate.lint_pom_orphan_keys(tmp_path)
     assert len(warnings) == 2
     assert any("'username'" in w for w in warnings)
@@ -199,13 +199,13 @@ def test_lint_clean_keys_pass(tmp_path):
         "asset tag: {css: '#server'}\n"
         "login: {css: '#l'}\n"
         "first-name-input: {css: '#f'}\n"
-        "button: {css: '#b'}\n")
+        "button: {css: '#b'}\n", encoding="utf-8")
     assert validate.lint_pom_orphan_keys(tmp_path) == []
 
 
 def test_lint_strips_stacked_nouns(tmp_path):
     app = _app(tmp_path)
-    (app / "resources" / "pom.yaml").write_text("gender radio button: {css: '#g'}\n")
+    (app / "resources" / "pom.yaml").write_text("gender radio button: {css: '#g'}\n", encoding="utf-8")
     (warning,) = validate.lint_pom_orphan_keys(tmp_path)
     assert "'gender'" in warning
     assert "radio button" in warning
@@ -220,9 +220,9 @@ def test_lint_skips_keys_referenced_quoted_in_features(tmp_path):
     (app / "features" / "inputs.feature").write_text(
         '@web\nFeature: I\n  Scenario: S\n'
         '    When User enters "42" in the "number input" field\n'
-        '    And User clicks {pom:submit button}\n')
+        '    And User clicks {pom:submit button}\n', encoding="utf-8")
     (app / "resources" / "pom.yaml").write_text(
-        "number input: {css: '#n'}\nsubmit button: {css: '#s'}\n")
+        "number input: {css: '#n'}\nsubmit button: {css: '#s'}\n", encoding="utf-8")
     assert validate.lint_pom_orphan_keys(tmp_path) == []
 
 
@@ -233,18 +233,18 @@ def test_lint_quoted_ref_in_another_app_does_not_mask(tmp_path):
         app = tmp_path / "tests" / "web" / name
         (app / "features").mkdir(parents=True)
         (app / "resources").mkdir()
-        (app / "resources" / "pom.yaml").write_text("search field: {css: '#q'}\n")
+        (app / "resources" / "pom.yaml").write_text("search field: {css: '#q'}\n", encoding="utf-8")
     (tmp_path / "tests" / "web" / "a" / "features" / "x.feature").write_text(
-        '@web\nFeature: A\n  Scenario: S\n    When User clicks the "search field"\n')
+        '@web\nFeature: A\n  Scenario: S\n    When User clicks the "search field"\n', encoding="utf-8")
     (tmp_path / "tests" / "web" / "b" / "features" / "x.feature").write_text(
-        '@web\nFeature: B\n  Scenario: S\n    When User enters "x" in the search field\n')
+        '@web\nFeature: B\n  Scenario: S\n    When User enters "x" in the search field\n', encoding="utf-8")
     (warning,) = validate.lint_pom_orphan_keys(tmp_path)
     assert "web/b" in warning.replace("\\", "/")
 
 
 def test_lint_covers_global_pom(tmp_path):
     (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "pom.yaml").write_text("search box: {css: '#q'}\n")
+    (tmp_path / "tests" / "pom.yaml").write_text("search box: {css: '#q'}\n", encoding="utf-8")
     (warning,) = validate.lint_pom_orphan_keys(tmp_path)
     assert "'search'" in warning
 

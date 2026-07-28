@@ -50,8 +50,8 @@ def try_fix(feat_path: Path, pom_path: Path, workspace: str) -> bool:
     failure = before["failures"][0]
     print(f"⚠ failed at: {failure['step'] or failure['scenario']} — attempting one automatic fix...")
 
-    original = feat_path.read_text()
-    pom_text = pom_path.read_text() if pom_path.exists() else ""
+    original = feat_path.read_text(encoding="utf-8")
+    pom_text = pom_path.read_text(encoding="utf-8") if pom_path.exists() else ""
     fixed = generate._strip_fence(ask(
         prompts.reflect_prompt(original, pom_text, failure), system=prompts.SYSTEM))
 
@@ -72,13 +72,13 @@ def try_fix(feat_path: Path, pom_path: Path, workspace: str) -> bool:
         print(f"  ✗ refusing model-authored fix: {check.get('error') or 'unmatched steps'}")
         return False
 
-    feat_path.write_text(fixed if fixed.endswith("\n") else fixed + "\n")
+    feat_path.write_text(fixed if fixed.endswith("\n") else fixed + "\n", encoding="utf-8")
     _run(str(feat_path), workspace)
     after = summary.collect(results_dir)
     if after["failed"] < before["failed"]:
         print("  ✅ fix reduced failures — kept.")
         return True
 
-    feat_path.write_text(original)
+    feat_path.write_text(original, encoding="utf-8")
     print("  ✗ automatic fix didn't help — reverted. Check the Allure report by hand.")
     return False

@@ -300,10 +300,10 @@ def _templates_check(root: Path) -> Check:
     from noodle.cli import _template_files
     stale, missing = [], []
     for f, text in _template_files(root).items():
-        rel = str(f.relative_to(root))
+        rel = f.relative_to(root).as_posix()
         if not f.exists():
             missing.append(rel)
-        elif f.read_text() != text:
+        elif f.read_text(encoding="utf-8") != text:
             stale.append(rel)
     if stale or missing:
         parts = ([f"stale (differ from this noodle version): {', '.join(stale)}"] if stale else []) \

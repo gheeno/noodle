@@ -4,6 +4,155 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+### Fixed
+- **Every `Path.read_text()` in `noodle/` now passes `encoding="utf-8"`** (34
+  files). Python picks the *locale* encoding when it's omitted — cp1252 on a
+  default Windows 11 install — so any UTF-8 byte in a `noodle.yaml`, a POM, a
+  `.feature`, a steps dictionary, or an agent-patterns file raised
+  `UnicodeDecodeError` on Windows while reading fine on macOS/Linux.
+
+## [1.0.0a11] — 2026-07-28
+
+**NOOD_0195** — fix: a `ready: true` goal now compiles to something the
+evidence checker can verify, and the goal vocabulary is published before the
+rejection that would teach it.
+
+From a postmortem of a 33.04-AIC session against a < 12 AIC target: 15.02 AIC
+(45%) was waste, and 10.45 of that was engine/docs defect rather than agent
+judgement — the prompt could not have one-shot as shipped.
+
+### Fixed
+- **`any_of` no longer compiles to an unverifiable count assertion.** A check
+  over two probe-proven product titles compiled to
+  `Then should see at least 1 "result titles"` plus a synthesized regex POM
+  key. That step resolves no *single* element, so `hooks.after_step` saw no
+  fresh match, drew no box, and marked the shot invalid: the run reported
+  `passed: 1, failed: 0, verified: false`, which the workspace rules correctly
+  refuse to call green — 6.78 AIC of mandatory rework behind an author that
+  had said `ready: true`. Where the probe rendered every member IN FULL, the
+  compiler now emits one literal `the user sees "<member>"` per member and no
+  POM entry (an AND — what a prompt listing expected products asks for),
+  carrying the `evidence: screenshot` marker onto each. A member seen only in
+  part keeps the count form: a `see` for text the page never renders in full
+  would trade a false green for a red run.
+- **A genuine `count` assertion now produces valid evidence too.**
+  `assert_count` resolves through `pom.locate_all`/`get_by_text` directly,
+  never through `find()`, so `match_seq` never moved and *every* count step
+  shipped an unverified screenshot — hand-written features included. On a
+  passing count it now registers its first counted element
+  (`locator.note_match`), which is real and exactly resolved, so the shot
+  centres and outlines it. A failing count registers nothing.
+- **Near-miss repairs are named instead of re-derived.** An invented
+  `do:` gets `did you mean 'suggest'?` beside the valid list
+  (`pick_suggestion` → `suggest` — one composite action, not the two the
+  author reached for), and a `suggest` option that misses names the closest
+  captured spelling (`did you mean 'vaccum cleaner'?`).
+
+Verifying the above against the live site — four re-runs of the postmortem's
+own prompt — surfaced five more defects of the same class, all fixed here.
+Each was invisible until the layer above it stopped hiding it.
+
+- **A `suggest` goal never probed the page the suggestion lands on.**
+  `probe_args` didn't pass `follow` (NOOD_0142, shipped and working), so the
+  probe read the typeahead, closed it, and returned only the LANDING page.
+  Every check on the results page therefore had no evidence source at all.
+- **A one-letter control name could prove anything.** `_find_text` accepted
+  reverse containment with no floor, and canadiantire.ca's landing page
+  carries a control literally named `a` — which satisfied both 41-character
+  product titles. `evidence()` recorded `proven any_of[0] == ['a']` and the
+  goal reached `ready: true` on it. A reverse match now needs at least two
+  whole words of the requested text; the truncated-caption case it exists for
+  is unaffected.
+- **An unanchored check took its evidence from the wrong page.** NOOD_0158
+  made it assert the END state and `compile_goal` emits it after every action,
+  but the evidence pass still matched it against the landing page — checked
+  against one page, asserted against another. It now scopes to the landed
+  page, and `suggest` counts alongside `search` in that decision. A
+  landing-page check in a search goal needs `after: start`, which is what that
+  anchor is for.
+- **Search-result captions were invisible to the evidence pass.**
+  `_block_texts` read headings and control names only, so a `see`/`any_of`
+  naming a real product hard-blocked with "no probed heading or control shows
+  that text" while the probe held the caption in structured `result_items`.
+- **`suggest` was still in `_runtime_gate`**, whose rationale — "a suggestion
+  CLICK-THROUGH never happens" — the `follow` fix above had just made false.
+  Every check after a suggest was routed to runtime-asserted: never proven,
+  never blocked, never eligible for the literal upgrade. That is a
+  `ready: true` that checked nothing.
+- **`probe_args` now hands the checks' literals to `--expect`** (NOOD_0142, up
+  to 8), an exact full-text search of the page the probe ended on. Structured
+  captures are lossy — result captions truncate at ~60 chars, so a 68-char
+  product title could never be proven whole from them, and the literal upgrade
+  could never fire on the flow it was written for. An expect `FOUND` is
+  full-render proof. Scoped to end-state checks: an `after: start` check
+  cannot borrow a results-page verdict.
+
+### Fixed — Windows
+
+The CI Windows cell had never once reported on the code: it died at test
+COLLECTION on a doc emoji, so 113 real failures sat behind a trivial one. With
+collection unblocked, Noodle turned out to be materially broken on a platform
+`docs/llm-install.md` ships a runbook for.
+
+- **UTF-8 is explicit on every file read and write** (639 sites across engine
+  and tests). Windows encodes text as the ANSI code page, so the engine wrote
+  cp1252 and read back UTF-8: an em dash in a scaffolded header became `0x97`
+  and every later read of that file failed. `config.write_private` — the
+  secrets/env writer — hid behind `os.fdopen` and was the single biggest
+  source. `noodle steps` crashed outright reading its own steps dictionary.
+- **The console speaks UTF-8 regardless of the OS default** (`cli.py`). Windows
+  gives stdout cp1252, which has no `✅ ⚠️ ❌ 📸` — symbols the engine prints on
+  every run. A single one raised `UnicodeEncodeError` from `typer.echo` and
+  took the command down; worse, it did so while REPORTING another error, so
+  the real failure was invisible. `errors="replace"` keeps a genuinely legacy
+  console degrading to `?` rather than crashing.
+- **Workspace-relative paths are POSIX.** `os.path.relpath`/`relative_to`
+  yield backslashes on Windows, but these are cross-process identifiers in
+  `agent_state.json` and run payloads — a path written by the MCP server no
+  longer matched one written by the REPL.
+- **The liveness probe no longer Ctrl+Cs a process group.** `_pid_alive` used
+  `os.kill(pid, 0)` — the POSIX idiom, and actively destructive on Windows,
+  where signal 0 IS `CTRL_C_EVENT`: Python calls `GenerateConsoleCtrlEvent`, so
+  asking "is this server still up?" delivered a console Ctrl+C to that pid's
+  group. In CI it interrupted pytest itself mid-run (an async
+  `KeyboardInterrupt` that then crashed pytest's own traceback formatter); on a
+  tester's machine it is their shell. Every other signal value routes to
+  `TerminateProcess`, so no signal is safe as a probe — it now opens a
+  read-only process handle. The win32 skip on
+  `test_background_server_outlives_the_launcher` is removed with it.
+- **A taken port falls back on Windows too.** `http.server` sets
+  `allow_reuse_address`, and Windows answers a second bind with `WSAEACCES`,
+  not `WSAEADDRINUSE` — so NOOD_0134's fallback never fired there and
+  `report serve` dead-ended with the wasted round trip that fix removed.
+- **The instruction ledger counts content, not line endings.** git hands
+  Windows CRLF, inflating every markdown surface by a byte per line (~180 B on
+  a skill card) and failing the ceiling for a reason unrelated to what an agent
+  reads.
+
+**Live result** — the postmortem's prompt, unmodified, on the fourth re-run:
+one `author --run` call, `ready: true` first attempt, zero standalone probes,
+`passed: 1 / failed: 0 / verified: true`, no POM, and the `any_of` compiled to
+two literal per-product assertions. Evidence resolved through the
+`accessibility` tier on the real product tile (`element_in_view: true`,
+`valid: true`) — not the count fallback. The test now proves BOTH requested
+products, where the count form proved only that one of them rendered.
+
+### Changed
+- **Skill cards publish the goal action vocabulary** (claude 6144 → 7168 B,
+  copilot 6304 → 7296 B — accounted in `instruction_budget`). Writing
+  `{do: type_partial}` + `{do: pick_suggestion}` where the answer was one
+  `suggest` was the session's single most expensive step at 3.67 AIC, and the
+  15 real verbs were revealed only by the rejection. The §7 doc-section
+  exception applies at its strongest here: the agent had generalised
+  reasonably from the card's `{do: search}` example, so there was no round
+  trip to intercept — only a wrong answer to pay for.
+- Both cards also state that **goal mode probes for you** (a `probe_page`
+  before a `goal:` double-bills, and a term one character off returns a
+  different, misleading list — that is how a site's genuinely misspelled
+  typeahead got "corrected" away), and that **quoted user strings are data**,
+  never to be spell-fixed. Full rationale in
+  `docs/agent-playbook.md` → The goal object.
+
 ## [1.0.0a10] — 2026-07-27
 
 **NOOD_0194** — fix: alpha-readiness pass. Four things an alpha tester would

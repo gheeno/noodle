@@ -33,7 +33,7 @@ def _result_json(tmp_path, *, name="S", status="passed", history_id=None,
          "steps": steps or [], "status": status,
          "start": 1, "stop": stop if stop is not None else 2}
     p = tmp_path / f"{r['uuid']}-result.json"
-    p.write_text(json.dumps(r))
+    p.write_text(json.dumps(r), encoding="utf-8")
     return p
 
 
@@ -107,7 +107,7 @@ def test_junit_counts_skipped(tmp_path):
     r.result["status"] = "skipped"
     r.result["statusDetails"] = {"message": "no tesseract"}
     out = junit_mod.write_junit([r], str(tmp_path / "junit.xml"))
-    text = Path(out).read_text()
+    text = Path(out).read_text(encoding="utf-8")
     assert 'skipped="1"' in text and "<skipped" in text
 
 
@@ -117,7 +117,7 @@ def test_mark_flaky_stamps_final_attempt(tmp_path):
     _result_json(tmp_path, name="S", status="failed", history_id="h1", stop=10)
     final = _result_json(tmp_path, name="S", status="passed", history_id="h1", stop=20)
     assert summary.mark_flaky(str(tmp_path)) == 1
-    assert json.loads(final.read_text())["statusDetails"]["flaky"] is True
+    assert json.loads(final.read_text(encoding="utf-8"))["statusDetails"]["flaky"] is True
     data = summary.collect(str(tmp_path))
     assert data["flaky"] == [{"scenario": "S", "attempts": 2}]
     assert data["passed"] == 1 and data["failed"] == 0
@@ -153,7 +153,7 @@ def test_rca_empty_run_never_renders_green(tmp_path):
 def test_rca_provenance_header(tmp_path):
     from noodle.reporting import rca_report
     _result_json(tmp_path, name="S", status="passed")
-    (tmp_path / "environment.properties").write_text("noodle.run.id=abc123\n")
+    (tmp_path / "environment.properties").write_text("noodle.run.id=abc123\n", encoding="utf-8")
     md = rca_report.render_markdown(str(tmp_path))
     assert "run abc123" in md
     assert "1 passed, 0 failed, 0 skipped" in md
@@ -166,7 +166,7 @@ def test_shard_slice_partitions_deterministically(tmp_path):
     base = tmp_path / "tests"
     for n in "abcde":
         (base / n / "features").mkdir(parents=True)
-        (base / n / "features" / f"{n}.feature").write_text("Feature: x\n")
+        (base / n / "features" / f"{n}.feature").write_text("Feature: x\n", encoding="utf-8")
     slices = [_shard_slice(str(tmp_path), "tests", f"{i}/3") for i in (1, 2, 3)]
     flat = sorted(p for s in slices for p in s)
     assert flat == sorted(p.relative_to(base).as_posix()
@@ -197,21 +197,21 @@ def test_merge_globs_junit_slices_and_flattens_leaves(tmp_path):
         (wd / name).write_text(
             '<?xml version="1.0"?><testsuite name="Noodle" tests="1" '
             f'failures="0" skipped="0" time="1"><testcase name="s{i}" '
-            'classname="F" time="1"/></testsuite>')
-    (wd / "environment.properties").write_text("a=1\n")
-    (wd / "deadbeef-result.json").write_text("{}")
-    (wd / "healing-report.aaaa.txt").write_text("healed X")
-    (results / "environment.properties").write_text("first=1\n")  # existing wins
+            'classname="F" time="1"/></testsuite>', encoding="utf-8")
+    (wd / "environment.properties").write_text("a=1\n", encoding="utf-8")
+    (wd / "deadbeef-result.json").write_text("{}", encoding="utf-8")
+    (wd / "healing-report.aaaa.txt").write_text("healed X", encoding="utf-8")
+    (results / "environment.properties").write_text("first=1\n", encoding="utf-8")  # existing wins
     (root / "traces" / "p123").mkdir(parents=True)
-    (root / "traces" / "p123" / "Checkout.zip").write_text("z")
+    (root / "traces" / "p123" / "Checkout.zip").write_text("z", encoding="utf-8")
     _merge_worker_results(results)
-    merged = (root / "reports" / "junit.xml").read_text()
+    merged = (root / "reports" / "junit.xml").read_text(encoding="utf-8")
     assert merged.count("<testcase") == 2          # both features survive
     assert (results / "deadbeef-result.json").is_file()
-    assert (results / "environment.properties").read_text() == "first=1\n"
+    assert (results / "environment.properties").read_text(encoding="utf-8") == "first=1\n"
     assert not (results / "p123").exists()
     assert (root / "traces" / "Checkout.zip").is_file()   # RCA can see it now
-    assert "healed X" in (root / "reports" / "healing-report.txt").read_text()
+    assert "healed X" in (root / "reports" / "healing-report.txt").read_text(encoding="utf-8")
 
 
 # --- runlock hardening ------------------------------------------------------
@@ -281,7 +281,7 @@ def test_server_errors_in_valid_types():
 def test_write_feature_allows_clean_contract_blocks_blocked(tmp_path, monkeypatch):
     from noodle.repl import core
     ws = tmp_path
-    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\n")
+    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\n", encoding="utf-8")
     (ws / "noodle_tests").mkdir()
     content = "Feature: T\n  Scenario: s\n    When the user clicks 'Go'\n"
     rel = "noodle_tests/t.feature"

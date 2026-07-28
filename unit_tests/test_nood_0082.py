@@ -21,8 +21,8 @@ def _make_ws(tmp_path: Path, with_allure: bool = True) -> Path:
     reports.mkdir(parents=True)
     if with_allure:
         (reports / "allure-report").mkdir()
-        (reports / "allure-report" / "index.html").write_text("<h1>allure</h1>")
-    (reports / "rca.html").write_text("<h1>rca</h1>")
+        (reports / "allure-report" / "index.html").write_text("<h1>allure</h1>", encoding="utf-8")
+    (reports / "rca.html").write_text("<h1>rca</h1>", encoding="utf-8")
     return ws
 
 
@@ -37,10 +37,10 @@ def test_write_reports_always_writes_both_even_when_green(tmp_path):
     (results / "u1-result.json").write_text(_json.dumps(
         {"uuid": "u1", "historyId": "h1", "name": "s", "fullName": "F: s",
          "labels": [{"name": "feature", "value": "F"}],
-         "steps": [], "status": "passed", "stop": 1}))
+         "steps": [], "status": "passed", "stop": 1}), encoding="utf-8")
     out = rca_report.write_reports(str(results), str(tmp_path / "reports"))
     assert Path(out["rca_md"]).is_file()
-    html = Path(out["rca_html"]).read_text()
+    html = Path(out["rca_html"]).read_text(encoding="utf-8")
     assert "No failed or errored scenarios" in html
 
 
@@ -90,10 +90,10 @@ def test_serve_explicit_reports_dir_rebuilds_when_stale(tmp_path, monkeypatch):
     import os as _os
     for f in (reports / "rca.html", reports / "allure-report" / "index.html"):
         _os.utime(f, (1, 1))
-    (results / "r-result.json").write_text("{}")
+    (results / "r-result.json").write_text("{}", encoding="utf-8")
     target = Path(_resolve_serve_target(str(reports), str(ws)))
     assert target == reports
-    assert (reports / "rca.html").read_text() != "<h1>rca</h1>"
+    assert (reports / "rca.html").read_text(encoding="utf-8") != "<h1>rca</h1>"
 
 
 def test_serve_explicit_app_root_rebuilds_and_redirects_to_reports(tmp_path):
@@ -108,10 +108,10 @@ def test_serve_explicit_app_root_rebuilds_and_redirects_to_reports(tmp_path):
     import os as _os
     for f in (reports / "rca.html", reports / "allure-report" / "index.html"):
         _os.utime(f, (1, 1))
-    (results / "r-result.json").write_text("{}")
+    (results / "r-result.json").write_text("{}", encoding="utf-8")
     target = Path(_resolve_serve_target(str(app_root), str(ws)))
     assert target == reports
-    assert (reports / "rca.html").read_text() != "<h1>rca</h1>"
+    assert (reports / "rca.html").read_text(encoding="utf-8") != "<h1>rca</h1>"
 
 
 def test_serve_stamp_resolves_and_extracts_archive(tmp_path):
@@ -124,7 +124,7 @@ def test_serve_stamp_resolves_and_extracts_archive(tmp_path):
         z.writestr("reports/allure-report/index.html", "<h1>old allure</h1>")
     target = Path(_resolve_serve_target("20260713_101112", str(ws)))
     assert target.name == "reports"
-    assert (target / "rca.html").read_text() == "<h1>old rca</h1>"
+    assert (target / "rca.html").read_text(encoding="utf-8") == "<h1>old rca</h1>"
 
 
 def test_serve_zip_without_reports_falls_back_to_root(tmp_path):
@@ -179,12 +179,12 @@ def test_core_serve_report_explicit_dir_rebuilds_when_stale(tmp_path, monkeypatc
     import os as _os
     for f in (reports / "rca.html", reports / "allure-report" / "index.html"):
         _os.utime(f, (1, 1))
-    (results / "r-result.json").write_text("{}")
+    (results / "r-result.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(builder, "_allure_bin", lambda: None)
     r = core.serve_report(workspace=str(ws), report_dir=str(reports), port=0)
     try:
         assert r["ok"] is True
-        assert (reports / "rca.html").read_text() != "<h1>rca</h1>"
+        assert (reports / "rca.html").read_text(encoding="utf-8") != "<h1>rca</h1>"
     finally:
         core.stop_report_servers()
 
@@ -246,9 +246,9 @@ def test_mcp_list_reports_tool(tmp_path, monkeypatch):
 def test_run_and_report_carries_rca_paths(tmp_path, monkeypatch):
     server = pytest.importorskip("noodle.mcp.server")
     ws = _make_ws(tmp_path)
-    (ws / "noodle.yaml").write_text("tests_dir: tests\n")
+    (ws / "noodle.yaml").write_text("tests_dir: tests\n", encoding="utf-8")
     (ws / "tests").mkdir()
-    (ws / "tests" / "x.feature").write_text("Feature: F\n")
+    (ws / "tests" / "x.feature").write_text("Feature: F\n", encoding="utf-8")
     monkeypatch.setattr(server, "_WORKSPACE", str(ws))
     monkeypatch.setattr(core, "run_test", lambda *a, **k: {"ok": True})
     # NOOD_0131 — paths point into the freshness-checked reports root the run

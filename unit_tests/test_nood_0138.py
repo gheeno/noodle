@@ -29,16 +29,16 @@ runner = CliRunner()
 
 def make_engine(d: Path, name: str = "noodle") -> Path:
     (d / "noodle").mkdir(parents=True)
-    (d / "noodle" / "__init__.py").write_text("")
-    (d / "noodle" / "cli.py").write_text("")
+    (d / "noodle" / "__init__.py").write_text("", encoding="utf-8")
+    (d / "noodle" / "cli.py").write_text("", encoding="utf-8")
     (d / "unit_tests").mkdir()
-    (d / "pyproject.toml").write_text(f'[project]\nname = "{name}"\nversion = "0"\n')
+    (d / "pyproject.toml").write_text(f'[project]\nname = "{name}"\nversion = "0"\n', encoding="utf-8")
     return d
 
 
 def make_workspace(d: Path) -> Path:
     d.mkdir(parents=True, exist_ok=True)
-    (d / "noodle.yaml").write_text("tests_dir: noodle_tests\n")
+    (d / "noodle.yaml").write_text("tests_dir: noodle_tests\n", encoding="utf-8")
     return d
 
 
@@ -81,7 +81,7 @@ def test_workspace_inside_engine_nearest_wins(tmp_path):
 
 def test_same_dir_collision_engine_wins(tmp_path):
     e = make_engine(tmp_path / "eng")
-    (e / "noodle.yaml").write_text("tests_dir: sample_feature_tests\n")
+    (e / "noodle.yaml").write_text("tests_dir: sample_feature_tests\n", encoding="utf-8")
     assert doctor.resolve_context(e).kind == "engine"
 
 
@@ -98,7 +98,7 @@ def test_unrelated_dir_is_install_only(tmp_path):
 def test_file_path_starts_from_its_parent(tmp_path):
     ws = make_workspace(tmp_path)
     f = ws / "notes.txt"
-    f.write_text("x")
+    f.write_text("x", encoding="utf-8")
     assert doctor.resolve_context(f).kind == "workspace"
 
 
@@ -116,7 +116,7 @@ def test_forced_scope_without_marker_errors(tmp_path):
 
 def test_forced_workspace_at_engine_root(tmp_path):
     e = make_engine(tmp_path / "eng")
-    (e / "noodle.yaml").write_text("tests_dir: t\n")
+    (e / "noodle.yaml").write_text("tests_dir: t\n", encoding="utf-8")
     assert doctor.resolve_context(e, scope="workspace").kind == "workspace"
 
 
@@ -172,7 +172,7 @@ def test_probe_launcher_timeout_is_error(monkeypatch):
 def test_shims_dedupe_symlink_and_duplicate_path_entries(tmp_path, monkeypatch):
     real = tmp_path / "bin1" / "noodle"
     real.parent.mkdir()
-    real.write_text("#!/bin/sh\n")
+    real.write_text("#!/bin/sh\n", encoding="utf-8")
     real.chmod(0o755)
     d2 = tmp_path / "bin2"
     d2.mkdir()
@@ -250,8 +250,8 @@ def test_engine_profile_never_calls_template_files(tmp_path, monkeypatch, single
 def test_engine_profile_warns_on_workspace_artifacts_but_not_noodle_yaml(
         tmp_path, monkeypatch, single_launcher):
     e = make_engine(tmp_path / "eng")
-    (e / "noodle.yaml").write_text("tests_dir: sample_feature_tests\n")  # deliberate, tracked
-    (e / "AGENTS.md").write_text("generated")
+    (e / "noodle.yaml").write_text("tests_dir: sample_feature_tests\n", encoding="utf-8")  # deliberate, tracked
+    (e / "AGENTS.md").write_text("generated", encoding="utf-8")
     (e / "noodle_tests").mkdir()
     monkeypatch.setattr(install_check, "package_dir", lambda: e / "noodle")
     r = runner.invoke(app, ["doctor", str(e)])
@@ -298,7 +298,7 @@ def test_workspace_all_green(tmp_path, single_launcher):
 
 def test_workspace_broken_yaml_fails_without_traceback(tmp_path, single_launcher):
     make_workspace(tmp_path)
-    (tmp_path / "noodle.yaml").write_text("tests_dir: [unclosed")
+    (tmp_path / "noodle.yaml").write_text("tests_dir: [unclosed", encoding="utf-8")
     r = runner.invoke(app, ["doctor", str(tmp_path)])
     assert r.exit_code == 1
     assert "FAIL  [workspace.config]" in r.output and "Traceback" not in r.output
@@ -306,7 +306,7 @@ def test_workspace_broken_yaml_fails_without_traceback(tmp_path, single_launcher
 
 def test_workspace_tests_dir_escape_fails(tmp_path, single_launcher):
     make_workspace(tmp_path)
-    (tmp_path / "noodle.yaml").write_text("tests_dir: ../outside\n")
+    (tmp_path / "noodle.yaml").write_text("tests_dir: ../outside\n", encoding="utf-8")
     r = runner.invoke(app, ["doctor", str(tmp_path)])
     assert r.exit_code == 1
     assert "escapes the workspace" in r.output
@@ -321,7 +321,7 @@ def test_workspace_missing_tests_dir_warns_with_init_fix(tmp_path, single_launch
 
 def test_workspace_stale_template_warns_with_force_fix(tmp_path, single_launcher):
     _init_ws(tmp_path)
-    (tmp_path / "AGENTS.md").write_text("drifted")
+    (tmp_path / "AGENTS.md").write_text("drifted", encoding="utf-8")
     r = runner.invoke(app, ["doctor", str(tmp_path)])
     assert r.exit_code == 1
     assert "workspace.templates" in r.output and "--force" in r.output
@@ -329,7 +329,7 @@ def test_workspace_stale_template_warns_with_force_fix(tmp_path, single_launcher
 
 def test_mcp_check_stale_command_warns(tmp_path):
     (tmp_path / ".mcp.json").write_text(json.dumps(
-        {"mcpServers": {"noodle": {"command": "/nonexistent/noodle-mcp", "args": []}}}))
+        {"mcpServers": {"noodle": {"command": "/nonexistent/noodle-mcp", "args": []}}}), encoding="utf-8")
     c = doctor._mcp_check(tmp_path)
     assert c.status == "warn" and "noodle init mcp" in c.remediation
 
@@ -340,7 +340,7 @@ def test_mcp_check_absent_is_info(tmp_path):
 
 def test_mcp_check_valid_command_passes(tmp_path):
     (tmp_path / ".mcp.json").write_text(json.dumps(
-        {"mcpServers": {"noodle": {"command": sys.executable, "args": []}}}))
+        {"mcpServers": {"noodle": {"command": sys.executable, "args": []}}}), encoding="utf-8")
     assert doctor._mcp_check(tmp_path).status == "pass"
 
 

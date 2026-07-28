@@ -107,8 +107,8 @@ def test_app_local_secret_rule_on_every_surface():
     surfaces = {
         "AGENTS.md": cli._AGENTS_MD,
         "PROMPT_TEMPLATE": cli._PROMPT_TEMPLATE,
-        "claude skill": (REPO / ".claude/skills/noodle/SKILL.md").read_text(),
-        "copilot skill": (REPO / ".copilot/skills/noodle/SKILL.md").read_text(),
+        "claude skill": (REPO / ".claude/skills/noodle/SKILL.md").read_text(encoding="utf-8"),
+        "copilot skill": (REPO / ".copilot/skills/noodle/SKILL.md").read_text(encoding="utf-8"),
     }
     for name, text in surfaces.items():
         low = text.lower()

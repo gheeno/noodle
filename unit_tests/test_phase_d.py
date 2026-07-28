@@ -57,13 +57,13 @@ def test_flatten_data_uppercases_keys():
 
 def test_load_data_reads_yaml(tmp_path):
     f = tmp_path / "d.yaml"
-    f.write_text("base url: https://x\norder id: 42\n")
+    f.write_text("base url: https://x\norder id: 42\n", encoding="utf-8")
     assert load_data(str(f)) == {"BASE_URL": "https://x", "ORDER_ID": "42"}
 
 
 def test_load_data_rejects_non_mapping(tmp_path):
     f = tmp_path / "bad.yaml"
-    f.write_text("- just\n- a\n- list\n")
+    f.write_text("- just\n- a\n- list\n", encoding="utf-8")
     try:
         load_data(str(f))
         assert False, "expected AssertionError"

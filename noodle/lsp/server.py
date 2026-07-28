@@ -275,7 +275,7 @@ def _app_resources(feature_path: Path) -> Path | None:
 def _rel(path: Path, feature_path: Path) -> str:
     root = _workspace_root(feature_path.parent)
     try:
-        return str(path.relative_to(root))
+        return path.relative_to(root).as_posix()
     except ValueError:
         return str(path)
 
@@ -303,7 +303,7 @@ def _env_key(name: str) -> str:
 def _scan_env_file(path: Path, key: str) -> tuple[int, str] | None:
     """(0-based line, value) for KEY in a dotenv or flat-YAML env file."""
     sep = ":" if path.suffix in (".yaml", ".yml") else "="
-    for i, line in enumerate(path.read_text().splitlines()):
+    for i, line in enumerate(path.read_text(encoding="utf-8").splitlines()):
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or sep not in stripped:
             continue
@@ -316,7 +316,7 @@ def _scan_env_file(path: Path, key: str) -> tuple[int, str] | None:
 def _env_keys(path: Path) -> list[str]:
     sep = ":" if path.suffix in (".yaml", ".yml") else "="
     keys = []
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#") and sep in stripped:
             keys.append(stripped.split(sep, 1)[0].strip().strip('"\''))
@@ -354,7 +354,7 @@ def _is_known_secret_value(value: str, source: Path | None) -> bool:
         return False
     try:
         for sib in source.parent.glob("*secrets.env"):
-            for line in sib.read_text().splitlines():
+            for line in sib.read_text(encoding="utf-8").splitlines():
                 stripped = line.strip()
                 if not stripped or stripped.startswith("#") or "=" not in stripped:
                     continue
@@ -395,7 +395,7 @@ def _find_pom_key(name: str, feature_path: Path) -> tuple[Path, int, str] | None
     line-scan instead of a YAML parse so we keep the line number."""
     key = _norm(name)
     for src in _pom_sources(feature_path):
-        for i, line in enumerate(src.read_text().splitlines()):
+        for i, line in enumerate(src.read_text(encoding="utf-8").splitlines()):
             m = _YAML_KEY_RE.match(line)
             if not m:
                 continue
@@ -410,7 +410,7 @@ def _pom_keys(feature_path: Path) -> list[tuple[str, str]]:
     seen: set[str] = set()
     out = []
     for src in _pom_sources(feature_path):
-        for line in src.read_text().splitlines():
+        for line in src.read_text(encoding="utf-8").splitlines():
             m = _YAML_KEY_RE.match(line)
             if not m:
                 continue
@@ -436,7 +436,7 @@ def _find_function(relpath: str, fn: str, feature_path: Path) -> tuple[Path, int
     if not target.is_file():
         return None
     pat = re.compile(rf'^\s*(?:async\s+)?def\s+{re.escape(fn)}\s*\(')
-    for i, line in enumerate(target.read_text().splitlines()):
+    for i, line in enumerate(target.read_text(encoding="utf-8").splitlines()):
         if pat.match(line):
             return target, i
     return target, 0
@@ -697,7 +697,7 @@ def _env_var_names(doc_path: str) -> list[str]:
         env_file = directory / ".env"
         if env_file.exists():
             names = []
-            for line in env_file.read_text().splitlines():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     key = line.split("=", 1)[0].strip()

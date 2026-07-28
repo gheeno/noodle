@@ -22,20 +22,20 @@ def test_init_copies_skills(tmp_path):
 def test_init_skill_copy_is_idempotent(tmp_path):
     runner.invoke(app, ["init", str(tmp_path)])
     marker = tmp_path / ".claude" / "skills" / "noodle" / "SKILL.md"
-    marker.write_text("local edit")
+    marker.write_text("local edit", encoding="utf-8")
     result = runner.invoke(app, ["init", str(tmp_path)])
     assert result.exit_code == 0
-    assert marker.read_text() == "local edit"  # kept, not clobbered
+    assert marker.read_text(encoding="utf-8") == "local edit"  # kept, not clobbered
     assert "kept" in result.output
 
 
 def test_init_skill_force_refreshes(tmp_path):
     runner.invoke(app, ["init", str(tmp_path)])
     marker = tmp_path / ".claude" / "skills" / "noodle" / "SKILL.md"
-    marker.write_text("local edit")
+    marker.write_text("local edit", encoding="utf-8")
     result = runner.invoke(app, ["init", str(tmp_path), "--force"])
     assert result.exit_code == 0
-    assert marker.read_text() != "local edit"  # refreshed from the engine copy
+    assert marker.read_text(encoding="utf-8") != "local edit"  # refreshed from the engine copy
 
 
 def test_copy_skills_skips_missing_source(tmp_path, monkeypatch):

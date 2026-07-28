@@ -16,7 +16,7 @@ from noodle.repl import core
 def _ws(tmp_path: Path) -> Path:
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n")
+    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n", encoding="utf-8")
     return ws
 
 
@@ -48,7 +48,7 @@ def test_overwrite_failure_restores_original_bytes(tmp_path, monkeypatch):
     pom_p = app / "resources" / "pageobjects" / "login_pom.yaml"
     feat_p = app / "features" / "login.feature"
     # add real content the second (failing) authoring must not destroy
-    env_p.write_text(env_p.read_text() + "EXTRA: keep-me\n")
+    env_p.write_text(env_p.read_text(encoding="utf-8") + "EXTRA: keep-me\n", encoding="utf-8")
     before = {p: p.read_bytes() for p in (env_p, pom_p, feat_p)}
 
     real = os.replace
@@ -62,7 +62,7 @@ def test_overwrite_failure_restores_original_bytes(tmp_path, monkeypatch):
     assert not r["ok"] and "rolled back" in r["error"]
     for p, original in before.items():          # every original byte preserved
         assert p.read_bytes() == original
-    assert "keep-me" in env_p.read_text()       # the overwrite didn't stick
+    assert "keep-me" in env_p.read_text(encoding="utf-8")       # the overwrite didn't stick
 
 
 # --- author-time readiness (NOOD_0129 item 2) --------------------------------

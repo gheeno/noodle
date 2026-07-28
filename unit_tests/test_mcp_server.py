@@ -37,7 +37,7 @@ AGENT_PATTERNS = (
 
 @pytest.fixture
 def ws(tmp_path, monkeypatch):
-    (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n")
+    (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n", encoding="utf-8")
     (tmp_path / "tests").mkdir()
     monkeypatch.chdir(tmp_path)
     return tmp_path
@@ -56,7 +56,7 @@ def _reset_patterns_dir():
 
 def test_validate_feature_uses_workspace_agent_patterns(ws):
     (ws / "docs").mkdir()
-    (ws / "docs" / "agent_patterns.yaml").write_text(AGENT_PATTERNS)
+    (ws / "docs" / "agent_patterns.yaml").write_text(AGENT_PATTERNS, encoding="utf-8")
     result = core.validate_feature(FEATURE_CUSTOM_STEP, workspace=str(ws))
     assert result["error"] is None
     assert result["unmatched"] == []
@@ -69,7 +69,7 @@ def test_validate_feature_without_workspace_patterns_flags_step(ws):
 
 def test_write_feature_accepts_workspace_pattern_steps(ws):
     (ws / "docs").mkdir()
-    (ws / "docs" / "agent_patterns.yaml").write_text(AGENT_PATTERNS)
+    (ws / "docs" / "agent_patterns.yaml").write_text(AGENT_PATTERNS, encoding="utf-8")
     r = core.write_feature("tests/frob.feature", FEATURE_CUSTOM_STEP,
                            workspace=str(ws))
     assert r["ok"] and r["unmatched"] == []
@@ -79,7 +79,7 @@ def test_write_feature_accepts_workspace_pattern_steps(ws):
 def test_mcp_validate_tool_passes_workspace(ws, monkeypatch):
     server = pytest.importorskip("noodle.mcp.server")
     (ws / "docs").mkdir()
-    (ws / "docs" / "agent_patterns.yaml").write_text(AGENT_PATTERNS)
+    (ws / "docs" / "agent_patterns.yaml").write_text(AGENT_PATTERNS, encoding="utf-8")
     monkeypatch.setattr(server, "_WORKSPACE", str(ws))
     assert server.validate_feature(FEATURE_CUSTOM_STEP)["unmatched"] == []
 
@@ -89,8 +89,8 @@ def test_cli_validate_resolve_uses_workspace_patterns(ws):
 
     from noodle.cli import app
     (ws / "docs").mkdir()
-    (ws / "docs" / "agent_patterns.yaml").write_text(AGENT_PATTERNS)
-    (ws / "tests" / "frob.feature").write_text(FEATURE_CUSTOM_STEP)
+    (ws / "docs" / "agent_patterns.yaml").write_text(AGENT_PATTERNS, encoding="utf-8")
+    (ws / "tests" / "frob.feature").write_text(FEATURE_CUSTOM_STEP, encoding="utf-8")
     r = CliRunner().invoke(app, ["validate", "tests", "--workspace", str(ws),
                                  "--resolve", "--json"])
     assert r.exit_code == 0
@@ -118,7 +118,7 @@ def test_cli_report_generate_exits_nonzero_without_allure(ws, monkeypatch):
 
 def test_run_and_report_reports_no_phantom_report(ws, monkeypatch):
     server = pytest.importorskip("noodle.mcp.server")
-    (ws / "tests" / "any.feature").write_text("Feature: F\n")
+    (ws / "tests" / "any.feature").write_text("Feature: F\n", encoding="utf-8")
     monkeypatch.setattr(server, "_WORKSPACE", str(ws))
     monkeypatch.setattr(core, "run_test",
                         lambda *a, **k: {"ok": True, "passed": 1, "failed": 0})
@@ -134,7 +134,7 @@ def test_load_workspace_env_reads_noodle_model(ws, monkeypatch):
     import os
     server = pytest.importorskip("noodle.mcp.server")
     monkeypatch.delenv("NOODLE_MODEL", raising=False)
-    (ws / ".env").write_text("NOODLE_MODEL=ollama/testmodel\n")
+    (ws / ".env").write_text("NOODLE_MODEL=ollama/testmodel\n", encoding="utf-8")
     try:
         server._load_workspace_env(str(ws))
         assert os.environ.get("NOODLE_MODEL") == "ollama/testmodel"
@@ -148,7 +148,7 @@ def test_load_workspace_env_reads_noodle_model(ws, monkeypatch):
 def test_load_workspace_env_never_overrides_host_env(ws, monkeypatch):
     server = pytest.importorskip("noodle.mcp.server")
     monkeypatch.setenv("NOODLE_MODEL", "host/wins")
-    (ws / ".env").write_text("NOODLE_MODEL=ollama/testmodel\n")
+    (ws / ".env").write_text("NOODLE_MODEL=ollama/testmodel\n", encoding="utf-8")
     server._load_workspace_env(str(ws))
     import os
     assert os.environ["NOODLE_MODEL"] == "host/wins"
@@ -158,7 +158,7 @@ def test_main_stdio_loads_workspace_env(ws, monkeypatch):
     import os
     server = pytest.importorskip("noodle.mcp.server")
     monkeypatch.delenv("NOODLE_MODEL", raising=False)
-    (ws / ".env").write_text("NOODLE_MODEL=ollama/fromenvfile\n")
+    (ws / ".env").write_text("NOODLE_MODEL=ollama/fromenvfile\n", encoding="utf-8")
     monkeypatch.setattr(server.mcp, "run", lambda *a, **k: None)
     try:
         server.main(["--workspace", str(ws)])
@@ -176,8 +176,8 @@ def _fake_generate(description, url, cfg, workspace=".", overwrite=False):
     pom = app_dir / "resources" / "pageobjects" / "login_pom.yaml"
     feat.parent.mkdir(parents=True, exist_ok=True)
     pom.parent.mkdir(parents=True, exist_ok=True)
-    feat.write_text("Feature: F\n  Scenario: S\n    Given User is on 'https://x'\n")
-    pom.write_text("# pom\n")
+    feat.write_text("Feature: F\n  Scenario: S\n    Given User is on 'https://x'\n", encoding="utf-8")
+    pom.write_text("# pom\n", encoding="utf-8")
     return feat, pom
 
 
@@ -245,7 +245,7 @@ def test_repl_trailing_flag_exits_cleanly(capsys):
 def _second_ws(tmp_path):
     ws2 = tmp_path / "other-ws"
     (ws2 / "tests").mkdir(parents=True)
-    (ws2 / "noodle.yaml").write_text("tests_dir: tests\n")
+    (ws2 / "noodle.yaml").write_text("tests_dir: tests\n", encoding="utf-8")
     return ws2
 
 
@@ -261,7 +261,7 @@ def test_tool_accepts_per_call_workspace(ws, tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_WORKSPACE", str(ws))  # default: no patterns
     ws2 = _second_ws(tmp_path)
     (ws2 / "docs").mkdir()
-    (ws2 / "docs" / "agent_patterns.yaml").write_text(AGENT_PATTERNS)
+    (ws2 / "docs" / "agent_patterns.yaml").write_text(AGENT_PATTERNS, encoding="utf-8")
     # the custom step only resolves in ws2 — proves the override is honoured
     assert server.validate_feature(FEATURE_CUSTOM_STEP)["unmatched"] != []
     assert server.validate_feature(FEATURE_CUSTOM_STEP,
@@ -351,7 +351,7 @@ def _capture_engine(monkeypatch):
 
 def test_run_test_forwards_browser_retries_parallel(ws, monkeypatch):
     calls = _capture_engine(monkeypatch)
-    (ws / "tests" / "a.feature").write_text("Feature: A\n")
+    (ws / "tests" / "a.feature").write_text("Feature: A\n", encoding="utf-8")
     core.run_test("a", workspace=str(ws), browser="firefox", retries=2,
                   parallel=3, parallel_scheme="scenario")
     args = calls[0]
@@ -364,7 +364,7 @@ def test_run_test_forwards_browser_retries_parallel(ws, monkeypatch):
 
 def test_run_test_defaults_add_no_flags(ws, monkeypatch):
     calls = _capture_engine(monkeypatch)
-    (ws / "tests" / "a.feature").write_text("Feature: A\n")
+    (ws / "tests" / "a.feature").write_text("Feature: A\n", encoding="utf-8")
     core.run_test("a", workspace=str(ws))
     assert calls[0] == ["run", "tests/a.feature"]
 
@@ -414,10 +414,10 @@ def test_init_workspace_scaffolds_runnable_workspace(tmp_path):
 def test_init_workspace_never_overwrites(tmp_path):
     target = tmp_path / "fresh"
     core.init_workspace(str(target))
-    (target / ".env").write_text("NOODLE_MODEL=keep/me\n")
+    (target / ".env").write_text("NOODLE_MODEL=keep/me\n", encoding="utf-8")
     r = core.init_workspace(str(target), llm="claude")
     assert r["ok"]
-    assert (target / ".env").read_text() == "NOODLE_MODEL=keep/me\n"
+    assert (target / ".env").read_text(encoding="utf-8") == "NOODLE_MODEL=keep/me\n"
 
 
 def test_mcp_init_workspace_respects_allowed_roots(tmp_path, monkeypatch):
@@ -433,10 +433,10 @@ def test_cost_estimate_matches_llm_cost_module(ws):
     pytest.importorskip("litellm")
     from noodle.llm import cost as _cost
     f = ws / "tests" / "a.feature"
-    f.write_text("Feature: A\n  Scenario: S\n    When User waits for the page to load\n")
+    f.write_text("Feature: A\n  Scenario: S\n    When User waits for the page to load\n", encoding="utf-8")
     r = core.cost_estimate("tests/a.feature", model="ollama/llama3",
                            workspace=str(ws))
-    expected = _cost.estimate(f.read_text(), model="ollama/llama3")
+    expected = _cost.estimate(f.read_text(encoding="utf-8"), model="ollama/llama3")
     assert r["ok"] is True
     assert {k: r[k] for k in expected} == expected
 

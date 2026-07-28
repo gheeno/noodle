@@ -425,7 +425,7 @@ def _load_yaml(path: Path) -> dict | None:
         raise ImportError("POM YAML requires PyYAML: pip install pyyaml")
     if not path.exists():
         return None
-    return yaml.safe_load(path.read_text()) or {}
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
 def _build_locator(page, entry: dict, original_text: str):

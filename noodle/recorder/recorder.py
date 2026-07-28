@@ -132,5 +132,5 @@ class Recorder:
                 else:
                     lines.append(f"    And {step}")
         lines.append("")
-        Path(self.output_path).write_text("\n".join(lines))
+        Path(self.output_path).write_text("\n".join(lines), encoding="utf-8")
         print(f"\n  [Noodle Recorder] Feature written to: {self.output_path}\n")

@@ -361,7 +361,12 @@ from noodle.repl import validate as _validate  # noqa: E402
 def _goal(**over):
     g = {"scenario": "CT search",
          "actions": [{"do": "search", "term": "Hot Wheels", "id": "s"}],
-         "checks": [{"see": "Weekly Flyer"},
+         # NOOD_0195 — "Weekly Flyer" is LANDING-page text, so it carries the
+         # `after: start` anchor. An unanchored check now scopes its evidence
+         # to the searched page, matching where NOOD_0158 compiles it to; this
+         # fixture relied on the old split, where the check was matched against
+         # the landing page and asserted against the results page.
+         "checks": [{"see": "Weekly Flyer", "after": "start"},
                     {"count": "results summary", "min": 1, "after": "s"},
                     {"any_of": ["Hot Wheels", "Die Cast"], "min": 1,
                      "after": "s"}],
@@ -472,7 +477,10 @@ def test_unproven_check_blocks_but_is_never_dropped():
 def test_probe_args_scope_to_the_goal_only():
     args = goal_mod.probe_args(_goal())
     assert args == {"search": "Hot Wheels", "suggest": None, "pick": None,
-                    "mutate": None, "click": None,
+                    "mutate": None, "follow": None, "click": None,
+                    # NOOD_0195 — the literals the checks name, handed to the
+                    # probe's exact full-text --expect verdict.
+                    "expect": ["Weekly Flyer", "Hot Wheels", "Die Cast"],
                     "open_native_controls": False, "discover": False}
     g = _goal(actions=[{"do": "select", "target": "store", "option": "64",
                         "id": "sel"}],

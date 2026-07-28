@@ -35,6 +35,6 @@ def test_agent_playbook_carries_the_mcp_only_rules():
     # outside the workspace (they never read the scaffolded AGENTS.md), so A2
     # (gated-page exploratory run) and A5 (never drop the verify) must live here
     # too — A1/A4 already did. Guards against the two surfaces drifting apart.
-    pb = (REPO / "docs/agent-playbook.md").read_text().lower()
+    pb = (REPO / "docs/agent-playbook.md").read_text(encoding="utf-8").lower()
     assert "exploratory run" in pb and "gate" in pb        # A2
     assert "silently drop the asked-for check" in pb       # A5

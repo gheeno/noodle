@@ -45,7 +45,7 @@ def load_capabilities(raw: str | None) -> dict:
         p = Path(raw)
         if not p.is_file():
             raise AssertionError(f"NOODLE_APPIUM_CAPS points to a missing file: {p}")
-        raw = p.read_text()
+        raw = p.read_text(encoding="utf-8")
     try:
         caps = json.loads(raw)
     except json.JSONDecodeError as e:

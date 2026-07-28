@@ -59,7 +59,7 @@ def is_editable() -> bool | None:
     unknowable — e.g. running straight from a source tree with no install."""
     try:
         from importlib.metadata import distribution
-        raw = distribution("noodle").read_text("direct_url.json")
+        raw = distribution("noodle").read_text("direct_url.json", encoding="utf-8")
         return bool(json.loads(raw).get("dir_info", {}).get("editable")) if raw else None
     except Exception:
         return None
@@ -74,19 +74,19 @@ def git_sha() -> str | None:
         for parent in (d, *d.parents):
             git = parent / ".git"
             if git.is_file():  # worktree pointer: "gitdir: <path>"
-                target = git.read_text().split("gitdir:", 1)[1].strip()
+                target = git.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip()
                 git = (parent / target).resolve()
             if not git.is_dir():
                 continue
-            head = (git / "HEAD").read_text().strip()
+            head = (git / "HEAD").read_text(encoding="utf-8").strip()
             if not head.startswith("ref: "):
                 return head[:7]
             ref = git / head[5:]
             if ref.exists():
-                return ref.read_text().strip()[:7]
+                return ref.read_text(encoding="utf-8").strip()[:7]
             packed = git / "packed-refs"
             if packed.is_file():
-                for line in packed.read_text().splitlines():
+                for line in packed.read_text(encoding="utf-8").splitlines():
                     if line.endswith(head[5:]):
                         return line.split()[0][:7]
             return None

@@ -238,7 +238,10 @@ _DROPZONE = """
 
 def test_dragging_a_real_file_onto_a_dropzone(chromium, tmp_path, monkeypatch):
     _, browser = chromium
-    (tmp_path / "report.csv").write_text("a,b\n1,2\n")
+    # NOOD_0195 — newline="" keeps this fixture 8 bytes on every OS. Windows
+    # text mode translates \n to \r\n, so the drop reported size 10.
+    (tmp_path / "report.csv").write_text("a,b\n1,2\n", encoding="utf-8",
+                                         newline="")
     monkeypatch.chdir(tmp_path)
     page = browser.new_page()
     page.set_content(_DROPZONE)

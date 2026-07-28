@@ -94,6 +94,6 @@ def test_rest_steps_are_never_gated_at_all():
 
 def test_docs_say_the_tag_is_an_optout_not_a_gate():
     from pathlib import Path
-    woks = (Path(__file__).resolve().parents[3] / "docs" / "woks.md").read_text()
+    woks = (Path(__file__).resolve().parents[3] / "docs" / "woks.md").read_text(encoding="utf-8")
     assert "The API wok is a lifecycle, not a gate" in woks
     assert "writing API tests needs no tag" in woks

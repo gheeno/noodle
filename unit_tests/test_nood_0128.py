@@ -18,7 +18,7 @@ from noodle.repl import core, validate
 def _ws(tmp_path: Path) -> Path:
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n")
+    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n", encoding="utf-8")
     return ws
 
 
@@ -51,10 +51,10 @@ def test_author_writes_whole_package_in_one_call(tmp_path):
     app = ws / "noodle_tests" / "web" / "shop"
     assert (app / "features" / "login.feature").is_file()
     assert (app / "resources" / "pageobjects" / "login_pom.yaml").is_file()
-    assert (app / "resources" / "shop_environments.yaml").read_text().strip() == \
+    assert (app / "resources" / "shop_environments.yaml").read_text(encoding="utf-8").strip() == \
         "shop: http://localhost:9"
     # secret keys created as EMPTY placeholders, never values
-    secrets = (app / "resources" / "shop_secrets.env").read_text()
+    secrets = (app / "resources" / "shop_secrets.env").read_text(encoding="utf-8")
     assert "SHOP_USERNAME=\n" in secrets and "SHOP_PASSWORD=\n" in secrets
     assert r["missing_secret_keys"] == ["SHOP_USERNAME", "SHOP_PASSWORD"]
 
@@ -72,10 +72,10 @@ def test_author_never_clobbers_existing_secret_values(tmp_path):
     ws = _ws(tmp_path)
     _author(ws)
     sp = ws / "noodle_tests" / "web" / "shop" / "resources" / "shop_secrets.env"
-    sp.write_text("SHOP_USERNAME=alice\nSHOP_PASSWORD=hunter2\n")
+    sp.write_text("SHOP_USERNAME=alice\nSHOP_PASSWORD=hunter2\n", encoding="utf-8")
     r = _author(ws, overwrite=True)
     assert r["created_secret_keys"] == []          # both already present
-    assert "alice" in sp.read_text() and "hunter2" in sp.read_text()
+    assert "alice" in sp.read_text(encoding="utf-8") and "hunter2" in sp.read_text(encoding="utf-8")
 
 
 def test_author_refuses_overwrite_without_flag(tmp_path):
@@ -118,7 +118,7 @@ def test_preflight_passes_once_secrets_filled(tmp_path):
     ws = _ws(tmp_path)
     _author(ws)
     sp = ws / "noodle_tests" / "web" / "shop" / "resources" / "shop_secrets.env"
-    sp.write_text("SHOP_USERNAME=alice\nSHOP_PASSWORD=hunter2\n")
+    sp.write_text("SHOP_USERNAME=alice\nSHOP_PASSWORD=hunter2\n", encoding="utf-8")
     pf = core.preflight("login", workspace=str(ws))
     assert pf["ok"] and pf["missing_secret_keys"] == []
 
@@ -196,7 +196,7 @@ def test_cli_author_matches_core(tmp_path):
     spec.write_text(json.dumps({
         "app_name": "Shop", "base_url": "http://localhost:9",
         "feature_path": "login", "feature_content": _FEATURE, "pom_content": _POM,
-        "required_secret_keys": ["SHOP_USERNAME", "SHOP_PASSWORD"]}))
+        "required_secret_keys": ["SHOP_USERNAME", "SHOP_PASSWORD"]}), encoding="utf-8")
     r = CliRunner().invoke(app, ["author", "--spec", str(spec), "-w", str(ws), "--json"])
     assert r.exit_code == 0
     payload = json.loads(r.stdout)
@@ -436,7 +436,7 @@ def test_cli_author_run_flag_reaches_core(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "author_test", fake_author)
     spec = tmp_path / "spec.yaml"
     spec.write_text(json.dumps({"app_name": "S", "base_url": "http://h",
-                                "feature_path": "f", "goal": _goal()}))
+                                "feature_path": "f", "goal": _goal()}), encoding="utf-8")
     r = CliRunner().invoke(_cli.app, ["author", "--spec", str(spec),
                                       "-w", str(tmp_path), "--run"])
     assert r.exit_code == 0, r.output

@@ -55,7 +55,7 @@ def test_json_door_prints_within_budget_and_leaves_the_full_payload(tmp_path,
     printed = json.loads(out)
     full = Path(printed["payload_note"].split("Full payload: ")[1].strip())
     assert full.is_file()
-    assert len(json.loads(full.read_text())["tests"]) == 400   # nothing lost
+    assert len(json.loads(full.read_text(encoding="utf-8"))["tests"]) == 400   # nothing lost
     assert len(printed["tests"]) < 400                         # what shipped
 
 
@@ -71,5 +71,5 @@ def test_author_help_carries_the_goal_spec_shape():
 def test_goal_mode_needs_no_step_lookup_on_both_cards():
     for card in (".claude/skills/noodle/SKILL.md",
                  ".copilot/skills/noodle/SKILL.md"):
-        text = (REPO / card).read_text()
+        text = (REPO / card).read_text(encoding="utf-8")
         assert "Goal mode needs" in text and "engine writes the steps" in text

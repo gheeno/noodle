@@ -535,7 +535,7 @@ def _write_result(d: Path, name: str, status: str, steps: list[dict]):
     }
     if status == "failed":
         payload["statusDetails"] = {"message": "boom", "trace": ""}
-    (d / f"{name}-result.json").write_text(json.dumps(payload))
+    (d / f"{name}-result.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 class TestRcaEvidence:

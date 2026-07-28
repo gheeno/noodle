@@ -48,6 +48,19 @@ class _OrderedGroup(TyperGroup):
         return sorted(super().list_commands(ctx))
 
 
+# NOOD_0195 — the console speaks UTF-8, whatever the OS default is. Windows
+# gives stdout the ANSI code page (cp1252), which has no ✅ ⚠️ ❌ 📸 — and the
+# engine prints those on every run. A single emoji in a message therefore raised
+# UnicodeEncodeError from typer.echo and took the whole command down; worse, it
+# did so while REPORTING another error, so the real failure was never seen.
+# errors="replace" keeps a genuinely legacy console degrading to '?' rather than
+# crashing. Cheaper and more honest than stripping symbols from every message.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):   # redirected to a non-text stream
+        pass
+
 app = typer.Typer(cls=_OrderedGroup, help="Noodle — AI-powered BDD test runner",
                   add_completion=False)
 
@@ -178,7 +191,7 @@ def _write_full_payload(payload) -> str | None:
     try:
         path = Path(".noodle") / "last_payload.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2, default=str))
+        path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         return str(path.resolve())
     except OSError:
         return None
@@ -561,7 +574,7 @@ def _write_last_run(results_root: str, rc: int, cwd: str = ".",
     out = Path(cwd) / _paths.artifacts_root() / "last_run.json"
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(data, indent=2) + "\n")
+        out.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     except OSError:
         pass  # reporting nicety — never fail the run over it
     return data
@@ -632,7 +645,7 @@ def _run_behave(args: list, env: dict, cwd: str, log_path=None,
     kw: dict = {"env": env, "cwd": cwd}
     lf = None
     if log_path is not None:
-        lf = open(log_path, "w")
+        lf = open(log_path, "w", encoding="utf-8")
         kw["stdout"] = lf
         kw["stderr"] = subprocess.STDOUT
     try:
@@ -784,7 +797,7 @@ def _merge_worker_results(results: Path):
                 continue
             if f.name.startswith("healing-report"):
                 try:
-                    healing_texts.append(f.read_text())
+                    healing_texts.append(f.read_text(encoding="utf-8"))
                 except OSError:
                     pass
                 continue
@@ -799,7 +812,7 @@ def _merge_worker_results(results: Path):
     if healing_texts:
         out = results.parent / "reports" / "healing-report.txt"
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text("\n".join(healing_texts))
+        out.write_text("\n".join(healing_texts), encoding="utf-8")
     for d in worker_dirs:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -1360,14 +1373,14 @@ def init(
 
     def _write(f: Path, text: str):
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(text)
+        f.write_text(text, encoding="utf-8")
 
     for f, text in {**glue, **templates, **config_files}.items():
         if not f.exists():
             _write(f, text)
             created.append(str(f))
             continue
-        if f.read_text() == text or f in config_files:
+        if f.read_text(encoding="utf-8") == text or f in config_files:
             continue  # up to date, or user-owned config — leave alone
         if f in glue:
             _write(f, text)
@@ -1467,7 +1480,7 @@ def _merge_mcp_json(f: Path, container_key: str, entry: dict, force: bool) -> st
     data = {}
     if f.exists():
         try:
-            data = json.loads(f.read_text() or "{}")
+            data = json.loads(f.read_text(encoding="utf-8") or "{}")
         except json.JSONDecodeError:
             return f"kept (unparseable JSON — fix {f} by hand)"
     servers = data.setdefault(container_key, {})
@@ -1478,7 +1491,7 @@ def _merge_mcp_json(f: Path, container_key: str, entry: dict, force: bool) -> st
     existed = f.exists()
     servers["noodle"] = entry
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps(data, indent=2) + "\n")
+    f.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return "updated" if existed else "created"
 
 
@@ -1514,7 +1527,7 @@ def _merge_vscode_association(f: Path, glob: str) -> str:
     data = {}
     if f.exists():
         try:
-            data = json.loads(f.read_text() or "{}")
+            data = json.loads(f.read_text(encoding="utf-8") or "{}")
         except json.JSONDecodeError:
             return f"kept (unparseable JSON — fix {f} by hand)"
     assoc = data.setdefault("files.associations", {})
@@ -1528,7 +1541,7 @@ def _merge_vscode_association(f: Path, glob: str) -> str:
         del assoc[_STALE_ASSOC]
     assoc[glob] = _ASSOC_LANG
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps(data, indent=2) + "\n")
+    f.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return "updated" if existed else "created"
 
 
@@ -1585,7 +1598,7 @@ def _install_extension_into(src: Path, ext_dir: Path) -> tuple[Path, str]:
             old.unlink()                              # /LSP silently stops working
         else:
             shutil.rmtree(old)
-    ver = json.loads((src / "package.json").read_text())["version"]
+    ver = json.loads((src / "package.json").read_text(encoding="utf-8"))["version"]
     dst = ext_dir / f"noodle.noodle-{ver}"            # VS Code's publisher.name-version
     try:
         dst.symlink_to(src, target_is_directory=True)
@@ -1670,7 +1683,7 @@ def author(
         result = core.author_test(prompt=prompt, run_after_author=run,
                                   overwrite=overwrite, workspace=workspace)
     else:
-        raw = sys.stdin.read() if spec == "-" else Path(spec).read_text()
+        raw = sys.stdin.read() if spec == "-" else Path(spec).read_text(encoding="utf-8")
         try:
             data = yaml.safe_load(raw) or {}
         except Exception as e:
@@ -1882,7 +1895,7 @@ def cost(
     # Estimate mode: workspace .env supplies NOODLE_MODEL unless --model given.
     from dotenv import load_dotenv
     load_dotenv(Path(workspace) / ".env")
-    text = Path(target).read_text()
+    text = Path(target).read_text(encoding="utf-8")
     est = _cost.estimate(text, model=model)
     if as_json:
         _json_out(est)
@@ -1939,14 +1952,14 @@ def _write_verdict(verdict: dict, workspace: Path) -> dict:
     the served reports dir too — so the ACs live at /verdict.html beside
     /allure-report/index.html and /rca.html."""
     from noodle import regression
-    (workspace / "verdict.json").write_text(json.dumps(verdict, indent=2))
+    (workspace / "verdict.json").write_text(json.dumps(verdict, indent=2), encoding="utf-8")
     html = regression.render_html(verdict)
-    (workspace / "verdict.html").write_text(html)
+    (workspace / "verdict.html").write_text(html, encoding="utf-8")
     verdict["saved"] = str(workspace / "verdict.json")
     try:
         reports = _paths.last_run_root(str(workspace.resolve())) / "reports"
         if reports.is_dir():
-            (reports / "verdict.html").write_text(html)
+            (reports / "verdict.html").write_text(html, encoding="utf-8")
             verdict["served"] = str(reports / "verdict.html")
     except Exception:
         pass  # results file outside a workspace — the local verdict.html stands
@@ -1975,7 +1988,7 @@ def feature_regression(
         # NOOD_0188 — score against the workspace holding the run's artifacts,
         # so the audit can cross-check green/verified against last_run.json.
         ws = Path(score_file).resolve().parent
-        verdict = regression.score(json.loads(Path(score_file).read_text()),
+        verdict = regression.score(json.loads(Path(score_file).read_text(encoding="utf-8")),
                                    workspace=str(ws))
     else:
         ws = _regression_workspace(quiet=not init_ws)
@@ -1986,7 +1999,7 @@ def feature_regression(
         from noodle import install_check
         results = {**regression.execute(str(ws)),
                    "engine": install_check.version_report().get("source")}
-        (ws / "results.json").write_text(json.dumps(results, indent=2))
+        (ws / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
         verdict = regression.score(results, workspace=str(ws))
     _write_verdict(verdict, ws)
     if as_json:
@@ -2020,7 +2033,7 @@ def rca_report(
     else:
         md = _rca.render_markdown_llm(results) if llm else _rca.render_markdown(results)
     if out:
-        Path(out).write_text(md)
+        Path(out).write_text(md, encoding="utf-8")
         typer.echo(f"RCA report written to {out}")
     else:
         typer.echo(md)
@@ -2102,7 +2115,7 @@ def _validate_resolve(target: Path) -> int:
     rc = 0
     for f in files:
         typer.echo(f"\n{f}")
-        result = _validate.check_feature(f.read_text(), filename=str(f))
+        result = _validate.check_feature(f.read_text(encoding="utf-8"), filename=str(f))
         if result["error"]:
             rc = 1
         typer.echo(_validate.render(result))
@@ -2116,7 +2129,7 @@ def _validate_resolve_json(target: Path) -> int:
     files = [target] if target.suffix == ".feature" else sorted(target.rglob("*.feature"))
     out, rc = [], 0
     for f in files:
-        result = _validate.check_feature(f.read_text(), filename=str(f))
+        result = _validate.check_feature(f.read_text(encoding="utf-8"), filename=str(f))
         if result["error"]:
             rc = 1
         out.append({"path": str(f), "error": result["error"],
@@ -2539,7 +2552,7 @@ _REPORT_PIDFILE = Path(".noodle") / "report_servers.json"
 
 def _report_pids(workspace: str) -> dict:
     try:
-        return json.loads((Path(workspace) / _REPORT_PIDFILE).read_text())
+        return json.loads((Path(workspace) / _REPORT_PIDFILE).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
 
@@ -2548,7 +2561,7 @@ def _write_report_pids(workspace: str, data: dict) -> None:
     f = Path(workspace) / _REPORT_PIDFILE
     try:
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(json.dumps(data) + "\n")
+        f.write_text(json.dumps(data) + "\n", encoding="utf-8")
     except OSError:
         pass  # registry is a nicety — never fail serving over it
 
@@ -2561,6 +2574,42 @@ def _pid_of(entry) -> int:
 
 
 def _pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        # NOOD_0195 — `os.kill(pid, 0)` below is the POSIX liveness idiom, and
+        # on Windows it is actively destructive: signal 0 IS CTRL_C_EVENT
+        # there, so Python calls GenerateConsoleCtrlEvent and the "probe"
+        # delivers a Ctrl+C to that process GROUP. A stale registry entry
+        # therefore interrupted whatever now shares the console — in CI that
+        # was pytest itself (an async KeyboardInterrupt mid-run); on a tester's
+        # machine it is their own shell. Every other signal value fares no
+        # better: those route to TerminateProcess, so the probe would kill a
+        # recycled pid belonging to a stranger. Opening a handle only reads.
+        import ctypes
+        from ctypes import wintypes
+        QUERY_LIMITED_INFORMATION, STILL_ACTIVE, ACCESS_DENIED = 0x1000, 259, 5
+        # use_last_error so get_last_error() is meaningful, and DECLARE the
+        # signatures: ctypes defaults restype to a 32-bit int, which truncates
+        # a 64-bit HANDLE and then fails in ways that surface as an unrelated
+        # SystemError.
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.GetExitCodeProcess.argtypes = [wintypes.HANDLE,
+                                           ctypes.POINTER(wintypes.DWORD)]
+        k32.GetExitCodeProcess.restype = wintypes.BOOL
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.CloseHandle.restype = wintypes.BOOL
+        handle = k32.OpenProcess(QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # ERROR_ACCESS_DENIED — it exists, it just isn't ours.
+            return ctypes.get_last_error() == ACCESS_DENIED
+        try:
+            code = wintypes.DWORD()
+            if k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return code.value == STILL_ACTIVE
+            return True
+        finally:
+            k32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -2769,7 +2818,7 @@ def _spawn_report_server(target: str, workspace: str, host: str, port: int) -> d
         if child.poll() is not None:
             tail = ""
             try:
-                tail = log.read_text(errors="replace")[-2000:].rstrip()
+                tail = log.read_text(errors="replace", encoding="utf-8")[-2000:].rstrip()
             except OSError:
                 pass
             return {"ok": False, "error": f"report server exited with code "
@@ -2835,7 +2884,12 @@ def report_serve(
         except OSError as e:
             # NOOD_0134 — a taken port must never dead-end the serve (8000 is
             # only a bookmarkable first try): fall back to an OS-assigned one.
-            if e.errno != errno.EADDRINUSE or port == 0:
+            # NOOD_0195 — EACCES counts as taken. http.server sets
+            # allow_reuse_address, and Windows answers a second bind on a
+            # SO_REUSEADDR socket with WSAEACCES ("access permissions"), not
+            # WSAEADDRINUSE — so the fallback never fired there and the serve
+            # dead-ended with exactly the wasted round trip NOOD_0134 removed.
+            if e.errno not in (errno.EADDRINUSE, errno.EACCES) or port == 0:
                 typer.echo(f"Can't bind {host}:{port} ({e.strerror or e}) — try another --port, or -p 0 for an OS-assigned one.")
                 raise typer.Exit(1)
             typer.echo(f"Port {port} is taken — using an OS-assigned one instead.")

@@ -21,7 +21,7 @@ def test_generate_applies_tag_to_scenario(tmp_path):
     feat, _ = generate.generate(
         'search for "Product A" @hello.com', "https://hello.test",
         WS, str(tmp_path))
-    text = feat.read_text()
+    text = feat.read_text(encoding="utf-8")
     assert "@hello.com" in text
     # tag lands on the Scenario line, not smuggled into Feature:
     assert "@hello.com\n  Scenario:" in text
@@ -31,7 +31,7 @@ def test_generate_append_to_adds_scenario_to_existing_file(tmp_path):
     feat1, _ = generate.generate('search for "Product A"', "https://hello.test",
                                  WS, str(tmp_path))
     stem = feat1.stem
-    before = feat1.read_text()
+    before = feat1.read_text(encoding="utf-8")
 
     result = generate.generate('search for "Product B"', "https://hello.test",
                                WS, str(tmp_path), append_to=stem)
@@ -39,7 +39,7 @@ def test_generate_append_to_adds_scenario_to_existing_file(tmp_path):
     feat2, _ = result
     assert feat2 == feat1  # same file, not a second one
 
-    after = feat1.read_text()
+    after = feat1.read_text(encoding="utf-8")
     assert after.startswith(before.rstrip("\n"))
     assert after.count("Scenario:") == 2
     assert "Product B" in after
@@ -51,7 +51,7 @@ def test_generate_append_to_tags_only_the_new_scenario(tmp_path):
     feat, _ = generate.generate('search for "Product B" @followup',
                                 "https://hello.test",
                                 WS, str(tmp_path), append_to=feat1.stem)
-    text = feat.read_text()
+    text = feat.read_text(encoding="utf-8")
     assert text.count("@followup") == 1
 
 

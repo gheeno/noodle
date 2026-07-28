@@ -168,8 +168,8 @@ def test_the_shipped_surfaces_do_not_claim_noodle_is_web_only():
     wrong thing. Cheap to regress, expensive to notice."""
     from noodle.cli import _AGENTS_MD
     surfaces = {
-        "claude-card": (REPO / ".claude/skills/noodle/SKILL.md").read_text(),
-        "copilot-card": (REPO / ".copilot/skills/noodle/SKILL.md").read_text(),
+        "claude-card": (REPO / ".claude/skills/noodle/SKILL.md").read_text(encoding="utf-8"),
+        "copilot-card": (REPO / ".copilot/skills/noodle/SKILL.md").read_text(encoding="utf-8"),
         "agents-md": _AGENTS_MD,
     }
     for name, text in surfaces.items():
@@ -231,13 +231,13 @@ def _code(path: Path) -> str:
     """The file without its full-line comments. These guards are about what
     the agent EXECUTES — every one of them first failed against the comment
     explaining why the thing it forbids isn't there."""
-    return "\n".join(ln for ln in path.read_text().splitlines()
+    return "\n".join(ln for ln in path.read_text(encoding="utf-8").splitlines()
                      if not ln.lstrip().startswith("#"))
 
 
 def test_ci_templates_parse():
     for f in list(CI.glob("*.yml")) + [REPO / "azure-pipelines.yml"]:
-        yaml.safe_load(f.read_text())
+        yaml.safe_load(f.read_text(encoding="utf-8"))
 
 
 def test_no_sudo_npm_on_a_self_hosted_agent():
@@ -251,7 +251,7 @@ def test_allure_is_invoked_by_resolved_path_not_by_name():
     """A global install lets an agent-local registry shadow the `allure` bin
     with a different package. The install step must verify the RESOLVED
     binary's version before putting it on PATH."""
-    src = (CI / "steps-allure-cli.yml").read_text()
+    src = (CI / "steps-allure-cli.yml").read_text(encoding="utf-8")
     assert "node_modules/.bin/allure" in src
     assert "npm install --no-save" in src and "--prefix" in src
     assert "##[error]" in src, "a wrong CLI must fail loudly, not silently"
@@ -270,8 +270,8 @@ def test_allure_pin_is_identical_everywhere():
     for f in [*CI.glob("*.yml"), REPO / "azure-pipelines.yml",
               REPO / "azure-pipelines-windows.yml",
               REPO / ".github" / "workflows" / "tests.yml"]:
-        found = set(_PIN.findall(f.read_text()))
-        for p in (yaml.safe_load(f.read_text()) or {}).get("parameters") or []:
+        found = set(_PIN.findall(f.read_text(encoding="utf-8")))
+        for p in (yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("parameters") or []:
             if isinstance(p, dict) and p.get("name") == "allureVersion":
                 found.add(str(p["default"]))
         if found:
@@ -282,7 +282,7 @@ def test_allure_pin_is_identical_everywhere():
 
 
 def test_template_declares_the_documented_parameters():
-    spec = yaml.safe_load((CI / "noodle-tests.yml").read_text())
+    spec = yaml.safe_load((CI / "noodle-tests.yml").read_text(encoding="utf-8"))
     names = {p["name"] for p in spec["parameters"]}
     assert {"workspaceDir", "testTag", "pool", "shard", "extras",
             "keyVaultUrl", "secretEnv"} <= names
@@ -301,5 +301,5 @@ def test_ci_is_headless_only():
 def test_example_pipeline_pins_the_engine_ref():
     """A moving ref is not a build. The example a project copies must show a
     pinned tag, or every project inherits an unpinned engine."""
-    src = (CI / "example-project-pipeline.yml").read_text()
+    src = (CI / "example-project-pipeline.yml").read_text(encoding="utf-8")
     assert re.search(r"ref:\s*refs/tags/\d+\.\d+\.\d+", src)

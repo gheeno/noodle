@@ -51,7 +51,7 @@ def test_summary_and_report_list_from_app_dir(ws):
     results = app_dir / "report" / "allure-results"
     results.mkdir(parents=True)
     (results / "a-result.json").write_text(
-        '{"name": "S", "status": "passed", "start": 0, "stop": 1}')
+        '{"name": "S", "status": "passed", "start": 0, "stop": 1}', encoding="utf-8")
     r = runner.invoke(app, ["summary", "--workspace", str(app_dir), "--json"])
     assert r.exit_code == 0 and json.loads(r.output)["passed"] == 1
     r = runner.invoke(app, ["report", "list", "--workspace", str(app_dir), "--json"])

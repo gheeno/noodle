@@ -26,7 +26,7 @@ def _write_config(report_dir: str) -> Path:
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(
         f"export default {{ historyPath: {json.dumps(str(history))} }};\n"
-    )
+    , encoding="utf-8")
     return config
 
 

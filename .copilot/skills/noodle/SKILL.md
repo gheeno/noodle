@@ -35,6 +35,10 @@ project; wok = capability work area, tag-routed
 - Goal mode is the rule for a new single-flow test: spec `goal:` +
   `--run` (`run_after_author=True`) — probes, compiles feature+POM,
   runs once, serves; 0 passed = failure; budget = 1 probe, 1 run.
+  **It probes for you** — a `probe_page` before a `goal:` double-bills,
+  and a term one character off returns a different, misleading list.
+  Probe alone only with no goal, or when a blocker names a control
+  (then reuse the goal's exact strings).
   Hand-written Gherkin only after a named blocker (`intent_verified:
   false`, syntax-only). `{do: pick}` after search selects one captured
   result caption; check kind `item_in_destination` + `expected_from`
@@ -52,6 +56,17 @@ goal:  # an OBJECT, never a string; rejections return this example
   actions: [{do: search, term: "<term>"}]
   checks: [{count: results, min: 1}, {any_of: ["<text>", "<alt text>"]}]
 ```
+
+Every `do:` — inventing one is rejected (`target` = a control name,
+`id` = the `after:` anchor): `search(term)` · `suggest(term,option)` ·
+`pick(from)` · `add_to(item_from,destination)` · `enter(target,value)` ·
+`select(target,option)` · `click/hover/check/uncheck(target)` ·
+`upload(target,file)` · `pick_date(target,date)` · `press_key(key)` ·
+`go_back` · `api(url[,method,body])`.
+
+- Quoted user strings — search terms, suggestions, expected names — are
+  DATA: never fix their spelling, casing or spacing. The site may be
+  misspelled and the prompt right.
 
 - `--spec` keys = `author_test` args: app_name, base_url, feature_path,
   feature_content, pom_content, environment_values, secret_values,

@@ -61,7 +61,7 @@ def _load_quirks(results_dir: Path) -> list[dict]:
     if not path.is_file():
         return []
     try:
-        data = yaml.safe_load(path.read_text()) or []
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or []
     except Exception:
         return []
     return [q for q in data if isinstance(q, dict) and q.get("match")]
@@ -104,7 +104,7 @@ def _update_history(results_dir: Path, entries: list[dict]) -> None:
     prior_records: list[dict] = []
     seen: set = set()
     if path.is_file():
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding="utf-8").splitlines():
             try:
                 r = json.loads(line)
             except json.JSONDecodeError:
@@ -126,7 +126,7 @@ def _update_history(results_dir: Path, entries: list[dict]) -> None:
         }))
     if new_lines:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a") as fh:
+        with path.open("a", encoding="utf-8") as fh:
             fh.write("\n".join(new_lines) + "\n")
 
     for e in entries:
@@ -154,7 +154,7 @@ def _latest_results(results_dir: str = None) -> list[dict]:
     latest: dict = {}
     for f in files:
         try:
-            r = json.loads(f.read_text())
+            r = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
         key = r.get("historyId") or r.get("fullName") or f.name
@@ -231,7 +231,7 @@ def collect_flaky(results_dir: str = None) -> list[dict]:
     groups: dict = {}
     for f in files:
         try:
-            r = json.loads(f.read_text())
+            r = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
         key = r.get("historyId") or r.get("fullName") or f.name
@@ -268,7 +268,7 @@ def _provenance(results_dir: str = None) -> dict:
     env_file = d / "environment.properties"
     if env_file.is_file():
         try:
-            for line in env_file.read_text().splitlines():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
                 if line.startswith("noodle.run.id="):
                     run_id = line.split("=", 1)[1].strip()
                     break
@@ -409,7 +409,7 @@ def _load_network(results_dir: Path, scenario: str) -> dict | None:
     safe = scenario.replace(" ", "_").replace("/", "_")[:80]
     path = results_dir.parent / "network" / f"{safe}.json"
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else None
     except (OSError, json.JSONDecodeError):
         return None
@@ -1201,8 +1201,8 @@ def write_reports(results_dir: str = None, out_dir: str = None) -> dict:
     out = Path(out_dir) if out_dir else _paths.reports_dir()
     out.mkdir(parents=True, exist_ok=True)
     md, html_ = out / "rca.md", out / "rca.html"
-    md.write_text(render_markdown(results_dir))
-    html_.write_text(render_html(results_dir))
+    md.write_text(render_markdown(results_dir), encoding="utf-8")
+    html_.write_text(render_html(results_dir), encoding="utf-8")
     return {"rca_md": str(md), "rca_html": str(html_)}
 
 
@@ -1216,7 +1216,7 @@ def open_html(results_dir: str = None, out_path: str = None) -> str:
     from . import paths as _paths
     out_path = out_path or str(_paths.reports_dir() / "rca.html")
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(out_path).write_text(render_html(results_dir))
+    Path(out_path).write_text(render_html(results_dir), encoding="utf-8")
     webbrowser.open(Path(out_path).resolve().as_uri())
     return out_path
 
@@ -1249,7 +1249,7 @@ def _find_feature_file(tests_root: Path, scenario: str) -> Path | None:
         return None
     for f in sorted(tests_root.rglob("*.feature")):
         try:
-            text = f.read_text()
+            text = f.read_text(encoding="utf-8")
         except OSError:
             continue
         if f"Scenario: {scenario}" in text or f"Scenario Outline: {scenario}" in text:
@@ -1281,13 +1281,13 @@ def propose_fixes(results_dir: str = None, workspace: str = ".",
                         f"{tests_root} contains this scenario — skipped)_\n")
             continue
         poms = sorted((feat.parent.parent / "resources" / "pageobjects").glob("*.yaml"))
-        pom_blocks = "\n".join(f"--- {p.name} ---\n{p.read_text()}" for p in poms)
+        pom_blocks = "\n".join(f'--- {p.name} ---\n{p.read_text(encoding="utf-8")}' for p in poms)
         diff = ask(
             "A BDD scenario failed and was root-caused as "
             f"category '{h['category']}': {h['reason']}\n"
             f"Suggested direction: {h['fix']}\n"
             f"Failing step: {e['step']}\nError message: {e['message']}\n\n"
-            f"Feature file ({feat.name}):\n{feat.read_text()}\n\n"
+            f'Feature file ({feat.name}):\n{feat.read_text(encoding="utf-8")}\n\n'
             f"Page-object YAML for this package:\n{pom_blocks or '(none)'}\n\n"
             "Propose the smallest edit that fixes this failure. Reply with ONLY "
             "a unified diff (--- / +++ / @@ hunks) against the file(s) above — "

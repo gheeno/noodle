@@ -88,7 +88,7 @@ def test_author_blocking_absent_when_ready():
 
 
 def _serve_tmp(tmp_path):
-    (tmp_path / "index.html").write_text("<h1>ok</h1>")
+    (tmp_path / "index.html").write_text("<h1>ok</h1>", encoding="utf-8")
     from noodle.reporting import builder
     httpd = builder._make_server(str(tmp_path), "127.0.0.1", 0)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -118,7 +118,7 @@ def test_dead_reuse_entry_falls_through_to_a_fresh_spawn(tmp_path, monkeypatch):
 
     root = tmp_path / "reports"
     root.mkdir()
-    (root / "rca.html").write_text("<h1>rca</h1>")
+    (root / "rca.html").write_text("<h1>rca</h1>", encoding="utf-8")
     cli._write_report_pids(str(tmp_path), {
         "1": {"pid": os.getpid(), "host": "127.0.0.1",
               "root": str(root.resolve())}})    # alive pid, nothing on port 1
@@ -144,7 +144,7 @@ def test_surfaces_carry_no_jq_no_curl():
     assert "no jq" in server._INSTRUCTIONS and "no curl" in server._INSTRUCTIONS
     for card in (".claude/skills/noodle/SKILL.md",
                  ".copilot/skills/noodle/SKILL.md"):
-        text = (REPO / card).read_text()
+        text = (REPO / card).read_text(encoding="utf-8")
         assert "no curl" in text and "no jq" in text, card
 
 

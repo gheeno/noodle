@@ -21,7 +21,7 @@ needs_lsof = pytest.mark.skipif(
 
 def test_looks_like_report_dir(tmp_path):
     assert not cli._looks_like_report_dir(tmp_path)
-    (tmp_path / "rca.html").write_text("x")
+    (tmp_path / "rca.html").write_text("x", encoding="utf-8")
     assert cli._looks_like_report_dir(tmp_path)
     report = tmp_path / "allure-report"
     report.mkdir()
@@ -53,7 +53,7 @@ def _spawn_http_server(cwd, *extra_args):
 
 @pytest.fixture
 def report_root(tmp_path):
-    (tmp_path / "rca.html").write_text("<h1>rca</h1>")
+    (tmp_path / "rca.html").write_text("<h1>rca</h1>", encoding="utf-8")
     (tmp_path / "allure-report").mkdir()
     return tmp_path
 
@@ -126,7 +126,7 @@ def test_report_stop_finds_serve_started_in_another_workspace(report_root, tmp_p
     subprocess.run([sys.executable, "-m", "noodle.cli", "report", "serve",
                     str(report_root), "-w", str(ws), "--background"],
                    check=True, capture_output=True, text=True, timeout=90)
-    reg = json.loads((ws / ".noodle" / "report_servers.json").read_text())
+    reg = json.loads((ws / ".noodle" / "report_servers.json").read_text(encoding="utf-8"))
     port, pid = next(iter(reg.items()))
     pid = cli._pid_of(pid)
     try:

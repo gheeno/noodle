@@ -961,7 +961,7 @@ def execute_step(step_text: str, context):
             [_row_get(row, 'payload') or row.cells[0] for row in context.table]
         for rel in paths:
             full = os.path.join(app_dir, 'resources', rel)
-            with open(full) as fh:
+            with open(full, encoding="utf-8") as fh:
                 content = fh.read()
             # Compact JSON so substituted values stay single-line for regex patterns.
             try:
@@ -1033,7 +1033,7 @@ def execute_step(step_text: str, context):
             loc = action.get('locator')
             context._vars[key] = (screen.read_number(page, loc)
                                   if t == 'read_image_number'
-                                  else screen.read_text(page, loc))
+                                  else screen.read_text(page, loc, encoding="utf-8"))
             logger.info(f"\n  💾 Stored `{key}` = {_safe_repr(key, context._vars[key])}")
         elif t == 'assert_depicts':
             screen.assert_depicts(page, action['desc'], action.get('locator'))

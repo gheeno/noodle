@@ -35,11 +35,11 @@ def test_unfiltered_inventory_drops_scenario_names_and_stays_small():
 def test_query_matches_path_feature_scenario_or_tag(tmp_path):
     fdir = tmp_path / "tests"
     fdir.mkdir()
-    (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n")
+    (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n", encoding="utf-8")
     (fdir / "cart.feature").write_text(
-        "@web\nFeature: Cart\n  Scenario: add an item\n")
+        "@web\nFeature: Cart\n  Scenario: add an item\n", encoding="utf-8")
     (fdir / "login.feature").write_text(
-        "@smoke\nFeature: Login\n  Scenario: sign in\n")
+        "@smoke\nFeature: Login\n  Scenario: sign in\n", encoding="utf-8")
 
     def paths(q):
         return [t["path"] for t in core.list_tests(str(tmp_path), query=q)["tests"]]
@@ -94,7 +94,7 @@ def test_probe_and_run_help_are_under_their_ledger_caps():
 def test_moved_rationale_landed_in_the_cli_reference():
     """A diff that only shrinks cli.py is the failure mode — every flag whose
     help lost its rationale must be documented in the doc it now points at."""
-    doc = (REPO / "docs" / "cli-reference.md").read_text()
+    doc = (REPO / "docs" / "cli-reference.md").read_text(encoding="utf-8")
     for flag in ("--suggest", "--pick", "--follow", "--expect", "--open-native",
                  "--max-reveal-depth", "--discover",     # probe
                  "--preflight", "--serve", "--json"):    # run

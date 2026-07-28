@@ -113,6 +113,24 @@ Ceiling accounting (moved verbatim from the retired test asserts):
   — reading docs, guessing flags, hand-writing results.json, digging
   through session telemetry for a cost number — was measured at ~28 AIC
   per benchmark run, against an engine that spent none. 189 B buys it back.
+- NOOD_0195: claude skill card 6144 → 7168 and copilot 6304 → 7296
+  (+1024/+992; 6937 and 7100 B used at the bump). Three lines, one of them
+  the goal ACTION VOCABULARY. A reviewed session spent 3.67 AIC — its single
+  most expensive step — writing `{do: type_partial}` + `{do: pick_suggestion}`
+  where the answer was one `suggest`, and only the rejection told it the 15
+  real verbs. This is the NOOD_0179 rule at its strongest: a doc section
+  cannot fix it, because the agent never knows it needs to read one. It had
+  the card's `{do: search}` example and reasonably generalised from it —
+  there was no round trip to intercept, only a wrong answer to pay for.
+  The other two lines are the same session's other two agent-side losses
+  (2.06 + 2.51 AIC): goal mode probes internally, so a standalone probe
+  before a `goal:` double-bills AND returns a list keyed to a different term
+  (that is how the site's real, misspelled typeahead got "corrected" away);
+  and quoted user strings are data, never to be spell-fixed. Both are
+  one-clause decision rules that fire at authoring time — the shape a
+  surface is for. The check-KIND list was deliberately left out: no measured
+  session ever got a check kind wrong, and vocabulary() already ships them
+  on rejection.
 """
 from __future__ import annotations
 
@@ -125,8 +143,8 @@ CEILINGS: dict[str, int] = {
     "agents-md (cli._AGENTS_MD)": 5632,
     "prompt-template (cli._PROMPT_TEMPLATE)": 1024,
     "mcp-instructions (server._INSTRUCTIONS)": 2432,
-    "claude-skill-card (.claude/skills/noodle/SKILL.md)": 6144,
-    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 6304,
+    "claude-skill-card (.claude/skills/noodle/SKILL.md)": 7168,
+    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 7296,
     "copilot-digest (.github/copilot-instructions.md)": 7424,
     "hot-tool-docstrings (probe/author/run_and_report/run)": 6400,
     "cli-help (noodle probe --help)": 6400,
@@ -159,7 +177,8 @@ def _cli_help(command: str) -> bytes:
             os.environ.pop("COLUMNS", None)
         else:
             os.environ["COLUMNS"] = prev
-    return _ANSI_RE.sub("", out).encode()
+    # NOOD_0195 — same CRLF normalization as _file: rich emits \r\n on Windows.
+    return _ANSI_RE.sub("", out).replace("\r\n", "\n").encode()
 
 
 def _sources() -> dict[str, bytes | None]:
@@ -170,7 +189,11 @@ def _sources() -> dict[str, bytes | None]:
 
     def _file(rel: str) -> bytes | None:
         f = REPO / rel
-        return f.read_bytes() if f.is_file() else None
+        # NOOD_0195 — count content, not the checkout convention. git hands
+        # Windows CRLF, which inflates every markdown surface by one byte per
+        # line (~180 B on a skill card) and failed the ceiling for a reason
+        # that has nothing to do with what an agent reads.
+        return f.read_bytes().replace(b"\r\n", b"\n") if f.is_file() else None
 
     hot = (server.probe_page, server.author_test, server.run_and_report,
            server.run_test)

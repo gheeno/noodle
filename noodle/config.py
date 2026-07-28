@@ -29,7 +29,11 @@ def write_private(path, text: str) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:      # fdopen owns fd and closes it
+    # NOOD_0195 — encoding is explicit here for the same reason it is on every
+    # other write in the engine: without it Windows encodes as the ANSI code
+    # page, so an em dash in a scaffolded header became 0x97 and every later
+    # utf-8 read of the file failed. This one hid behind os.fdopen.
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:   # fdopen owns/closes fd
         fh.write(text)
     os.chmod(str(path), 0o600)          # an existing file keeps its old mode otherwise
     return path
@@ -125,7 +129,7 @@ def load(workspace: str = ".") -> dict:
     cfg = dict(DEFAULTS)
     f = Path(workspace) / "noodle.yaml"
     if f.exists():
-        loaded = yaml.safe_load(f.read_text()) or {}
+        loaded = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
         unknown = sorted(set(loaded) - set(DEFAULTS))
         if unknown:
             import sys

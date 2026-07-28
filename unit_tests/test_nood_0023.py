@@ -14,15 +14,15 @@ import pytest
 def test_network_and_logs_dir_default(monkeypatch):
     from noodle.reporting import paths
     monkeypatch.delenv("NOODLE_ARTIFACTS_DIR", raising=False)
-    assert str(paths.network_dir()) == "artifacts/network"
-    assert str(paths.logs_dir()) == "artifacts/logs"
+    assert paths.network_dir().as_posix() == "artifacts/network"
+    assert paths.logs_dir().as_posix() == "artifacts/logs"
 
 
 def test_network_and_logs_dir_respect_artifacts_root(monkeypatch):
     from noodle.reporting import paths
     monkeypatch.setenv("NOODLE_ARTIFACTS_DIR", "out")
-    assert str(paths.network_dir()) == "out/network"
-    assert str(paths.logs_dir()) == "out/logs"
+    assert paths.network_dir().as_posix() == "out/network"
+    assert paths.logs_dir().as_posix() == "out/logs"
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +37,7 @@ def test_attach_file_handler_writes_log_messages(tmp_path):
         log.logger.info("hello from the sys log")
         for h in log.logger.handlers:
             h.flush()
-        assert "hello from the sys log" in target.read_text()
+        assert "hello from the sys log" in target.read_text(encoding="utf-8")
     finally:
         log.logger.removeHandler(log._file_handler)
         log._file_handler = None
@@ -108,7 +108,7 @@ def test_network_log_written_on_failure(tmp_path, monkeypatch):
 
     out = paths.network_dir() / "Checkout_fails.json"
     assert out.is_file()
-    data = json.loads(out.read_text())
+    data = json.loads(out.read_text(encoding="utf-8"))
     assert data["console_errors"] == ["TypeError: boom"]
     assert data["failed_requests"] == ["GET /api — net::ERR_FAILED"]
 
@@ -132,7 +132,7 @@ def test_network_log_written_on_pass_too(tmp_path, monkeypatch):
 
     out = paths.network_dir() / "All_good.json"
     assert out.is_file()
-    data = json.loads(out.read_text())
+    data = json.loads(out.read_text(encoding="utf-8"))
     assert data["requests"] == ["GET /"]
 
 
@@ -200,7 +200,7 @@ def test_after_all_writes_rca_when_a_scenario_failed(tmp_path, monkeypatch):
     from noodle.reporting import paths
     rca = paths.reports_dir() / "rca.md"
     assert rca.is_file()
-    assert "found one" in rca.read_text()
+    assert "found one" in rca.read_text(encoding="utf-8")
 
 
 def test_after_all_writes_rca_even_when_nothing_failed(tmp_path, monkeypatch):
@@ -224,12 +224,12 @@ def test_after_all_writes_rca_even_when_nothing_failed(tmp_path, monkeypatch):
     (paths.results_dir() / "u1-result.json").write_text(json.dumps(
         {"uuid": "u1", "historyId": "h1", "name": "s", "fullName": "F: s",
          "labels": [{"name": "feature", "value": "F"}],
-         "steps": [], "status": "passed", "stop": 1}))
+         "steps": [], "status": "passed", "stop": 1}), encoding="utf-8")
 
     hooks.after_all(object())
 
     assert (paths.reports_dir() / "rca.md").is_file()
-    assert "No failed or errored scenarios" in (paths.reports_dir() / "rca.html").read_text()
+    assert "No failed or errored scenarios" in (paths.reports_dir() / "rca.html").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -238,9 +238,9 @@ def test_after_all_writes_rca_even_when_nothing_failed(tmp_path, monkeypatch):
 
 def _make_artifacts_tree(root: Path):
     (root / "allure-results").mkdir(parents=True)
-    (root / "allure-results" / "a-result.json").write_text("{}")
+    (root / "allure-results" / "a-result.json").write_text("{}", encoding="utf-8")
     (root / "reports").mkdir()
-    (root / "reports" / "junit.xml").write_text("<testsuite/>")
+    (root / "reports" / "junit.xml").write_text("<testsuite/>", encoding="utf-8")
     (root / "screenshots").mkdir()
     (root / "screenshots" / "FAILED_x.png").write_bytes(b"\x89PNG")
 
