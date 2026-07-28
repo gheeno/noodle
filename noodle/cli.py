@@ -186,6 +186,34 @@ def _json_out(payload, **dumps_kwargs) -> None:
     typer.echo(json.dumps(bounded, indent=2, default=str, **dumps_kwargs))
 
 
+def _arg_text(value: str) -> tuple[str, bool]:
+    """NOOD_0198 — a text argument that may name where the text lives:
+    `-` reads stdin, an existing file reads that file, anything else IS the
+    text. Returns (text, indirect) so a caller can still tell a typo'd path
+    from an inline document.
+
+    The gap this closes is a shell one. A generator upstream (an AI-SDLC
+    orchestrator writing a handoff file, a CI job templating a story) has the
+    prompt in a file, and the only way in was `--prompt "$(cat story.md)"` —
+    which command-substitutes every backtick in the file. Machine-written
+    markdown is mostly code fences, so that is both a corrupted prompt and a
+    path from the generator's output into the caller's shell.
+
+    ponytail: existing-file-wins, no scheme prefix. The ceiling is a prompt
+    whose literal text is also a real filename in cwd; `--prompt "$(cat -)"`
+    style stdin is the escape hatch, and a numbered-step prompt never
+    collides in practice."""
+    if value == "-":
+        return sys.stdin.read(), True
+    try:
+        p = Path(value)
+        if p.is_file():
+            return p.read_text(encoding="utf-8"), True
+    except OSError:                # inline docs can exceed PATH_MAX
+        pass
+    return value, False
+
+
 def _write_full_payload(payload) -> str | None:
     """The untrimmed payload on disk, or None if cwd isn't writable."""
     try:
@@ -1640,7 +1668,7 @@ def install_extension(
 @app.command()
 def author(
     spec: str = typer.Option(None, "--spec", help="A JSON or YAML spec: a file path, '-' for stdin, or the document itself inline (NOOD_0197 — no heredoc or temp file needed: --spec \"$(cat)\" style plumbing is never required, quote the YAML directly). Fields: app_name, base_url, feature_path, and EITHER feature_content (one Gherkin string; pom_content is likewise one YAML string, never a filename map) OR goal (NOOD_0137 constrained mode — the engine probes and compiles the feature/POM itself; see author_test). Optionally: environment_values, required_secret_keys, secret_values, overwrite."),
-    prompt: str = typer.Option(None, "--prompt", help="NOOD_0169 — numbered plain-English steps ('1. go to <url> 2. search for X 3. add to cart 4. verify cart has X'); the engine expands them deterministically into a goal (ambiguous steps borrow their subject from neighbouring steps, every inference echoed under prompt_expansion.assumptions) and derives app_name/base_url/feature_path from the URL. No spec file needed; combine with --run for prompt → authored → run → reports in ONE call."),
+    prompt: str = typer.Option(None, "--prompt", help="NOOD_0169 — numbered plain-English steps ('1. go to <url> 2. search for X 3. add to cart 4. verify cart has X'), inline OR (NOOD_0198) a file path / '-' for stdin, so a generator upstream can hand off a written file without `\"$(cat ...)\"` mangling its backticks; the engine expands them deterministically into a goal (ambiguous steps borrow their subject from neighbouring steps, every inference echoed under prompt_expansion.assumptions) and derives app_name/base_url/feature_path from the URL. No spec file needed; combine with --run for prompt → authored → run → reports in ONE call."),
     workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
     run: bool = typer.Option(False, "--run", help="NOOD_0137 — atomic author+run: after a ready author, run once (headless, retries=0), serve both reports, and fail when 0 scenarios passed. Blocked authoring launches no browser."),
@@ -1690,25 +1718,19 @@ def author(
                                  param_hint="'--spec' / '--prompt'")
     if prompt is not None:
         # NOOD_0169 — prompt mode: expansion + derivation happen engine-side
+        # NOOD_0198 — ...and the steps may arrive as a file path or on stdin
+        prompt, _ = _arg_text(prompt)
         result = core.author_test(prompt=prompt, run_after_author=run,
                                   overwrite=overwrite, workspace=workspace)
     else:
-        if spec == "-":
-            raw = sys.stdin.read()
-        else:
-            # NOOD_0197 — --spec accepts the document inline: an argument
-            # that resolves to no file is the spec itself. This removes the
-            # heredoc/temp-file dance (and the shell approval it costs an
-            # agent) the moment --prompt can't express a flow.
-            try:
-                is_file = Path(spec).is_file()
-            except OSError:            # inline docs can exceed PATH_MAX
-                is_file = False
-            if not is_file and ":" not in spec and "{" not in spec:
-                raise typer.BadParameter(f"spec file not found: {spec}",
-                                         param_hint="'--spec'")
-            raw = (Path(spec).read_text(encoding="utf-8") if is_file
-                   else spec)
+        # NOOD_0197 — --spec accepts the document inline: an argument
+        # that resolves to no file is the spec itself. This removes the
+        # heredoc/temp-file dance (and the shell approval it costs an
+        # agent) the moment --prompt can't express a flow.
+        raw, indirect = _arg_text(spec)
+        if not indirect and ":" not in raw and "{" not in raw:
+            raise typer.BadParameter(f"spec file not found: {spec}",
+                                     param_hint="'--spec'")
         try:
             data = yaml.safe_load(raw) or {}
         except Exception as e:
@@ -1828,7 +1850,7 @@ def scan(
 
 @app.command()
 def task(
-    text: str = typer.Argument(None, help="What you want, in plain English — 'write a test that ...', 'run the tests', 'did it pass'. Noodle picks the command."),
+    text: str = typer.Argument(None, help="What you want, in plain English — 'write a test that ...', 'run the tests', 'did it pass'. Noodle picks the command. NOOD_0198 — a file path or '-' reads the text from there instead."),
     workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
     tag: str = typer.Option(None, "--tag", "-t", help="Filter a run to this tag"),
     headed: bool = typer.Option(False, "--headed", help="Visible browser (local demo; CI and containers are headless)"),
@@ -1853,6 +1875,9 @@ def task(
     if not text:
         raise typer.BadParameter("pass the task text, or --contract",
                                  param_hint="'TEXT'")
+    # NOOD_0198 — the same door as `author --prompt`: an orchestrator that
+    # wrote the ask to a file passes the path, not `"$(cat ...)"`.
+    text, _ = _arg_text(text)
     result = _task.route(text, workspace=workspace, tag=tag,
                          headless=not headed, serve=not no_serve)
     if as_json:

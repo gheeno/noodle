@@ -4,6 +4,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a14] — 2026-07-28
+
+**NOOD_0198** — fix: a prompt written to a file gets into Noodle without going
+through the shell.
+
+The AI-SDLC handoff — an orchestrator finishes a user story, writes the test
+ask to a file, invokes Noodle — had exactly one way in for plain-English
+steps: `noodle author --prompt "$(cat story.md)"`. Inside double quotes the
+shell command-substitutes every backtick, and a machine-written markdown file
+is mostly code fences. That both corrupted the prompt and turned the
+generator's output into a shell-injection path. `--spec` had already grown a
+path/`-`/inline rule in NOOD_0197; `--prompt` and `task TEXT` had not.
+
+### Fixed
+- **`noodle author --prompt` and `noodle task TEXT` accept a file path or `-`
+  (stdin)**, the same rule `--spec` uses: `-` reads stdin, an existing file
+  reads that file, anything else is the text itself. One helper
+  (`cli._arg_text`) now serves all three doors, so the `--spec` branch loses
+  its duplicated path-resolution. A path-shaped `--spec` that names no file is
+  still rejected as a typo, and an inline YAML document still parses.
+
 ## [1.0.0a12] — 2026-07-28
 
 **NOOD_0196** — fix: an `--expect` verdict now answers for a goal that never
