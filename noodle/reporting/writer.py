@@ -217,5 +217,5 @@ def write_result(scenario_result: ScenarioResult):
     d = results_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"{scenario_result.uuid}-result.json"
-    path.write_text(json.dumps(scenario_result.result, indent=2))
+    path.write_text(json.dumps(scenario_result.result, indent=2), encoding="utf-8")
     return path

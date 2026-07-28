@@ -20,20 +20,20 @@ def devrepo(tmp_path):
     repo's own .gitignore excludes."""
     (tmp_path / "api").mkdir()
     (tmp_path / "api" / "pyproject.toml").write_text(
-        '[project]\nname = "orders"\ndependencies = ["fastapi", "uvicorn"]\n')
+        '[project]\nname = "orders"\ndependencies = ["fastapi", "uvicorn"]\n', encoding="utf-8")
     (tmp_path / "api" / "openapi.yaml").write_text(
         "openapi: 3.0.0\npaths:\n"
         "  /orders:\n    get: {summary: list}\n    post: {summary: create}\n"
-        "  /orders/{id}:\n    delete: {summary: remove}\n")
+        "  /orders/{id}:\n    delete: {summary: remove}\n", encoding="utf-8")
     (tmp_path / "api" / "tests").mkdir()
-    (tmp_path / "api" / "tests" / "test_orders.py").write_text("")
+    (tmp_path / "api" / "tests" / "test_orders.py").write_text("", encoding="utf-8")
     (tmp_path / "web").mkdir()
     (tmp_path / "web" / "package.json").write_text(json.dumps(
         {"scripts": {"dev": "vite", "build": "vite build"},
-         "dependencies": {"react": "^18"}}))
-    (tmp_path / ".gitignore").write_text("build_output/\nnode_modules/\n")
+         "dependencies": {"react": "^18"}}), encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("build_output/\nnode_modules/\n", encoding="utf-8")
     (tmp_path / "build_output").mkdir()
-    (tmp_path / "build_output" / "package.json").write_text('{"name":"junk"}')
+    (tmp_path / "build_output" / "package.json").write_text('{"name":"junk"}', encoding="utf-8")
     return tmp_path
 
 
@@ -70,7 +70,7 @@ def test_generated_output_the_repo_ignores_is_not_scanned(devrepo):
 def test_existing_test_dirs_are_found_by_token_not_substring(tmp_path):
     for d in ("unit_tests", "__tests__", "latest_release"):
         (tmp_path / d).mkdir()
-        (tmp_path / d / "x.txt").write_text("")
+        (tmp_path / d / "x.txt").write_text("", encoding="utf-8")
     found = repo_scan.scan(str(tmp_path))["test_dirs"]
     assert "unit_tests" in found and "__tests__" in found
     assert "latest_release" not in found, "'latest' is not a test dir"

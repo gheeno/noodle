@@ -68,7 +68,7 @@ def test_generate_points_allure3_at_history_config(tmp_path, monkeypatch):
     config = Path(cmd[cmd.index("--config") + 1])
     assert config.is_file()
     history = str(tmp_path / "reports" / "allure-history" / "history.jsonl")
-    assert json.dumps(history) in config.read_text()
+    assert json.dumps(history) in config.read_text(encoding="utf-8")
     # history dir must pre-exist or allure can't create the JSONL inside it
     assert (tmp_path / "reports" / "allure-history").is_dir()
 
@@ -76,9 +76,9 @@ def test_generate_points_allure3_at_history_config(tmp_path, monkeypatch):
 def _artifacts_tree_with_history(root):
     history = root / "reports" / "allure-history"
     history.mkdir(parents=True)
-    (history / "history.jsonl").write_text(json.dumps({"data": {"passed": 3}}))
+    (history / "history.jsonl").write_text(json.dumps({"data": {"passed": 3}}), encoding="utf-8")
     (root / "allure-results").mkdir()
-    (root / "allure-results" / "a-result.json").write_text("{}")
+    (root / "allure-results" / "a-result.json").write_text("{}", encoding="utf-8")
 
 
 def test_clean_preserves_history_by_default(tmp_path):
@@ -97,7 +97,7 @@ def test_clean_preserves_history_by_default(tmp_path):
     assert not (tmp_path / "artifacts" / "allure-results").exists()
     kept = tmp_path / "artifacts" / "reports" / "allure-history" / "history.jsonl"
     assert kept.is_file()
-    assert json.loads(kept.read_text()) == {"data": {"passed": 3}}
+    assert json.loads(kept.read_text(encoding="utf-8")) == {"data": {"passed": 3}}
 
 
 def test_clean_purge_history_removes_everything(tmp_path):

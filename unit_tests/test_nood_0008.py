@@ -111,9 +111,9 @@ def test_summary_dedupes_retries_keeping_last_attempt(tmp_path):
     common = {"historyId": "abc", "fullName": "F: retry me",
               "name": "retry me", "labels": [], "steps": []}
     (d / "a-result.json").write_text(json.dumps(
-        {**common, "status": "failed", "start": 1000, "stop": 2000}))
+        {**common, "status": "failed", "start": 1000, "stop": 2000}), encoding="utf-8")
     (d / "b-result.json").write_text(json.dumps(
-        {**common, "status": "passed", "start": 2000, "stop": 3000}))
+        {**common, "status": "passed", "start": 2000, "stop": 3000}), encoding="utf-8")
     s = summary.collect(str(d))
     assert s["passed"] == 1 and s["failed"] == 0
 
@@ -217,9 +217,9 @@ class TestPomScoping:
         pod = tmp_path / "resources" / "pageobjects"
         pod.mkdir(parents=True)
         # folder-global (explicit match:{}) defines the same key as a sibling
-        (pod / "a_pom.yaml").write_text("match: {}\nterms-box: {id: a}\n")
+        (pod / "a_pom.yaml").write_text("match: {}\nterms-box: {id: a}\n", encoding="utf-8")
         (pod / "b_pom.yaml").write_text(
-            "match: {url_contains: /b}\nterms-box: {id: b}\n")
+            "match: {url_contains: /b}\nterms-box: {id: b}\n", encoding="utf-8")
         pom.set_context(str(tmp_path / "features"))
         pom._load_yaml.cache_clear()
         pom._warned_dirs.clear()
@@ -268,5 +268,5 @@ class TestFailureMarkers:
 def test_junit_default_path_is_reports(tmp_path, monkeypatch):
     from noodle.reporting import junit
     monkeypatch.chdir(tmp_path)
-    assert str(junit.write_junit([])) == "artifacts/reports/junit.xml"
-    assert str(junit.merge_junits([])) == "artifacts/reports/junit.xml"
+    assert junit.write_junit([]).as_posix() == "artifacts/reports/junit.xml"
+    assert junit.merge_junits([]).as_posix() == "artifacts/reports/junit.xml"

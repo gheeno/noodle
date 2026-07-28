@@ -87,7 +87,7 @@ def test_clear_errors_for_bad_inputs(workbook, tmp_path):
     with pytest.raises(AssertionError, match="not found"):
         spreadsheet.read_cell(str(tmp_path / "ghost.xlsx"), "A1")
     junk = tmp_path / "junk.xlsx"
-    junk.write_text("not a zip")
+    junk.write_text("not a zip", encoding="utf-8")
     with pytest.raises(AssertionError, match="bad zip"):
         spreadsheet.read_cell(str(junk), "A1")
 

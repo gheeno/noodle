@@ -288,19 +288,19 @@ def test_click_visible_element_failure_still_raises(monkeypatch):
 def test_reinit_syncs_engine_glue(tmp_path):
     runner.invoke(app, ["init", str(tmp_path)])
     glue = tmp_path / "noodle_tests" / "steps" / "z_catch_all.py"
-    glue.write_text("# stale engine glue from an old noodle\n")
+    glue.write_text("# stale engine glue from an old noodle\n", encoding="utf-8")
     result = runner.invoke(app, ["init", str(tmp_path)])
     assert result.exit_code == 0
-    assert "catch_all" in glue.read_text()  # rewritten to current engine glue
+    assert "catch_all" in glue.read_text(encoding="utf-8")  # rewritten to current engine glue
     assert "Updated to match this noodle version" in result.output
 
 
 def test_reinit_keeps_edited_templates_and_warns(tmp_path):
     runner.invoke(app, ["init", str(tmp_path)])
     agents = tmp_path / "AGENTS.md"
-    agents.write_text("# my team's own instructions\n")
+    agents.write_text("# my team's own instructions\n", encoding="utf-8")
     result = runner.invoke(app, ["init", str(tmp_path)])
-    assert agents.read_text() == "# my team's own instructions\n"
+    assert agents.read_text(encoding="utf-8") == "# my team's own instructions\n"
     assert "Outdated templates kept" in result.output
     assert "--force" in result.output
 
@@ -308,22 +308,22 @@ def test_reinit_keeps_edited_templates_and_warns(tmp_path):
 def test_reinit_force_refreshes_templates_with_backup(tmp_path):
     runner.invoke(app, ["init", str(tmp_path)])
     agents = tmp_path / "AGENTS.md"
-    agents.write_text("# my team's own instructions\n")
+    agents.write_text("# my team's own instructions\n", encoding="utf-8")
     result = runner.invoke(app, ["init", str(tmp_path), "--force"])
     assert result.exit_code == 0
-    assert "North star" in agents.read_text()
-    assert (tmp_path / "AGENTS.md.bak").read_text() == "# my team's own instructions\n"
+    assert "North star" in agents.read_text(encoding="utf-8")
+    assert (tmp_path / "AGENTS.md.bak").read_text(encoding="utf-8") == "# my team's own instructions\n"
 
 
 def test_reinit_never_touches_config_files(tmp_path):
     runner.invoke(app, ["init", str(tmp_path)])
     env = tmp_path / ".env"
     yaml_f = tmp_path / "noodle.yaml"
-    env.write_text("NOODLE_BROWSER=firefox\n")
-    yaml_f.write_text("tests_dir: my_tests\n")
+    env.write_text("NOODLE_BROWSER=firefox\n", encoding="utf-8")
+    yaml_f.write_text("tests_dir: my_tests\n", encoding="utf-8")
     runner.invoke(app, ["init", str(tmp_path), "--force"])
-    assert env.read_text() == "NOODLE_BROWSER=firefox\n"
-    assert yaml_f.read_text() == "tests_dir: my_tests\n"
+    assert env.read_text(encoding="utf-8") == "NOODLE_BROWSER=firefox\n"
+    assert yaml_f.read_text(encoding="utf-8") == "tests_dir: my_tests\n"
 
 
 def test_reinit_clean_workspace_reports_up_to_date(tmp_path):
@@ -336,7 +336,7 @@ def test_reinit_clean_workspace_reports_up_to_date(tmp_path):
 
 def test_agents_md_contains_north_star_rules(tmp_path):
     runner.invoke(app, ["init", str(tmp_path)])
-    agents = (tmp_path / "AGENTS.md").read_text()
+    agents = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
     # NOOD_0131 — Popups/resources-scripts detail moved to the on-demand
     # playbook (byte-ceilinged surface); the pipeline markers replaced them.
     for marker in ("North star", "Background:", "read_docs",
@@ -346,7 +346,7 @@ def test_agents_md_contains_north_star_rules(tmp_path):
 
 def test_prompt_template_scaffolded(tmp_path):
     runner.invoke(app, ["init", str(tmp_path)])
-    tpl = (tmp_path / "PROMPT_TEMPLATE.md").read_text()
+    tpl = (tmp_path / "PROMPT_TEMPLATE.md").read_text(encoding="utf-8")
     assert "[APP NAME]" in tpl and "AGENTS.md" in tpl
 
 
@@ -357,11 +357,11 @@ def test_init_mcp_writes_client_configs(tmp_path):
     expected_cmd = _resolve_mcp_command()
     result = runner.invoke(app, ["init-mcp", str(tmp_path)])
     assert result.exit_code == 0
-    claude = json.loads((tmp_path / ".mcp.json").read_text())
+    claude = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
     assert claude["mcpServers"]["noodle"]["command"] == expected_cmd
-    vscode = json.loads((tmp_path / ".vscode" / "mcp.json").read_text())
+    vscode = json.loads((tmp_path / ".vscode" / "mcp.json").read_text(encoding="utf-8"))
     assert vscode["servers"]["noodle"] == {"type": "stdio", "command": expected_cmd, "args": []}
-    copilot = json.loads((tmp_path / ".copilot" / "mcp-config.json").read_text())
+    copilot = json.loads((tmp_path / ".copilot" / "mcp-config.json").read_text(encoding="utf-8"))
     assert copilot["mcpServers"]["noodle"]["command"] == expected_cmd
 
 
@@ -371,11 +371,14 @@ def test_resolve_mcp_command_is_absolute_when_resolvable(tmp_path, monkeypatch):
     from noodle.cli import _resolve_mcp_command
     name = "noodle-mcp.exe" if sys.platform == "win32" else "noodle-mcp"
     fake_bin = tmp_path / name
-    fake_bin.write_text("#!/bin/sh\n")
+    fake_bin.write_text("#!/bin/sh\n", encoding="utf-8")
     if sys.platform != "win32":
         fake_bin.chmod(0o755)
     monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
-    assert _resolve_mcp_command() == str(fake_bin)
+    # NOOD_0195 — shutil.which resolves through PATHEXT on Windows and returns
+    # the extension in PATHEXT's own casing (".EXE"), not the file's. The path
+    # is what matters, not how the resolver spelled the suffix.
+    assert _resolve_mcp_command().lower() == str(fake_bin).lower()
 
 
 def test_init_mcp_alias_via_init(tmp_path, monkeypatch):
@@ -388,9 +391,9 @@ def test_init_mcp_alias_via_init(tmp_path, monkeypatch):
 
 def test_init_mcp_merges_existing_config(tmp_path):
     f = tmp_path / ".mcp.json"
-    f.write_text(json.dumps({"mcpServers": {"other": {"command": "other-mcp"}}}))
+    f.write_text(json.dumps({"mcpServers": {"other": {"command": "other-mcp"}}}), encoding="utf-8")
     runner.invoke(app, ["init-mcp", str(tmp_path)])
-    data = json.loads(f.read_text())
+    data = json.loads(f.read_text(encoding="utf-8"))
     assert data["mcpServers"]["other"] == {"command": "other-mcp"}
     from noodle.cli import _resolve_mcp_command
     assert data["mcpServers"]["noodle"]["command"] == _resolve_mcp_command()
@@ -493,7 +496,7 @@ def _result_json(tmp_path, name="Buy a movie", status="failed", app="busterblock
                                       else {"warnings": warnings or []})}],
     }
     p = tmp_path / f"{r['uuid']}-result.json"
-    p.write_text(json.dumps(r))
+    p.write_text(json.dumps(r), encoding="utf-8")
     return p
 
 
@@ -550,7 +553,7 @@ def test_ensure_fresh_reports_rebuilds_stale(tmp_path, monkeypatch):
     # stale artifacts: mtime well before the result JSON
     stale = (root / "rca.html", root / "allure-report" / "index.html")
     for f in stale:
-        f.write_text("old run")
+        f.write_text("old run", encoding="utf-8")
         _os.utime(f, (1, 1))
     calls = []
     monkeypatch.setattr(builder, "generate", lambda r, o: calls.append("allure") or True)
@@ -569,8 +572,8 @@ def test_ensure_fresh_reports_leaves_current_alone(tmp_path, monkeypatch):
     (root / "allure-report").mkdir(parents=True)
     _result_json(results)
     _time.sleep(0.01)
-    (root / "rca.html").write_text("fresh")
-    (root / "allure-report" / "index.html").write_text("fresh")
+    (root / "rca.html").write_text("fresh", encoding="utf-8")
+    (root / "allure-report" / "index.html").write_text("fresh", encoding="utf-8")
     calls = []
     monkeypatch.setattr(builder, "generate", lambda r, o: calls.append("allure"))
     monkeypatch.setattr(rca_report, "write_reports", lambda r, o: calls.append("rca"))
@@ -637,7 +640,7 @@ def test_report_server_sends_no_store_header(tmp_path):
     import urllib.request
 
     from noodle.reporting import builder
-    (tmp_path / "rca.html").write_text("<h1>fresh</h1>")
+    (tmp_path / "rca.html").write_text("<h1>fresh</h1>", encoding="utf-8")
     # NOOD_0162 — builder no longer owns a server thread (the hosting path is
     # a detached child); the handler is what this test is about, so drive it.
     httpd = builder._make_server(str(tmp_path), "127.0.0.1", 0)

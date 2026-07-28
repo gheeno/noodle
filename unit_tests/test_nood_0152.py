@@ -456,7 +456,7 @@ def test_download_content_needs_an_actual_download():
 
 def test_download_content_reads_the_file(tmp_path):
     f = tmp_path / "export.csv"
-    f.write_text("id,name\n1,Alice\n2,Bob\n")
+    f.write_text("id,name\n1,Alice\n2,Bob\n", encoding="utf-8")
     dl = SimpleNamespace(path=lambda: str(f), suggested_filename="export.csv")
     page = MagicMock()
     actions.assert_download_content(page, [dl], needle="Alice")
@@ -532,7 +532,7 @@ def test_every_pattern_action_is_dispatched():
     # execute_step, so the same structural guard spans them too.
     produced = {a for _, a, _ in PATTERNS if a != "_reject"}
     produced |= {a for _, a, _ in PERF_PATTERNS} | {a for _, a, _ in DESKTOP_PATTERNS}
-    src = Path(runner.__file__).read_text()
+    src = Path(runner.__file__).read_text(encoding="utf-8")
     dispatched = set(_re.findall(r"\bt == '([a-z0-9_]+)'", src))
     assert not (produced - dispatched), \
         f"patterns produce actions with no dispatch: {sorted(produced - dispatched)}"

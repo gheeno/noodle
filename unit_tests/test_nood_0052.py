@@ -37,7 +37,7 @@ def test_parallel_exit_code_derived_from_merged_results(tmp_path, monkeypatch):
         # simulate a worker having produced a failed scenario — written at
         # merge time because _run_parallel wipes stale *-result.json first
         (results / "a-result.json").write_text(json.dumps(
-            {"status": "failed", "labels": [{"name": "tag", "value": "web"}]}))
+            {"status": "failed", "labels": [{"name": "tag", "value": "web"}]}), encoding="utf-8")
 
     monkeypatch.setattr(cli.subprocess, "run",
                         lambda *a, **k: sp.CompletedProcess(a, 0))

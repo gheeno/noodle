@@ -173,7 +173,7 @@ def test_generate_llm_repair_is_line_level(tmp_path, monkeypatch):
     assert "interpretive dance" in calls[1]
     assert "Feature: Login" not in calls[1]
     assert "Scenario: Valid login" not in calls[1]
-    text = feat.read_text()
+    text = feat.read_text(encoding="utf-8")
     assert "When User clicks the login button" in text
     assert 'Then User should see "Welcome"' in text   # untouched line kept
 
@@ -191,7 +191,7 @@ def test_generate_llm_unusable_repair_reply_keeps_original(tmp_path, monkeypatch
     cfg = config.load(str(tmp_path))
     feat, _ = generate.generate_llm("login", "https://example.com",
                                     cfg, str(tmp_path))
-    assert "interpretive dance" in feat.read_text()
+    assert "interpretive dance" in feat.read_text(encoding="utf-8")
     assert "[LLM]" in capsys.readouterr().out         # miss still reported
 
 
@@ -212,7 +212,7 @@ def test_generate_llm_parse_error_falls_back_to_full_rewrite(tmp_path, monkeypat
                                     cfg, str(tmp_path))
     assert len(calls) == 2
     assert "did not parse as Gherkin" in calls[1]     # full-file repair path
-    assert 'Then User should see "Welcome"' in feat.read_text()
+    assert 'Then User should see "Welcome"' in feat.read_text(encoding="utf-8")
 
 
 # --- few-shot verb examples (resolver/step_resolver.py) -------------------------
@@ -254,7 +254,7 @@ def test_repl_create_test_rule_based_writes_without_llm(tmp_path, capsys):
 # --- docs shipped with the change ------------------------------------------------
 
 def test_llm_install_doc_covers_both_oses():
-    text = (DOCS / "llm-install.md").read_text()
+    text = (DOCS / "llm-install.md").read_text(encoding="utf-8")
     assert "macOS" in text and "Windows 11" in text
     assert "winget install Python.Python.3.11" in text   # Windows path
     assert "brew install" in text                        # macOS path
@@ -265,7 +265,7 @@ def test_llm_install_doc_covers_both_oses():
 
 
 def test_llm_performance_doc_documents_the_knobs():
-    text = (DOCS / "llm-performance.md").read_text()
+    text = (DOCS / "llm-performance.md").read_text(encoding="utf-8")
     assert "NOODLE_LLM_TEMPERATURE" in text
     assert "NOODLE_PROMPT_VOCAB" in text
     assert "write_feature" in text                       # the 0-call fast path
@@ -283,7 +283,7 @@ REPO = Path(__file__).resolve().parent.parent
 def test_noodle_skill_carries_fast_generation_guidance():
     for skill in (REPO / ".claude" / "skills" / "noodle" / "SKILL.md",
                   REPO / ".copilot" / "skills" / "noodle" / "SKILL.md"):
-        text = skill.read_text()
+        text = skill.read_text(encoding="utf-8")
         assert "fastest path first" in text.lower(), skill
         assert "use_llm=True" in text, skill             # warned against
         assert "llm-performance" in text, skill
@@ -292,7 +292,7 @@ def test_noodle_skill_carries_fast_generation_guidance():
 def test_install_noodle_skill_exists_for_both_agents():
     for skill in (REPO / ".claude" / "skills" / "install-noodle" / "SKILL.md",
                   REPO / ".copilot" / "skills" / "install-noodle" / "SKILL.md"):
-        text = skill.read_text()
+        text = skill.read_text(encoding="utf-8")
         assert "name:" in text and "install-noodle" in text, skill
         assert "install noodle" in text.lower(), skill   # the trigger phrase
         assert "docs/llm-install.md" in text, skill
@@ -302,17 +302,17 @@ def test_install_noodle_skill_exists_for_both_agents():
 def test_repo_agent_entrypoints_route_install_requests():
     for entry in (REPO / "CLAUDE.md",
                   REPO / ".github" / "copilot-instructions.md"):
-        assert "llm-install.md" in entry.read_text(), entry
+        assert "llm-install.md" in entry.read_text(encoding="utf-8"), entry
 
 
 def test_vscode_copilot_prompt_file_gives_slash_install_noodle():
     # /install-noodle in VS Code Copilot Chat resolves via a prompt file;
     # chat.promptFiles keeps it on for VS Code versions where it's opt-in.
     prompt = REPO / ".github" / "prompts" / "install-noodle.prompt.md"
-    text = prompt.read_text()
+    text = prompt.read_text(encoding="utf-8")
     assert "docs/llm-install.md" in text
     assert "Installation only" in text
-    assert '"chat.promptFiles": true' in (REPO / ".vscode" / "settings.json").read_text()
+    assert '"chat.promptFiles": true' in (REPO / ".vscode" / "settings.json").read_text(encoding="utf-8")
 
 
 def test_scaffolded_agents_md_ranks_generation_paths():

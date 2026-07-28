@@ -188,7 +188,7 @@ def audit(results: dict, workspace: str) -> list[str]:
     if not path.is_file():
         path = Path(workspace) / root / "last_run.json"
     try:
-        last = json.loads(path.read_text())
+        last = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         out.append("unverifiable: no last_run.json found to cross-check the "
                    "green/verified claims against (reported numbers are "

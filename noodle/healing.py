@@ -76,7 +76,7 @@ def write_report(path: str = None):
     path = path or str(_paths.reports_dir() / "healing-report.txt")
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     jsonl = Path(path).with_suffix(".jsonl")
-    jsonl.write_text("\n".join(json.dumps(e) for e in EVENTS) + "\n")
+    jsonl.write_text("\n".join(json.dumps(e) for e in EVENTS) + "\n", encoding="utf-8")
 
     lines = [
         f"Noodle healing report — {len(EVENTS)} event(s) this run.",
@@ -90,5 +90,5 @@ def write_report(path: str = None):
         *_suggestions(),
     ]
     report = "\n".join(lines)
-    Path(path).write_text(report + "\n")
+    Path(path).write_text(report + "\n", encoding="utf-8")
     logger.info(f"\n  🩹 {len(EVENTS)} locator(s) needed healing — see {path}")

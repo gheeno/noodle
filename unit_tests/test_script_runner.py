@@ -22,13 +22,13 @@ def test_command_for_splits_args():
 
 def test_run_script_returns_stdout(tmp_path):
     s = tmp_path / "hi.py"
-    s.write_text("print('hello from script')")
+    s.write_text("print('hello from script')", encoding="utf-8")
     assert script_runner.run_script(str(s)) == "hello from script"
 
 
 def test_run_script_nonzero_exit_raises(tmp_path):
     s = tmp_path / "boom.py"
-    s.write_text("import sys; sys.exit(3)")
+    s.write_text("import sys; sys.exit(3)", encoding="utf-8")
     with pytest.raises(AssertionError):
         script_runner.run_script(str(s))
 
@@ -50,7 +50,7 @@ def test_resolver_matches_run_script_phrasings():
 
 def test_call_function_from_file_returns_real_value(tmp_path):
     f = tmp_path / "helpers.py"
-    f.write_text("def add(a, b):\n    return int(a) + int(b)\n")
+    f.write_text("def add(a, b):\n    return int(a) + int(b)\n", encoding="utf-8")
     assert script_runner.call_function(f"{f}:add", "2 3") == 5
 
 
@@ -65,14 +65,14 @@ def test_call_function_bad_spec_raises():
 
 def test_call_function_missing_function_raises(tmp_path):
     f = tmp_path / "empty.py"
-    f.write_text("")
+    f.write_text("", encoding="utf-8")
     with pytest.raises(AssertionError, match="not found"):
         script_runner.call_function(f"{f}:nope")
 
 
 def test_call_function_exception_becomes_assertion(tmp_path):
     f = tmp_path / "boom.py"
-    f.write_text("def boom():\n    raise ValueError('nope')\n")
+    f.write_text("def boom():\n    raise ValueError('nope')\n", encoding="utf-8")
     with pytest.raises(AssertionError, match="ValueError"):
         script_runner.call_function(f"{f}:boom")
 
@@ -99,7 +99,7 @@ def test_call_function_dependency_injection(tmp_path):
     f.write_text(
         "def make_token():\n    return 'tok-123'\n"
         "def greet(token):\n    return f'Bearer {token}'\n"
-    )
+    , encoding="utf-8")
     context = SimpleNamespace(page=None, _vars={})
     execute_step(f'calls the function "{f}:make_token" and saves the result as `TOKEN`', context)
     assert context._vars['TOKEN'] == 'tok-123'

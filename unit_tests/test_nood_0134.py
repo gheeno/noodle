@@ -163,7 +163,7 @@ def test_run_serve_uses_detached_child_not_inprocess_thread(tmp_path, monkeypatc
     feats = ws / "noodle_tests" / "web" / "shop" / "features"
     (feats / "steps").mkdir(parents=True)
     (feats / "login.feature").write_text(
-        "Feature: f\n  Scenario: s\n    When User waits for 1 seconds\n")
+        "Feature: f\n  Scenario: s\n    When User waits for 1 seconds\n", encoding="utf-8")
     r = CliRunner().invoke(cli.app, ["run", "noodle_tests/web/shop/features/login.feature",
                                      "-w", str(ws), "--no-preflight", "--json", "--serve"])
     assert r.exit_code == 0, r.output
@@ -173,7 +173,7 @@ def test_run_serve_uses_detached_child_not_inprocess_thread(tmp_path, monkeypatc
 
 def test_report_serve_falls_back_to_os_port_when_taken(tmp_path, monkeypatch):
     from noodle.reporting import builder
-    (tmp_path / "rca.html").write_text("x")
+    (tmp_path / "rca.html").write_text("x", encoding="utf-8")
     ports = []
 
     def fake_serve(target, host, port, on_bound=None):
@@ -192,7 +192,7 @@ def test_report_serve_falls_back_to_os_port_when_taken(tmp_path, monkeypatch):
 
 def test_report_serve_other_bind_errors_still_fail(tmp_path, monkeypatch):
     from noodle.reporting import builder
-    (tmp_path / "rca.html").write_text("x")
+    (tmp_path / "rca.html").write_text("x", encoding="utf-8")
 
     def fake_serve(target, host, port, on_bound=None):
         raise OSError(errno.EADDRNOTAVAIL, "Cannot assign requested address")

@@ -39,9 +39,9 @@ from unit_tests.test_nood_0110 import REPO
 _SURFACES = {
     "AGENTS.md floor": cli._AGENTS_MD,
     "MCP instructions": server._INSTRUCTIONS,
-    ".claude skill card": (REPO / ".claude/skills/noodle/SKILL.md").read_text(),
-    ".copilot skill card": (REPO / ".copilot/skills/noodle/SKILL.md").read_text(),
-    "agent-playbook": (REPO / "docs/agent-playbook.md").read_text(),
+    ".claude skill card": (REPO / ".claude/skills/noodle/SKILL.md").read_text(encoding="utf-8"),
+    ".copilot skill card": (REPO / ".copilot/skills/noodle/SKILL.md").read_text(encoding="utf-8"),
+    "agent-playbook": (REPO / "docs/agent-playbook.md").read_text(encoding="utf-8"),
 }
 
 

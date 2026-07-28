@@ -277,7 +277,7 @@ def _canned_failure(tmp_path):
         "steps": [{"name": "the user sees 'results'", "status": "failed",
                    "statusDetails": {"message":
                        "Ambiguous locator 'results': 3 visible matches"}}],
-    }))
+    }), encoding="utf-8")
     return str(d)
 
 
@@ -354,7 +354,7 @@ def test_generation_budget_ceilings(tmp_path):
     d.mkdir()
     (d / "b-result.json").write_text(json.dumps({
         "name": "Search shows results", "status": "passed", "historyId": "h2",
-        "stop": 2, "labels": [], "steps": []}))
+        "stop": 2, "labels": [], "steps": []}), encoding="utf-8")
     assert len(summary.render(str(d)).encode()) < 1200
 
     # 4. compact RCA on a failure is a paragraph, not a capture dump

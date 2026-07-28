@@ -66,7 +66,7 @@ def _fixtures_for(scenario):
             f"@precondition tag on '{scenario.name}' but no {path}"
         )
     import yaml
-    return names, (yaml.safe_load(path.read_text()) or {})
+    return names, (yaml.safe_load(path.read_text(encoding="utf-8")) or {})
 
 
 def run(scenario, phase: str):

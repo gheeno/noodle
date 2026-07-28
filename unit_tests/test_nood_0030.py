@@ -16,7 +16,7 @@ def _write_result(d: Path, name="Login works", stop=1000, history_id="h1",
         "steps": [{"name": "When User clicks the login button", "status": "failed",
                    "statusDetails": {"message": message, "trace": ""}}],
     }
-    (d / f"{history_id}-{stop}-result.json").write_text(json.dumps(r))
+    (d / f"{history_id}-{stop}-result.json").write_text(json.dumps(r), encoding="utf-8")
 
 
 # --- known-quirks ledger (Phase 3) --------------------------------------------
@@ -27,7 +27,7 @@ def test_quirk_beats_heuristic(tmp_path):
     (tmp_path / "known-quirks.yaml").write_text(
         "- match: 'Selected count'\n"
         "  reason: qaplayground's own React bug\n"
-        "  fix: ignore — site bug\n")
+        "  fix: ignore — site bug\n", encoding="utf-8")
     entries = rr.collect(str(results))
     assert entries[0]["heuristic"]["category"] == "known-quirk"
     assert "React bug" in entries[0]["heuristic"]["reason"]
@@ -49,11 +49,11 @@ def test_history_accumulates_and_promotes_confidence(tmp_path):
     _write_result(results, stop=1000)
     e = rr.collect(str(results))[0]
     assert e["prior_failures"] == 0
-    assert hist.is_file() and len(hist.read_text().splitlines()) == 1
+    assert hist.is_file() and len(hist.read_text(encoding="utf-8").splitlines()) == 1
 
     # re-rendering the same run must not double-count
     rr.collect(str(results))
-    assert len(hist.read_text().splitlines()) == 1
+    assert len(hist.read_text(encoding="utf-8").splitlines()) == 1
 
     # third run failing the same way -> 2 priors, confidence promoted to high
     for f in results.glob("*-result.json"):
@@ -83,7 +83,7 @@ def test_propose_fixes_finds_file_and_asks_for_diff(tmp_path, monkeypatch):
     _write_result(results, name="Login works")
     feat = tmp_path / "tests" / "web" / "app" / "features" / "login.feature"
     feat.parent.mkdir(parents=True)
-    feat.write_text("Feature: Login\n\n  Scenario: Login works\n    Given User is on \"x\"\n")
+    feat.write_text("Feature: Login\n\n  Scenario: Login works\n    Given User is on \"x\"\n", encoding="utf-8")
 
     seen = {}
     def fake_ask(prompt, **kw):
@@ -120,7 +120,7 @@ def test_generation_prompt_negative_gate():
 def test_autorun_skipped_when_placeholders_remain(tmp_path, monkeypatch, capsys):
     from noodle.repl import repl
     feat = tmp_path / "t.feature"
-    feat.write_text('Then User should see "<expected text>"\n')
+    feat.write_text('Then User should see "<expected text>"\n', encoding="utf-8")
     monkeypatch.setattr(repl, "_noodle",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
     repl._autorun_after_create({"last_feature": str(feat)}, str(tmp_path), None)
@@ -130,7 +130,7 @@ def test_autorun_skipped_when_placeholders_remain(tmp_path, monkeypatch, capsys)
 def test_autorun_runs_clean_feature_and_sets_flag(tmp_path, monkeypatch, capsys):
     from noodle.repl import repl
     feat = tmp_path / "t.feature"
-    feat.write_text('Then User should see "Welcome"\n')
+    feat.write_text('Then User should see "Welcome"\n', encoding="utf-8")
     ran = []
     monkeypatch.setattr(repl, "_noodle", lambda *a, **k: ran.append(a))
     state = {"last_feature": str(feat)}
@@ -181,7 +181,7 @@ def test_generate_uses_grounded_pom_when_enabled(tmp_path, monkeypatch):
                                               "unresolved": ["login"]})
     feat, pom = generate.generate("login test", "https://x.test",
                                    {"tests_dir": "tests"}, str(tmp_path))
-    text = pom.read_text()
+    text = pom.read_text(encoding="utf-8")
     assert "Grounded against https://x.test" in text
     assert "login:" in text
     assert "username field:" not in text  # resolved live -> no entry
@@ -193,7 +193,7 @@ def test_generate_keeps_template_pom_when_page_unreachable(tmp_path, monkeypatch
     monkeypatch.setattr(ground, "ground", lambda feature, url: None)
     feat, pom = generate.generate("login test", "https://x.test",
                                    {"tests_dir": "tests"}, str(tmp_path))
-    assert "username field:" in pom.read_text()  # template skeleton kept
+    assert "username field:" in pom.read_text(encoding="utf-8")  # template skeleton kept
 
 
 # --- visual baseline diff (NOOD_0018 Phase 4) ---------------------------------------

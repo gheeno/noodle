@@ -16,7 +16,7 @@ import pytest
 
 @pytest.fixture
 def report_root(tmp_path):
-    (tmp_path / "rca.html").write_text("<h1>rca</h1>")
+    (tmp_path / "rca.html").write_text("<h1>rca</h1>", encoding="utf-8")
     return tmp_path
 
 
@@ -50,7 +50,7 @@ def test_serve_report_urls_visible_through_a_pipe(report_root):
 
 def _registry(workspace):
     f = workspace / ".noodle" / "report_servers.json"
-    return json.loads(f.read_text()) if f.is_file() else {}
+    return json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
 
 
 def _kill_registered(workspace):
@@ -101,8 +101,10 @@ def test_background_serve_falls_back_when_port_taken(report_root):
             _kill_registered(report_root)
 
 
-@pytest.mark.skipif(sys.platform == "win32",
-                    reason="probes liveness with os.kill(pid, 0), which Windows treats as terminate")
+# NOOD_0195 — the win32 skip is gone: _pid_alive no longer probes with
+# os.kill(pid, 0). Signal 0 IS CTRL_C_EVENT on Windows, so that "probe" sent a
+# console Ctrl+C to the pid's process group — it interrupted pytest itself
+# mid-run. It now opens a read-only process handle instead.
 def test_background_server_outlives_the_launcher(report_root):
     subprocess.run(
         [sys.executable, "-m", "noodle.cli", "report", "serve", str(report_root),
@@ -119,11 +121,11 @@ def test_background_server_outlives_the_launcher(report_root):
         cli.report_stop(port=None, workspace=str(report_root))
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            try:
-                os.kill(pid, 0)
-                time.sleep(0.1)
-            except ProcessLookupError:
+            # the engine's own probe — os.kill(pid, 0) here is the very Windows
+            # footgun the comment above says _pid_alive exists to avoid.
+            if not _cli._pid_alive(pid):
                 break
+            time.sleep(0.1)
         else:
             pytest.fail("report stop did not kill the detached server")
     finally:

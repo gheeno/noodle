@@ -38,8 +38,8 @@ def test_generate_writes_checkbox_package(tmp_path):
     cfg = config.load(str(tmp_path))
     feat, pom = generate.generate("the checkboxes page", "https://example.com/checkboxes",
                                   cfg, str(tmp_path))
-    assert "checkbox should be checked" in feat.read_text()
-    assert "css:" in pom.read_text()
+    assert "checkbox should be checked" in feat.read_text(encoding="utf-8")
+    assert "css:" in pom.read_text(encoding="utf-8")
 
 
 # --- POM auto-scope lint -----------------------------------------------------
@@ -49,14 +49,14 @@ def _app(tmp_path, name="myapp", feature_url='"[MYAPP]/upload"'):
     (app / "features").mkdir(parents=True)
     (app / "resources" / "pageobjects").mkdir(parents=True)
     (app / "features" / "x.feature").write_text(
-        f"@web\nFeature: X\n  Scenario: S\n    Given User is on {feature_url}\n")
+        f"@web\nFeature: X\n  Scenario: S\n    Given User is on {feature_url}\n", encoding="utf-8")
     return app
 
 
 def test_lint_flags_stem_that_matches_no_url(tmp_path):
     app = _app(tmp_path)
     (app / "resources" / "pageobjects" / "file_upload_pom.yaml").write_text(
-        'file input:\n  css: "#file-upload"\n')
+        'file input:\n  css: "#file-upload"\n', encoding="utf-8")
     warnings = validate.lint_pom_scopes(tmp_path)
     assert len(warnings) == 1
     assert "file_upload" in warnings[0]
@@ -66,7 +66,7 @@ def test_lint_flags_stem_that_matches_no_url(tmp_path):
 def test_lint_passes_stem_that_matches_a_url(tmp_path):
     app = _app(tmp_path)
     (app / "resources" / "pageobjects" / "upload_pom.yaml").write_text(
-        'file input:\n  css: "#file-upload"\n')
+        'file input:\n  css: "#file-upload"\n', encoding="utf-8")
     assert validate.lint_pom_scopes(tmp_path) == []
 
 
@@ -74,11 +74,11 @@ def test_lint_skips_explicit_match_and_pages(tmp_path):
     app = _app(tmp_path)
     pod = app / "resources" / "pageobjects"
     # match: {} (folder-global), a real match:, and pages: structure all opt out
-    (pod / "shared_pom.yaml").write_text('match: {}\nburger:\n  css: ".b"\n')
+    (pod / "shared_pom.yaml").write_text('match: {}\nburger:\n  css: ".b"\n', encoding="utf-8")
     (pod / "weird_pom.yaml").write_text(
-        'match:\n  url_contains: "/upload"\nfield:\n  css: ".f"\n')
+        'match:\n  url_contains: "/upload"\nfield:\n  css: ".f"\n', encoding="utf-8")
     (pod / "paged_pom.yaml").write_text(
-        'pages:\n  home:\n    match: {url_contains: "/"}\n    k: {css: ".k"}\n')
+        'pages:\n  home:\n    match: {url_contains: "/"}\n    k: {css: ".k"}\n', encoding="utf-8")
     assert validate.lint_pom_scopes(tmp_path) == []
 
 
@@ -87,7 +87,7 @@ def test_lint_matches_against_app_placeholder(tmp_path):
     saucedemo-style app-named POM files must not be flagged."""
     app = _app(tmp_path)
     (app / "resources" / "pageobjects" / "myapp_pom.yaml").write_text(
-        'field:\n  css: ".f"\n')
+        'field:\n  css: ".f"\n', encoding="utf-8")
     assert validate.lint_pom_scopes(tmp_path) == []
 
 
@@ -97,9 +97,9 @@ def test_lint_ignores_prose_matches(tmp_path):
     app = _app(tmp_path)
     (app / "features" / "x.feature").write_text(
         '@web\nFeature: Login stories\n  Scenario: User login works\n'
-        '    Given User is on "[MYAPP]/auth"\n    Then User should see "login"\n')
+        '    Given User is on "[MYAPP]/auth"\n    Then User should see "login"\n', encoding="utf-8")
     (app / "resources" / "pageobjects" / "login_pom.yaml").write_text(
-        'user field:\n  css: "#u"\n')
+        'user field:\n  css: "#u"\n', encoding="utf-8")
     warnings = validate.lint_pom_scopes(tmp_path)
     assert len(warnings) == 1
 
@@ -110,9 +110,9 @@ def test_write_environment_properties(tmp_path, monkeypatch):
     monkeypatch.setenv("NOODLE_BROWSER", "firefox")
     monkeypatch.setenv("NOODLE_HEADLESS", "true")
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "environments.yaml").write_text("myapp: https://example.com\n")
+    (tmp_path / "environments.yaml").write_text("myapp: https://example.com\n", encoding="utf-8")
     path = allure_meta.write_environment(tmp_path)
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert path.name == "environment.properties"
     assert "noodle.browser=firefox" in text
     assert "noodle.headless=true" in text
@@ -121,7 +121,7 @@ def test_write_environment_properties(tmp_path, monkeypatch):
 
 def test_write_categories_valid_and_ordered(tmp_path):
     path = allure_meta.write_categories(tmp_path)
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(data, list) and len(data) >= 4
     for cat in data:
         assert cat["name"] and cat["messageRegex"] and cat["matchedStatuses"]

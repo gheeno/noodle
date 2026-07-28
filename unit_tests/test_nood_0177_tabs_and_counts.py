@@ -154,10 +154,10 @@ def test_count_assertion_names_the_pom_key_it_counted():
     get one unambiguous target) and assert_count counts through that same key.
     The behaviour is intended; the message hid the reason."""
     import re
-    src = open(runner.__file__).read()  # keeps the import graph honest
+    src = open(runner.__file__, encoding="utf-8").read()  # keeps the import graph honest
     assert src
     from noodle.agents.web import actions
-    body = open(actions.__file__).read()
+    body = open(actions.__file__, encoding="utf-8").read()
     m = re.search(r"def assert_count.*?raise AssertionError\((.*?)\)\n", body, re.S)
     assert m, "assert_count's failure path moved"
     assert "pom" in m.group(1).lower(), (
@@ -175,7 +175,7 @@ def test_sample_pom_has_a_distinct_all_rows_key():
          "web" / "busterblock" / "resources" / "pageobjects" / "busterblock_pom.yaml")
     if not p.is_file():
         pytest.skip("samples not present in this install")
-    pom = yaml.safe_load(p.read_text())
+    pom = yaml.safe_load(p.read_text(encoding="utf-8"))
     assert "add to cart buttons" in pom, "expected an all-rows count key"
     sel = str(pom["add to cart buttons"])
     assert "first-child" not in sel, "the count key must not be row-scoped"

@@ -45,7 +45,7 @@ _POM = 'match: {}\nusername field:\n  id: "u"\nlogin:\n  css: "button"\n'
 def _ws(tmp_path: Path) -> Path:
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n")
+    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n", encoding="utf-8")
     return ws
 
 
@@ -84,7 +84,7 @@ def test_resolution_scan_and_report_counters(tmp_path, monkeypatch):
 
 
 def test_replay_fixture_matches_baseline_shape():
-    html = (REPO / "test-apps" / "replay-spa" / "index.html").read_text()
+    html = (REPO / "test-apps" / "replay-spa" / "index.html").read_text(encoding="utf-8")
     for token in ("trigger-dev-panel", "assetTag", "Device Type",
                   'role="combobox"', "Save Configuration", "username",
                   "password", "Branch #12", "Search inventory", "demo123"):
@@ -188,8 +188,8 @@ def _surfaces():
     from noodle.mcp import server
     return {
         "AGENTS.md": cli._AGENTS_MD,
-        "claude skill": (REPO / ".claude/skills/noodle/SKILL.md").read_text(),
-        "copilot skill": (REPO / ".copilot/skills/noodle/SKILL.md").read_text(),
+        "claude skill": (REPO / ".claude/skills/noodle/SKILL.md").read_text(encoding="utf-8"),
+        "copilot skill": (REPO / ".copilot/skills/noodle/SKILL.md").read_text(encoding="utf-8"),
         "mcp instructions": server._INSTRUCTIONS,
     }
 
@@ -258,7 +258,7 @@ def test_serving_reuses_verified_root_without_second_check(tmp_path, monkeypatch
     _stub_engine(monkeypatch)
     reports = ws / "artifacts" / "reports"
     reports.mkdir(parents=True)
-    (reports / "rca.html").write_text("x")
+    (reports / "rca.html").write_text("x", encoding="utf-8")
     # NOOD_0162 — stub the detached spawn (the in-process thread this used to
     # patch is deleted), so no real child server is left behind.
     monkeypatch.setattr(_cli, "_spawn_report_server",
@@ -277,7 +277,7 @@ def test_standalone_serve_still_freshness_checks(tmp_path, monkeypatch):
     ws = _ws(tmp_path)
     reports = ws / "artifacts" / "reports"
     reports.mkdir(parents=True)
-    (reports / "rca.html").write_text("x")
+    (reports / "rca.html").write_text("x", encoding="utf-8")
     monkeypatch.setattr(_cli, "_spawn_report_server",
                         lambda d, w, h, p: {"ok": True, "report_dir": d, "host": h,
                                             "port": 1, "urls": []})
@@ -331,8 +331,8 @@ def test_no_workflow_paragraph_spreads_across_surfaces():
     surfaces = {
         "AGENTS.md": cli._AGENTS_MD,
         "prompt": cli._PROMPT_TEMPLATE,
-        "claude skill": (REPO / ".claude/skills/noodle/SKILL.md").read_text(),
-        "copilot skill": (REPO / ".copilot/skills/noodle/SKILL.md").read_text(),
+        "claude skill": (REPO / ".claude/skills/noodle/SKILL.md").read_text(encoding="utf-8"),
+        "copilot skill": (REPO / ".copilot/skills/noodle/SKILL.md").read_text(encoding="utf-8"),
         "mcp instructions": server._INSTRUCTIONS,
     }
     sh = {k: _shingles(v) for k, v in surfaces.items()}

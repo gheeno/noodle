@@ -100,7 +100,7 @@ def test_committed_openapi_matches_the_live_registry():
     def shape(spec):
         return {**spec, "info": {k: v for k, v in spec["info"].items() if k != "version"}}
 
-    committed = json.loads((REPO / "docs" / "openapi.json").read_text())
+    committed = json.loads((REPO / "docs" / "openapi.json").read_text(encoding="utf-8"))
     live = asyncio.run(rest.openapi())
     assert shape(committed) == shape(live), (
         "docs/openapi.json is stale — regenerate with:\n"
@@ -152,14 +152,14 @@ def test_no_leak_between_the_api_wok_and_the_engine_api():
     assert not (docs / "api-guide.md").exists(), \
         "a doc named api-guide.md gets opened by people looking for the api wok"
 
-    engine_api = (docs / "engine-api-guide.md").read_text()
+    engine_api = (docs / "engine-api-guide.md").read_text(encoding="utf-8")
     assert "woks.md#api" in engine_api          # → the wok, for anyone who wanted it
     assert "glossary.md#api-means-two-different-things" in engine_api
 
-    wok = (docs / "woks.md").read_text()
+    wok = (docs / "woks.md").read_text(encoding="utf-8")
     assert "engine-api-guide.md" in wok         # → back the other way
 
-    glossary = (docs / "glossary.md").read_text()
+    glossary = (docs / "glossary.md").read_text(encoding="utf-8")
     assert "the api wok" in glossary and "the engine API" in glossary
 
     spec = asyncio.run(rest.openapi())
@@ -172,7 +172,7 @@ def test_keyvault_install_folds_in_the_azure_extra():
     before_all ("the Azure SDK is missing"). The template must add the extra
     itself — a project passing the one secrets knob shouldn't also have to know
     which pip extra backs it."""
-    install = (REPO / "ci" / "azure" / "noodle-tests.yml").read_text()
+    install = (REPO / "ci" / "azure" / "noodle-tests.yml").read_text(encoding="utf-8")
     assert "EXTRAS='[azure]'" in install
     assert ",azure]" in install, "an existing extras group must gain azure, not lose itself"
     # '$(VAR)' left unexpanded means the variable was never set — same rule as
@@ -184,7 +184,7 @@ def test_browser_deps_do_not_assume_root():
     """`playwright install --with-deps` apt-gets system libs. A locked-down
     self-hosted agent has no passwordless sudo and the job died before any test
     ran, which docs/ci-project-repo.md 7 promised wouldn't happen."""
-    install = (REPO / "ci" / "azure" / "noodle-tests.yml").read_text()
+    install = (REPO / "ci" / "azure" / "noodle-tests.yml").read_text(encoding="utf-8")
     assert "sudo -n true" in install, "--with-deps must be guarded by a sudo probe"
     assert "playwright install chromium\n" in install, "needs a no-root fallback"
 
@@ -195,10 +195,10 @@ def test_pinned_engine_examples_match_the_current_version():
     a new costume: the build runs an engine older than the docs describe."""
     import re
     version = re.search(r'^version = "([^"]+)"',
-                        (REPO / "pyproject.toml").read_text(), re.M).group(1)
+                        (REPO / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
     for rel in ("ci/azure/noodle-tests.yml", "ci/azure/example-project-pipeline.yml",
                 "docs/ci-project-repo.md"):
-        pins = set(re.findall(r"refs/tags/(\S+)", (REPO / rel).read_text()))
+        pins = set(re.findall(r"refs/tags/(\S+)", (REPO / rel).read_text(encoding="utf-8")))
         stale = {p for p in pins if p != version and not p.startswith("<")}
         assert not stale, f"{rel} pins {stale}, but this engine is {version}"
 
@@ -242,7 +242,7 @@ def test_mermaid_edge_labels_quote_gherkin_tags():
     root = Path(__file__).resolve().parents[1]
     offenders = []
     for md in list(root.glob("docs/*.md")) + [root / "README.md"]:
-        for block in re.findall(r"```mermaid\n(.*?)```", md.read_text(), re.S):
+        for block in re.findall(r"```mermaid\n(.*?)```", md.read_text(encoding="utf-8"), re.S):
             for line in block.splitlines():
                 if re.search(r"\|\s*@", line):
                     offenders.append(f"{md.name}: {line.strip()}")

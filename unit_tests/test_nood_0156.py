@@ -229,7 +229,7 @@ def _result_json(tmp_path, steps, status="passed", name="scenario", hid="h1"):
     r = {"uuid": hid, "historyId": hid, "name": name, "fullName": name,
          "labels": [{"name": "feature", "value": "f"}], "status": status,
          "steps": steps, "start": 0, "stop": 1000}
-    (tmp_path / f"{hid}-result.json").write_text(json.dumps(r))
+    (tmp_path / f"{hid}-result.json").write_text(json.dumps(r), encoding="utf-8")
 
 
 def _step(name, status="passed", **details):
@@ -814,7 +814,7 @@ def test_author_manual_content_is_never_intent_verified(tmp_path):
     from noodle.repl import core
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n")
+    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n", encoding="utf-8")
     r = core.author_test(
         app_name="Shop", base_url="http://localhost:9", feature_path="t",
         feature_content=('@web\nFeature: F\n\n  Scenario: s\n'
@@ -831,7 +831,7 @@ def test_author_goal_with_full_provenance_is_intent_verified(tmp_path,
     from noodle.repl import core
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n")
+    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n", encoding="utf-8")
     monkeypatch.setattr(core, "probe_page", lambda url, **kw: _shop_probe())
     r = core.author_test(app_name="Shop", base_url="http://localhost:9",
                          feature_path="t", goal=_shop_goal(),
@@ -1159,7 +1159,7 @@ def test_author_goal_records_contract_and_blocks_manual_autorun(
     from noodle.repl import core
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n")
+    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n", encoding="utf-8")
     monkeypatch.setattr(core, "probe_page",
                         lambda url, **kw: _shop_probe(picked=False))
     r = core.author_test(app_name="Shop", base_url="http://localhost:9",
@@ -1199,7 +1199,7 @@ def test_goal_payload_stays_compact_and_evidence_goes_to_artifact(
     from noodle.repl import core
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n")
+    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n", encoding="utf-8")
     monkeypatch.delenv("NOODLE_ARTIFACTS_DIR", raising=False)
     probe = _shop_probe()
     probe["pages"][0]["search"]["result_items"] = [
@@ -1213,7 +1213,7 @@ def test_goal_payload_stays_compact_and_evidence_goes_to_artifact(
     payload = json.dumps(r)
     assert "result_items" not in payload         # raw evidence never inline
     artifact = ws / "artifacts" / "probe_goal.json"
-    assert artifact.is_file() and "result_items" in artifact.read_text()
+    assert artifact.is_file() and "result_items" in artifact.read_text(encoding="utf-8")
     # compact ceilings: trace + evidence + intent stay bounded
     assert len(json.dumps(r.get("intent_trace"))) < 2048
     assert len(json.dumps(r.get("evidence"))) < 4096
@@ -1301,7 +1301,7 @@ def test_collect_correlates_mutation_from_network_capture(tmp_path):
     net_dir.mkdir()
     (net_dir / "buy_a_toy.json").write_text(json.dumps(_net(
         failed_requests=["POST https://shop.example.ca/api/cart/add "
-                         "— net::ERR_ABORTED"])))
+                         "— net::ERR_ABORTED"])), encoding="utf-8")
     entries = rca_report.collect(str(results))
     assert entries[0]["heuristic"]["category"] == "mutation-failed"
     assert "POST /api/cart/add" in entries[0]["heuristic"]["reason"]
@@ -1320,7 +1320,7 @@ def test_engine_stamped_verdicts_keep_priority_over_mutation(tmp_path):
     net_dir.mkdir()
     (net_dir / "nav_case.json").write_text(json.dumps(_net(
         failed_requests=["POST https://shop.example.ca/api/cart/add "
-                         "— net::ERR_ABORTED"])))
+                         "— net::ERR_ABORTED"])), encoding="utf-8")
     entries = rca_report.collect(str(results))
     assert entries[0]["heuristic"]["category"] == "navigation-mismatch"
 
@@ -1333,7 +1333,7 @@ def _history(ws, stops, category="app-regression"):
     lines = [json.dumps({"historyId": "h1", "stop": s, "scenario": "buy a toy",
                          "category": category, "ai_category": None})
              for s in stops]
-    (reports / "rca-history.jsonl").write_text("\n".join(lines) + "\n")
+    (reports / "rca-history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def test_diagnostic_attempts_come_from_run_history(tmp_path, monkeypatch):
@@ -1450,7 +1450,7 @@ def test_clone_root_prefers_the_editable_link_then_the_cwd(tmp_path, monkeypatch
         (root / "unit_tests").mkdir()
         (root / "noodle" / "__init__.py").touch()
         (root / "noodle" / "cli.py").touch()
-        (root / "pyproject.toml").write_text('[project]\nname = "noodle"\n')
+        (root / "pyproject.toml").write_text('[project]\nname = "noodle"\n', encoding="utf-8")
         return root
 
     clone = make_clone(tmp_path / "clone")
@@ -1518,7 +1518,7 @@ def test_pyproject_version_has_a_changelog_section():
     from unit_tests.test_nood_0110 import REPO
     with (REPO / "pyproject.toml").open("rb") as fh:
         version = tomllib.load(fh)["project"]["version"]
-    assert f"## [{version}]" in (REPO / "CHANGELOG.md").read_text()
+    assert f"## [{version}]" in (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
 def test_update_is_discoverable_in_help_with_a_one_line_summary():

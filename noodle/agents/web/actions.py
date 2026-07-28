@@ -12,7 +12,7 @@ from noodle.config import rest_timeout
 from noodle.log import logger
 from noodle.reporting import paths as _paths
 
-from . import pom
+from . import locator, pom
 from .locator import _find_timeout_ms, _settle_timeout_ms, find, find_first
 
 # NOOD_0177 — guards for assert_matches, whose match subject is site-controlled.
@@ -760,11 +760,11 @@ def visual_baseline(page: Page, name: str, ignore: str = None):
             prompt=f"Describe this page's visual layout and key content in 2-3 sentences for test automation baseline purposes.{ignore_note}",
             image_b64=b64,
         )
-        path.write_text(description)
+        path.write_text(description, encoding="utf-8")
         logger.info(f"\n  📷 Baseline captured: {path}")
         return
 
-    baseline = path.read_text()
+    baseline = path.read_text(encoding="utf-8")
     result = ask_vision(
         prompt=f'Does this screenshot match this baseline description? Baseline: "{baseline}"{ignore_note}\nAnswer YES or NO on the first line, then describe any differences.',
         image_b64=b64,
@@ -1114,7 +1114,7 @@ def assert_count(page: Page, count: int, locator_text: str, op: str = "=="):
             + pom.explain_miss(explicit_key, page.url))
     counted_via_pom = None
     if loc is not None:
-        actual = loc.locator("visible=true").count()
+        counted = loc.locator("visible=true")
         # NOOD_0177 — remember that the count came from a POM entry. A key
         # scoped for CLICKING ("tr:first-child button") counts 1 while 50 are
         # plainly on screen, and "found 1" alone sent a reader hunting the app
@@ -1124,9 +1124,19 @@ def assert_count(page: Page, count: int, locator_text: str, op: str = "=="):
         # Count VISIBLE occurrences only. A raw get_by_text count includes
         # sr-only duplicates, aria-label copies, and tooltip text, so "should
         # see 3 X" could report 6. `visible=true` filters to what a user sees.
-        actual = page.get_by_text(locator_text, exact=False).locator("visible=true").count()
+        counted = page.get_by_text(locator_text, exact=False).locator("visible=true")
+    actual = counted.count()
     ok = {"==": actual == count, ">=": actual >= count, "<=": actual <= count,
           ">": actual > count, "<": actual < count}[op]
+    if ok and actual:
+        # NOOD_0195 — give the evidence capture something to outline. A count
+        # resolves through pom.locate_all/get_by_text directly, never through
+        # find(), so match_seq never moved: hooks.after_step saw fresh=False,
+        # drew no box, and marked the shot invalid — a green run reporting
+        # verified:false. The counted set has no single element, but its first
+        # member is a real, exactly-resolved one, and centring that is what
+        # makes the screenshot prove the assertion.
+        locator.note_match(page, locator_text, counted.first, "count")
     if not ok:
         word = {"==": "", ">=": "at least ", "<=": "at most ",
                 ">": "more than ", "<": "fewer than "}[op]
@@ -1767,7 +1777,7 @@ def mock_route(page: Page, url: str, status: int, body: str = None,
     src = None
     if fixture:
         src = Path(fixture)
-        payload = src.read_text()
+        payload = src.read_text(encoding="utf-8")
     ctype = content_type or _content_type_for(payload, src)
 
     def _handler(route):
@@ -1853,7 +1863,7 @@ def load_data(file: str) -> dict:
     from pathlib import Path
 
     import yaml
-    raw = yaml.safe_load(Path(file).read_text()) or {}
+    raw = yaml.safe_load(Path(file).read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise AssertionError(f"Test data '{file}' must be a top-level mapping, got {type(raw).__name__}")
     return flatten_data(raw)
@@ -2680,7 +2690,7 @@ def add_init_script(page: Page, script: str):
     SDK, `window.matchMedia`, a seeded localStorage token. A file path is read
     from disk; anything else is treated as inline JS."""
     src = Path(script)
-    body = src.read_text() if (script.endswith(".js") and src.is_file()) else script
+    body = src.read_text(encoding="utf-8") if (script.endswith(".js") and src.is_file()) else script
     page.context.add_init_script(body)
     logger.info(f"\n  💉 Init script registered ({len(body)} chars) — "
                 "applies from the next navigation")

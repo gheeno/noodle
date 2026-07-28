@@ -270,7 +270,7 @@ def test_annotate_leaves_plain_features_alone():
 
 @pytest.fixture
 def ws(tmp_path, monkeypatch):
-    (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n")
+    (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n", encoding="utf-8")
     (tmp_path / "tests").mkdir()
     monkeypatch.chdir(tmp_path)
     return tmp_path
@@ -287,7 +287,7 @@ def test_write_feature_annotates_file(ws):
     r = core.write_feature("tests/hero.feature", FEATURE_DEPICTS,
                            workspace=str(ws))
     assert r["ok"] and r["llm_required"]
-    written = (ws / "tests" / "hero.feature").read_text()
+    written = (ws / "tests" / "hero.feature").read_text(encoding="utf-8")
     assert "@potential-flake" in written
     assert "# ⚠ requires a vision LLM" in written
 
@@ -296,4 +296,4 @@ def test_write_feature_plain_untouched(ws):
     r = core.write_feature("tests/plain.feature", FEATURE_PLAIN,
                            workspace=str(ws))
     assert r["ok"] and r["llm_required"] == []
-    assert "@potential-flake" not in (ws / "tests" / "plain.feature").read_text()
+    assert "@potential-flake" not in (ws / "tests" / "plain.feature").read_text(encoding="utf-8")

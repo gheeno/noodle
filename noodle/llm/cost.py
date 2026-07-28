@@ -106,7 +106,7 @@ def write_json(results_dir, suffix: str | None = None) -> None:
         name = "llm_cost.json"
     d = Path(results_dir)
     d.mkdir(parents=True, exist_ok=True)
-    (d / name).write_text(json.dumps(s, indent=2))
+    (d / name).write_text(json.dumps(s, indent=2), encoding="utf-8")
 
 
 def load_total(results_root) -> dict | None:
@@ -120,7 +120,7 @@ def load_total(results_root) -> dict | None:
     found = False
     for f in sorted(root.rglob("llm_cost*.json")):
         try:
-            s = json.loads(f.read_text())
+            s = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
         found = True

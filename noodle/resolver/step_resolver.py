@@ -70,7 +70,7 @@ def _example_corpus() -> list[str]:
     for dictionary_path in _dictionary_paths():
         in_block = False
         block_is_visual = False
-        for line in dictionary_path.read_text().splitlines():
+        for line in dictionary_path.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if stripped == "```gherkin":
                 in_block = True
@@ -111,7 +111,7 @@ def example_index() -> list[dict]:
     index = []
     for dictionary_path in _dictionary_paths():
         section, in_block = "", False
-        for line in dictionary_path.read_text().splitlines():
+        for line in dictionary_path.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if stripped.startswith("#"):
                 section = stripped.lstrip("#").strip()
@@ -466,13 +466,13 @@ def _log_suggestion(step_text: str, action: dict) -> None:
     path = _suggestions_path()
     marker = f"`{step_text}`"
     if path.exists():
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         hit = re.search(
             rf"- \*\*Step:\*\* {re.escape(marker)}\n"
             rf"- \*\*Resolved:\*\* .*\n- \*\*Hits:\*\* (\d+)", text)
         if hit:
             path.write_text(
-                f"{text[:hit.start(1)]}{int(hit.group(1)) + 1}{text[hit.end(1):]}")
+                f"{text[:hit.start(1)]}{int(hit.group(1)) + 1}{text[hit.end(1):]}", encoding="utf-8")
             return
         if marker in text:
             return          # legacy entry, written before Hits existed — leave it
@@ -492,8 +492,8 @@ def _log_suggestion(step_text: str, action: dict) -> None:
             "highest first. A high-hit entry is costing a model call on every run and "
             "is the best promotion candidate. Always eyeball **Resolved** before "
             "promoting: it is the model's *guess*, not a verified mapping.\n\n"
-        )
-    with path.open('a') as f:
+        , encoding="utf-8")
+    with path.open('a', encoding="utf-8") as f:
         f.write(entry)
 
 

@@ -12,12 +12,12 @@ from noodle.reporting.paths import results_dir
 def test_results_dir_default(monkeypatch):
     monkeypatch.delenv("NOODLE_RESULTS_DIR", raising=False)
     monkeypatch.delenv("NOODLE_ARTIFACTS_DIR", raising=False)
-    assert str(results_dir()) == "artifacts/allure-results"
+    assert results_dir().as_posix() == "artifacts/allure-results"
 
 
 def test_results_dir_env_override(monkeypatch):
     monkeypatch.setenv("NOODLE_RESULTS_DIR", "allure-results/p999")
-    assert str(results_dir()) == "allure-results/p999"
+    assert results_dir().as_posix() == "allure-results/p999"
 
 
 def test_before_all_parallel_uses_pid_dir_and_skips_wipe(monkeypatch):
@@ -59,8 +59,8 @@ def test_merge_flattens_results_merges_junit_removes_worker_dirs(tmp_path):
     results.mkdir()
     for w, name in [("p1", "a"), ("p2", "b")]:
         (results / w).mkdir()
-        (results / w / f"{name}-result.json").write_text("{}")
-        (results / w / "junit.xml").write_text(f'<testsuite name="{w}" tests="1"/>')
+        (results / w / f"{name}-result.json").write_text("{}", encoding="utf-8")
+        (results / w / "junit.xml").write_text(f'<testsuite name="{w}" tests="1"/>', encoding="utf-8")
 
     _merge_worker_results(results)
 
@@ -68,18 +68,18 @@ def test_merge_flattens_results_merges_junit_removes_worker_dirs(tmp_path):
     assert list(results.glob("p*")) == []                  # no leftover worker dirs
     # NOOD_0008: merged junit lands OUTSIDE allure-results so allure generate
     # can't ingest scenarios twice.
-    merged = (tmp_path / "reports" / "junit.xml").read_text()
+    merged = (tmp_path / "reports" / "junit.xml").read_text(encoding="utf-8")
     assert merged.count("<testsuite ") == 2                # both suites under <testsuites>
 
 
 def test_merge_junits_skips_missing_and_malformed(tmp_path):
     from noodle.reporting.junit import merge_junits
     good = tmp_path / "good.xml"
-    good.write_text('<testsuite name="g" tests="1"/>')
+    good.write_text('<testsuite name="g" tests="1"/>', encoding="utf-8")
     bad = tmp_path / "bad.xml"
-    bad.write_text("not xml <<<")
+    bad.write_text("not xml <<<", encoding="utf-8")
     out = merge_junits([good, bad, tmp_path / "missing.xml"], tmp_path / "out.xml")
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert text.count("<testsuite ") == 1                  # only the good one
 
 
@@ -130,10 +130,10 @@ def test_parallel_toggle_flag_env_and_default(monkeypatch, tmp_path):
 
 def test_clean_removes_worker_dirs(tmp_path):
     from noodle.cli import _clean_results_root
-    (tmp_path / "old-result.json").write_text("{}")
-    (tmp_path / "junit.xml").write_text("<x/>")
+    (tmp_path / "old-result.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "junit.xml").write_text("<x/>", encoding="utf-8")
     (tmp_path / "p7").mkdir()
-    (tmp_path / "p7" / "x-result.json").write_text("{}")
+    (tmp_path / "p7" / "x-result.json").write_text("{}", encoding="utf-8")
 
     _clean_results_root(tmp_path)
 

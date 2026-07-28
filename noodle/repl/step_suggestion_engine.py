@@ -256,7 +256,7 @@ def accept_suggestion(suggestion: StepSuggestion, *, docs_dir: Path | None = Non
 
     entries = []
     if patterns_path.exists():
-        raw = yaml.safe_load(patterns_path.read_text()) or []
+        raw = yaml.safe_load(patterns_path.read_text(encoding="utf-8")) or []
         if isinstance(raw, list):
             entries = raw
     entries.append({
@@ -268,12 +268,12 @@ def accept_suggestion(suggestion: StepSuggestion, *, docs_dir: Path | None = Non
         "source_query": suggestion.query,
         "status": "staging",
     })
-    patterns_path.write_text(yaml.safe_dump(entries, sort_keys=False))
+    patterns_path.write_text(yaml.safe_dump(entries, sort_keys=False), encoding="utf-8")
 
     new_line = f"{suggestion.keyword} {suggestion.phrase}"
     gherkin_block = f"```gherkin\n{new_line}\n```\n\n"
     if dictionary_path.exists():
-        text = dictionary_path.read_text()
+        text = dictionary_path.read_text(encoding="utf-8")
     else:
         text = ""
     if _ANCHOR in text:
@@ -290,7 +290,7 @@ def accept_suggestion(suggestion: StepSuggestion, *, docs_dir: Path | None = Non
                 "`docs/agent_patterns.yaml`.\n\n"
             )
         text += f"{gherkin_block}{_ANCHOR}\n"
-    dictionary_path.write_text(text)
+    dictionary_path.write_text(text, encoding="utf-8")
 
     step_resolver.clear_index_cache()
     _patterns.clear_agent_patterns_cache()

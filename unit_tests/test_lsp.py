@@ -164,7 +164,7 @@ class TestKnownTags:
 class TestEnvVarNames:
     def test_returns_variable_names_from_env_file(self, tmp_path):
         env_file = tmp_path / ".env"
-        env_file.write_text("MY_EMAIL=test@example.com\nSAUCE_USERNAME=standard_user\n")
+        env_file.write_text("MY_EMAIL=test@example.com\nSAUCE_USERNAME=standard_user\n", encoding="utf-8")
         feature = tmp_path / "features" / "login.feature"
         feature.parent.mkdir()
         feature.touch()
@@ -177,7 +177,7 @@ class TestEnvVarNames:
 
     def test_returns_lowercase_alternatives(self, tmp_path):
         env_file = tmp_path / ".env"
-        env_file.write_text("MY_EMAIL=test@example.com\n")
+        env_file.write_text("MY_EMAIL=test@example.com\n", encoding="utf-8")
         feature = tmp_path / "feature.feature"
         feature.touch()
 
@@ -188,7 +188,7 @@ class TestEnvVarNames:
 
     def test_ignores_comments_and_blank_lines(self, tmp_path):
         env_file = tmp_path / ".env"
-        env_file.write_text("# comment\n\nVALID_VAR=1\n")
+        env_file.write_text("# comment\n\nVALID_VAR=1\n", encoding="utf-8")
         feature = tmp_path / "f.feature"
         feature.touch()
 
@@ -210,7 +210,7 @@ class TestEnvVarNames:
 
     def test_walks_up_to_find_env(self, tmp_path):
         env_file = tmp_path / ".env"
-        env_file.write_text("ROOT_VAR=1\n")
+        env_file.write_text("ROOT_VAR=1\n", encoding="utf-8")
         nested = tmp_path / "a" / "b" / "c.feature"
         nested.parent.mkdir(parents=True)
         nested.touch()
@@ -228,22 +228,22 @@ class TestEnvVarNames:
 class TestDiscoverability:
     def _workspace(self, tmp_path):
         """Minimal workspace: noodle.yaml root, one app with resources."""
-        (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n")
-        (tmp_path / ".env").write_text("# comment\nBUSTERBLOCK=http://localhost:3333\n")
-        (tmp_path / "secrets.env").write_text("ADMIN_PASSWORD=hunter2\n")
-        (tmp_path / "environments.yaml").write_text("erp: http://localhost:4444\n")
+        (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n", encoding="utf-8")
+        (tmp_path / ".env").write_text("# comment\nBUSTERBLOCK=http://localhost:3333\n", encoding="utf-8")
+        (tmp_path / "secrets.env").write_text("ADMIN_PASSWORD=hunter2\n", encoding="utf-8")
+        (tmp_path / "environments.yaml").write_text("erp: http://localhost:4444\n", encoding="utf-8")
         app = tmp_path / "tests" / "web" / "shop"
         (app / "features").mkdir(parents=True)
         (app / "resources" / "pageobjects").mkdir(parents=True)
         (app / "resources" / "pom.yaml").write_text(
-            "shared:\n  login button:\n    css: '#login'\n")
+            "shared:\n  login button:\n    css: '#login'\n", encoding="utf-8")
         (app / "resources" / "pageobjects" / "cart_pom.yaml").write_text(
-            "checkout link:\n  text: Checkout\n")
+            "checkout link:\n  text: Checkout\n", encoding="utf-8")
         (app / "resources" / "functions").mkdir()
         (app / "resources" / "functions" / "helpers.py").write_text(
-            "def add(a, b):\n    return int(a) + int(b)\n")
+            "def add(a, b):\n    return int(a) + int(b)\n", encoding="utf-8")
         feature = app / "features" / "demo.feature"
-        feature.write_text("Feature: demo\n")
+        feature.write_text("Feature: demo\n", encoding="utf-8")
         return feature
 
     def test_find_env_hits_dotenv_with_line(self, tmp_path):

@@ -34,9 +34,9 @@ def _make_package(tmp_path, env_lines=None, secrets_lines=None):
     res_dir = pkg / "resources"
     res_dir.mkdir(parents=True)
     if env_lines:
-        (res_dir / ".env").write_text("\n".join(env_lines) + "\n")
+        (res_dir / ".env").write_text("\n".join(env_lines) + "\n", encoding="utf-8")
     if secrets_lines:
-        (res_dir / "myapp_secrets.env").write_text("\n".join(secrets_lines) + "\n")
+        (res_dir / "myapp_secrets.env").write_text("\n".join(secrets_lines) + "\n", encoding="utf-8")
     return pkg
 
 
@@ -91,7 +91,7 @@ class TestLoadPackageEnv:
         from noodle import hooks
 
         pkg = _make_package(tmp_path)
-        (pkg / "resources" / "secrets.env").write_text("MYAPP_SECRET=plain\n")
+        (pkg / "resources" / "secrets.env").write_text("MYAPP_SECRET=plain\n", encoding="utf-8")
         hooks._load_package_env(pkg)
         assert os.environ["MYAPP_SECRET"] == "plain"
 
@@ -112,7 +112,7 @@ class TestLoadPackageEnv:
         hooks._load_package_env(pkg)
         assert os.environ["MYAPP_TOKEN"] == "first"
 
-        (pkg / "resources" / ".env").write_text("MYAPP_TOKEN=second\n")
+        (pkg / "resources" / ".env").write_text("MYAPP_TOKEN=second\n", encoding="utf-8")
         hooks._load_package_env(pkg)
         assert os.environ["MYAPP_TOKEN"] == "first"
 
@@ -135,7 +135,7 @@ class TestLoadEnvironmentsGlob:
         monkeypatch.chdir(tmp_path)
         pkg_res = tmp_path / "tests" / "myapp" / "resources"
         pkg_res.mkdir(parents=True)
-        (pkg_res / "myapp_environments.yaml").write_text("myapp: http://localhost:9999\n")
+        (pkg_res / "myapp_environments.yaml").write_text("myapp: http://localhost:9999\n", encoding="utf-8")
 
         hooks._load_environments()
 
@@ -147,10 +147,10 @@ class TestLoadEnvironmentsGlob:
 
         monkeypatch.chdir(tmp_path)
         hooks._snapshot_shell_env()
-        (tmp_path / "environments.yaml").write_text("myapp: http://root\n")
+        (tmp_path / "environments.yaml").write_text("myapp: http://root\n", encoding="utf-8")
         pkg_res = tmp_path / "tests" / "myapp" / "resources"
         pkg_res.mkdir(parents=True)
-        (pkg_res / "myapp_environments.yaml").write_text("myapp: http://package\n")
+        (pkg_res / "myapp_environments.yaml").write_text("myapp: http://package\n", encoding="utf-8")
 
         hooks._load_environments()
 
@@ -164,7 +164,7 @@ class TestLoadEnvironmentsGlob:
         hooks._snapshot_shell_env()
         pkg_res = tmp_path / "tests" / "myapp" / "resources"
         pkg_res.mkdir(parents=True)
-        (pkg_res / "myapp_environments.yaml").write_text("myapp: http://package\n")
+        (pkg_res / "myapp_environments.yaml").write_text("myapp: http://package\n", encoding="utf-8")
 
         hooks._load_environments()
 
@@ -179,7 +179,7 @@ class TestLoadEnvironmentsGlob:
         monkeypatch.chdir(tmp_path)
         pkg_res = tmp_path / "tests" / "myapp" / "resources"
         pkg_res.mkdir(parents=True)
-        (pkg_res / "environments.yaml").write_text("myapp: http://localhost:8888\n")
+        (pkg_res / "environments.yaml").write_text("myapp: http://localhost:8888\n", encoding="utf-8")
 
         hooks._load_environments()
 

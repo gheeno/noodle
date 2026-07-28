@@ -167,7 +167,7 @@ def _app_from_existing_url(url: str, workspace_cfg: dict, workspace: str = ".") 
     tests_dir = Path(workspace) / workspace_cfg["tests_dir"]
     for env_file in sorted(tests_dir.glob("**/resources/*environments.yaml")):
         try:
-            data = yaml.safe_load(env_file.read_text()) or {}
+            data = yaml.safe_load(env_file.read_text(encoding="utf-8")) or {}
         except Exception:
             continue
         for app, base_url in data.items():
@@ -253,7 +253,7 @@ def _scaffold_referenced_resources(app_dir: Path, feature: str) -> list[Path]:
         path = res_dir / rel
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text('{\n  "TODO": "replace with real payload data"\n}\n')
+            path.write_text('{\n  "TODO": "replace with real payload data"\n}\n', encoding="utf-8")
             written.append(path)
 
     for m in _FUNCTION_REF_RE.finditer(feature):
@@ -276,17 +276,17 @@ def _scaffold_referenced_resources(app_dir: Path, feature: str) -> list[Path]:
         stub = _FUNCTION_STUB.format(func=func)
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(stub.lstrip("\n") + "\n")
+            path.write_text(stub.lstrip("\n") + "\n", encoding="utf-8")
             written.append(path)
-        elif f"def {func}(" not in path.read_text():
-            with path.open("a") as fh:
+        elif f"def {func}(" not in path.read_text(encoding="utf-8"):
+            with path.open("a", encoding="utf-8") as fh:
                 fh.write(stub)
             written.append(path)
 
     precond_names = sorted(set(_PRECONDITION_REF_RE.findall(feature)))
     if precond_names:
         path = res_dir / "preconditions.yaml"
-        existing = path.read_text() if path.exists() else (
+        existing = path.read_text(encoding="utf-8") if path.exists() else (
             "# Data preconditions — see docs/steps_dictionary.md 'precondition' "
             "and docs/feature-packages.md.\n"
         )
@@ -299,7 +299,7 @@ def _scaffold_referenced_resources(app_dir: Path, feature: str) -> list[Path]:
             added = True
         if added or not path.exists():
             res_dir.mkdir(parents=True, exist_ok=True)
-            path.write_text(existing)
+            path.write_text(existing, encoding="utf-8")
             written.append(path)
 
     return written
@@ -391,7 +391,7 @@ def scaffold_one(kind: str, app: str, workspace_cfg: dict, workspace: str = ".",
         print(f"⚠ {path} already exists — left untouched.")
         return path
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     print(f"→ Wrote {path}")
     return path
 
@@ -408,8 +408,8 @@ def _scaffold_resources(app_dir: Path, app: str, url: str) -> None:
     res_dir.mkdir(parents=True, exist_ok=True)
     # NOOD_0135 — full URL, not origin (see _stub_environments).
     from noodle.repl.core import normalize_url
-    env_yaml.write_text(f"{app}: {normalize_url(url)}\n")
-    secrets.write_text(_SECRETS_EXAMPLE)
+    env_yaml.write_text(f"{app}: {normalize_url(url)}\n", encoding="utf-8")
+    secrets.write_text(_SECRETS_EXAMPLE, encoding="utf-8")
     print(f"→ Wrote {env_yaml}\n→ Wrote {secrets}")
 
 
@@ -578,7 +578,7 @@ def generate(description: str, url: str, workspace_cfg: dict, workspace: str = "
         if feat_path.exists():
             scenarios = _add_tags(_scenarios_only(
                 fill_slots(feature_tpl.format(url=url, name=name, Title=title), slots)), tags)
-            feat_path.write_text(feat_path.read_text().rstrip("\n") + "\n\n" + scenarios)
+            feat_path.write_text(feat_path.read_text(encoding="utf-8").rstrip("\n") + "\n\n" + scenarios, encoding="utf-8")
             for p in _scaffold_referenced_resources(app_dir, scenarios):
                 print(f"→ Wrote {p}")
             _warn_placeholders(scenarios)
@@ -597,7 +597,7 @@ def generate(description: str, url: str, workspace_cfg: dict, workspace: str = "
         pom_tpl.format(url=url, name=name, Title=title)
     for p, text in [(feat_path, feature), (pom_path, pom)]:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text)
+        p.write_text(text, encoding="utf-8")
     _scaffold_resources(app_dir, app, url)
     for p in _scaffold_referenced_resources(app_dir, feature):
         print(f"→ Wrote {p}")
@@ -718,7 +718,7 @@ def generate_llm(description: str, url: str, workspace_cfg: dict, workspace: str
 
     feature = _rewrite_function_paths(feature, app_dir)
     feat_path.parent.mkdir(parents=True, exist_ok=True)
-    feat_path.write_text(feature + "\n")
+    feat_path.write_text(feature + "\n", encoding="utf-8")
     # POM skeletoned from the template (the LLM doesn't know real selectors) —
     # unless grounding proves which labels resolve live (NOODLE_GROUND).
     _, pom_tpl = pick_template(description)
@@ -726,7 +726,7 @@ def generate_llm(description: str, url: str, workspace_cfg: dict, workspace: str
         pom_tpl.format(url=url, name=name, Title=name.title())
     pom_path = app_dir / "resources" / "pageobjects" / f"{name}_pom.yaml"
     pom_path.parent.mkdir(parents=True, exist_ok=True)
-    pom_path.write_text(pom)
+    pom_path.write_text(pom, encoding="utf-8")
     _scaffold_resources(app_dir, app, url)
     for p in _scaffold_referenced_resources(app_dir, feature):
         print(f"→ Wrote {p}")

@@ -22,7 +22,7 @@ from noodle.repl import core
 def _ws(tmp_path: Path) -> Path:
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n")
+    (ws / "noodle.yaml").write_text("tests_dir: noodle_tests\nenv_file: .env\n", encoding="utf-8")
     return ws
 
 
@@ -98,7 +98,7 @@ def test_cli_author_never_prints_secret_values(tmp_path):
         "feature_path": "login", "feature_content": _FEATURE, "pom_content": _POM,
         "required_secret_keys": ["SHOP_USERNAME", "SHOP_PASSWORD"],
         "secret_values": {"SHOP_USERNAME": "alice", "SHOP_PASSWORD": "topsecret9"},
-        "overwrite": True}))                       # overwrite is a spec field, not a flag
+        "overwrite": True}), encoding="utf-8")                       # overwrite is a spec field, not a flag
     for args in (["author", "--spec", str(spec), "-w", str(ws)],
                  ["author", "--spec", str(spec), "-w", str(ws), "--json"]):
         r = CliRunner().invoke(app, args)
@@ -115,10 +115,10 @@ def test_unrelated_keys_and_comments_preserved(tmp_path):
     ws = _ws(tmp_path)
     _author(ws)                                   # scaffold placeholders
     sp = _secrets_path(ws)
-    sp.write_text("# my note\nUNRELATED=leave-me\nSHOP_USERNAME=old\nSHOP_PASSWORD=old\n")
+    sp.write_text("# my note\nUNRELATED=leave-me\nSHOP_USERNAME=old\nSHOP_PASSWORD=old\n", encoding="utf-8")
     r = _author(ws, overwrite=True, secret_values={"SHOP_PASSWORD": "new"})
     assert r["ok"]
-    text = sp.read_text()
+    text = sp.read_text(encoding="utf-8")
     d = dotenv_values(sp)
     assert "# my note" in text and d["UNRELATED"] == "leave-me"
     assert d["SHOP_USERNAME"] == "old"            # not supplied → untouched
@@ -129,7 +129,7 @@ def test_supplied_value_overrides_existing_same_key(tmp_path):
     ws = _ws(tmp_path)
     _author(ws)
     sp = _secrets_path(ws)
-    sp.write_text("SHOP_USERNAME=alice\nSHOP_PASSWORD=old\n")
+    sp.write_text("SHOP_USERNAME=alice\nSHOP_PASSWORD=old\n", encoding="utf-8")
     _author(ws, overwrite=True, secret_values={"SHOP_PASSWORD": "rotated"})
     assert dotenv_values(sp)["SHOP_PASSWORD"] == "rotated"
 
@@ -148,7 +148,7 @@ def test_write_failure_restores_secrets_bytes(tmp_path, monkeypatch):
     ws = _ws(tmp_path)
     _author(ws)
     sp = _secrets_path(ws)
-    sp.write_text("SHOP_USERNAME=keep\nSHOP_PASSWORD=keep\n")
+    sp.write_text("SHOP_USERNAME=keep\nSHOP_PASSWORD=keep\n", encoding="utf-8")
     before = sp.read_bytes()
 
     real = core.os.replace
@@ -288,8 +288,8 @@ def test_prompt_credential_policy_on_every_surface():
     surfaces = {
         "AGENTS.md": cli._AGENTS_MD,
         "PROMPT_TEMPLATE": cli._PROMPT_TEMPLATE,
-        "claude skill": (REPO / ".claude/skills/noodle/SKILL.md").read_text(),
-        "copilot skill": (REPO / ".copilot/skills/noodle/SKILL.md").read_text(),
+        "claude skill": (REPO / ".claude/skills/noodle/SKILL.md").read_text(encoding="utf-8"),
+        "copilot skill": (REPO / ".copilot/skills/noodle/SKILL.md").read_text(encoding="utf-8"),
     }
     for name, text in surfaces.items():
         low = text.lower()

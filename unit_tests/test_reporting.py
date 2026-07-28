@@ -132,7 +132,7 @@ class TestWriteResult:
         written = writer.write_result(sr)
 
         assert written.exists()
-        data = json.loads(written.read_text())
+        data = json.loads(written.read_text(encoding="utf-8"))
         assert data["name"] == "Demo"
         assert data["status"] == "passed"
         assert isinstance(data["steps"], list)

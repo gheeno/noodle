@@ -104,7 +104,7 @@ def test_generate_llm_good_first_draft_needs_no_repair(tmp_path, monkeypatch, ca
     cfg = config.load(str(tmp_path))
     feat, pom = generate.generate_llm("login", "https://example.com", cfg, str(tmp_path))
     assert len(calls) == 1                            # no repair pass
-    assert feat.read_text().startswith("@web")
+    assert feat.read_text(encoding="utf-8").startswith("@web")
     assert pom.exists()
     assert "✅ all steps resolve deterministically" in capsys.readouterr().out
 
@@ -126,7 +126,7 @@ def test_generate_llm_repairs_unmatched_steps_once(tmp_path, monkeypatch, capsys
     assert len(calls) == 2                            # generation + one repair
     assert "interpretive dance" in calls[1]           # repair prompt names the miss
     assert "Feature: Login" not in calls[1]           # …but not the whole draft
-    text = feat.read_text()
+    text = feat.read_text(encoding="utf-8")
     assert "interpretive dance" not in text
     assert "When User clicks the login button" in text
     assert "✅" in capsys.readouterr().out
@@ -144,7 +144,7 @@ def test_generate_llm_keeps_original_when_repair_is_worse(tmp_path, monkeypatch,
     cfg = config.load(str(tmp_path))
     feat, _ = generate.generate_llm("login", "https://example.com", cfg, str(tmp_path))
     assert len(calls) == 2
-    assert "interpretive dance" in feat.read_text()   # original kept, not mangled
+    assert "interpretive dance" in feat.read_text(encoding="utf-8")   # original kept, not mangled
     assert "[LLM]" in capsys.readouterr().out         # and the miss is reported
 
 
@@ -324,8 +324,8 @@ def test_llm_resolution_cache(monkeypatch):
 
 def test_cli_validate_resolve(tmp_path):
     from noodle.cli import _validate_resolve
-    (tmp_path / "ok.feature").write_text(GOOD_FEATURE)
+    (tmp_path / "ok.feature").write_text(GOOD_FEATURE, encoding="utf-8")
     assert _validate_resolve(tmp_path) == 0
-    (tmp_path / "bad.feature").write_text("Feature broken\n  nope")
+    (tmp_path / "bad.feature").write_text("Feature broken\n  nope", encoding="utf-8")
     assert _validate_resolve(tmp_path) == 1           # parse error fails
     assert _validate_resolve(tmp_path / "missing") == 1

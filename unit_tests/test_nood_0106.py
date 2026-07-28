@@ -296,14 +296,14 @@ def test_any_match_all_hidden_falls_through_to_lenient(monkeypatch):
 
 def _workspace(tmp_path, pom_files: dict):
     """A minimal app package; returns its features/ dir (pom.set_context arg)."""
-    (tmp_path / "noodle.yaml").write_text("tests_dir: noodle_tests\n")
+    (tmp_path / "noodle.yaml").write_text("tests_dir: noodle_tests\n", encoding="utf-8")
     app = tmp_path / "noodle_tests" / "ct"
     features = app / "features"
     features.mkdir(parents=True)
     pod = app / "resources" / "pageobjects"
     pod.mkdir(parents=True)
     for name, text in pom_files.items():
-        (pod / name).write_text(text)
+        (pod / name).write_text(text, encoding="utf-8")
     return features
 
 
@@ -340,7 +340,7 @@ def test_explain_miss_lists_checked_files_when_key_absent(tmp_path):
 
 
 def test_explain_miss_no_pom_files_says_so(tmp_path):
-    (tmp_path / "noodle.yaml").write_text("tests_dir: noodle_tests\n")
+    (tmp_path / "noodle.yaml").write_text("tests_dir: noodle_tests\n", encoding="utf-8")
     features = tmp_path / "noodle_tests" / "ct" / "features"
     features.mkdir(parents=True)
     pom_mod.set_context(str(features))

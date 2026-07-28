@@ -10,6 +10,7 @@ import json
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -679,12 +680,15 @@ def test_brief_is_documented_on_every_probe_surface():
         "cli": inspect.getsource(cli.probe),
         "mcp": server.probe_page.__doc__ or "",
         "repl": core.probe_page.__doc__ or "",
-        "llm-performance": (probe_mod.__file__.rsplit("noodle/", 1)[0]
-                            + "docs/llm-performance.md"),
+        # NOOD_0195 — pathlib, not a hardcoded "noodle/" split: __file__
+        # uses backslashes on Windows, so the rsplit never matched and the
+        # two paths concatenated into one nonexistent string.
+        "llm-performance": str(Path(probe_mod.__file__).parents[3]
+                               / "docs" / "llm-performance.md"),
     }
     for name, text in surfaces.items():
         if name == "llm-performance":
-            text = open(text).read()
+            text = open(text, encoding="utf-8").read()
         assert "brief" in text.lower(), name
 
 

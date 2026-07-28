@@ -16,6 +16,6 @@ def run_axe(page) -> list[dict]:
     if not already:
         # add_script_tag can be blocked by a strict CSP — page.evaluate of the
         # source string goes through the JS engine directly and is not.
-        page.evaluate(_AXE_PATH.read_text())
+        page.evaluate(_AXE_PATH.read_text(encoding="utf-8"))
     result = page.evaluate("() => axe.run()")
     return result.get("violations", [])

@@ -200,9 +200,9 @@ def test_bare_command_runs_the_benchmark(tmp_path, monkeypatch):
     for p in regression.PROMPTS:
         assert p["id"] in out.output
     ws = next((tmp_path / "regression_runs").iterdir())
-    assert json.loads((ws / "results.json").read_text())["test_cases"]
-    assert json.loads((ws / "verdict.json").read_text())["verdict"] == "PASS"
-    assert "PASS" in (ws / "verdict.html").read_text()
+    assert json.loads((ws / "results.json").read_text(encoding="utf-8"))["test_cases"]
+    assert json.loads((ws / "verdict.json").read_text(encoding="utf-8"))["verdict"] == "PASS"
+    assert "PASS" in (ws / "verdict.html").read_text(encoding="utf-8")
 
 
 def test_a_regressed_run_exits_1(tmp_path, monkeypatch):
@@ -216,12 +216,12 @@ def test_a_regressed_run_exits_1(tmp_path, monkeypatch):
 def test_score_writes_verdict_next_to_results(tmp_path):
     results = tmp_path / "results.json"
     results.write_text(json.dumps(
-        _full()))
+        _full()), encoding="utf-8")
     out = CliRunner().invoke(cli.app, ["feature-regression", "--score", str(results)])
     assert out.exit_code == 0
-    assert json.loads((tmp_path / "verdict.json").read_text())["verdict"] == "PASS"
+    assert json.loads((tmp_path / "verdict.json").read_text(encoding="utf-8"))["verdict"] == "PASS"
     # the ACs (development time, accuracy, size) get a browser page too
-    html = (tmp_path / "verdict.html").read_text()
+    html = (tmp_path / "verdict.html").read_text(encoding="utf-8")
     assert "PASS" in html and "tc1_search_suggestion" in html
     assert "development" in html and "lines" in html
 

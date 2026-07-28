@@ -19,7 +19,7 @@ def pom_dir(tmp_path):
             search: { css: "input.results-filter" }
         shared:
           cookie accept: { id: onetrust-accept-btn-handler }
-    """))
+    """), encoding="utf-8")
     pom.set_context(str(tmp_path))
     pom.set_active_page(None)
     pom._load_yaml.cache_clear()
@@ -50,7 +50,7 @@ def test_unknown_key_returns_none(pom_dir):
 
 
 def test_legacy_flat_format_still_works(tmp_path):
-    (tmp_path / "pom.yaml").write_text("burger menu:\n  id: react-burger-menu-btn\n")
+    (tmp_path / "pom.yaml").write_text("burger menu:\n  id: react-burger-menu-btn\n", encoding="utf-8")
     pom.set_context(str(tmp_path))
     pom.set_active_page(None)
     pom._load_yaml.cache_clear()

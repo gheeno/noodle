@@ -82,7 +82,7 @@ def _ignored_dirs(root: Path) -> set[str]:
     """
     out = set()
     try:
-        lines = (root / ".gitignore").read_text(errors="replace").splitlines()
+        lines = (root / ".gitignore").read_text(errors="replace", encoding="utf-8").splitlines()
     except OSError:
         return out
     for ln in lines[:500]:
@@ -113,7 +113,7 @@ def _iter_files(root: Path, skip: set[str] = frozenset()):
 
 def _read(p: Path, limit: int = 200_000) -> str:
     try:
-        return p.read_text(errors="replace")[:limit]
+        return p.read_text(errors="replace", encoding="utf-8")[:limit]
     except OSError:
         return ""
 
@@ -176,12 +176,14 @@ def scan(root: str = ".") -> dict:
             stacks[kind] = None
             manifests.append((kind, f))
         if _SPEC_NAMES.match(name):
-            specs.append(str(rel))
+            # NOOD_0195 — POSIX: a scan payload names files for an agent
+            # and a CI config, not for the local filesystem.
+            specs.append(rel.as_posix())
             endpoints += _spec_endpoints(f)
         if name == "package.json":
             serve += _node_serve(f)
         elif name in ("docker-compose.yml", "docker-compose.yaml"):
-            serve.append(f"docker compose -f {rel} up")
+            serve.append(f"docker compose -f {rel.as_posix()} up")
         elif name in ("Makefile", "makefile") and _MAKE_TARGET.search(_read(f)):
             serve += [f"make {m.group(1)}"
                       for m in _MAKE_TARGET.finditer(_read(f))]

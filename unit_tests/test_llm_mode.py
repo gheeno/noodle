@@ -92,10 +92,10 @@ def test_log_suggestion_writes_and_dedups(tmp_path, monkeypatch):
         step_resolver._log_suggestion("User does a thing", action)
         path = tmp_path / "steps_dictionary_suggestions.md"
         assert path.exists()
-        assert "User does a thing" in path.read_text()
+        assert "User does a thing" in path.read_text(encoding="utf-8")
 
         step_resolver._log_suggestion("User does a thing", action)
-        assert path.read_text().count("- **Step:**") == 1  # no duplicate entry
+        assert path.read_text(encoding="utf-8").count("- **Step:**") == 1  # no duplicate entry
     finally:
         step_resolver.set_docs_dir(None)
 
@@ -111,15 +111,15 @@ def test_log_suggestion_counts_hits(tmp_path, monkeypatch):
         hot = {"type": "click", "locator": "x"}
         for _ in range(4):
             step_resolver._log_suggestion("User does a thing", hot)
-        assert "- **Hits:** 4" in path.read_text()
+        assert "- **Hits:** 4" in path.read_text(encoding="utf-8")
 
         step_resolver._log_suggestion("User does another thing", {"type": "search", "query": "q"})
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert text.count("- **Step:**") == 2
         assert "- **Hits:** 4" in text and "- **Hits:** 1" in text
 
         step_resolver._log_suggestion("User does another thing", {"type": "search", "query": "q"})
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "- **Hits:** 4" in text and "- **Hits:** 2" in text
     finally:
         step_resolver.set_docs_dir(None)

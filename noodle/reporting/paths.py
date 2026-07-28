@@ -28,7 +28,7 @@ def record_last_run_root(workspace: str = ".") -> None:
     p = Path(workspace) / _POINTER
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(str(artifacts_root()) + "\n")
+        p.write_text(str(artifacts_root()) + "\n", encoding="utf-8")
     except OSError:
         pass  # pointer is a nicety — never fail the run over it
 
@@ -44,7 +44,7 @@ def last_run_root(workspace: str = ".") -> Path:
         if (ws / "features").is_dir() and not (ws / "noodle.yaml").exists():
             return ws / "report"
         try:
-            rel = (ws / _POINTER).read_text().strip()
+            rel = (ws / _POINTER).read_text(encoding="utf-8").strip()
         except OSError:
             rel = ""
         if rel and (ws / rel).is_dir():

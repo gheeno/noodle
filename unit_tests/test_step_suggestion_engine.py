@@ -89,7 +89,7 @@ def test_accept_suggestion_writes_yaml_and_dictionary_and_clears_caches(tmp_path
     assert written["patterns_file"] == tmp_path / "agent_patterns.yaml"
     assert written["dictionary_file"] == tmp_path / "steps_dictionary.md"
 
-    entries = yaml.safe_load(written["patterns_file"].read_text())
+    entries = yaml.safe_load(written["patterns_file"].read_text(encoding="utf-8"))
     assert len(entries) == 1
     entry = entries[0]
     assert entry["action_type"] == "click"
@@ -97,7 +97,7 @@ def test_accept_suggestion_writes_yaml_and_dictionary_and_clears_caches(tmp_path
     assert entry["status"] == "staging"
     assert "phrase" in entry and "params" in entry and "added_on" in entry
 
-    dictionary_text = written["dictionary_file"].read_text()
+    dictionary_text = written["dictionary_file"].read_text(encoding="utf-8")
     assert "frobnicates the sprocket widget" in dictionary_text
     assert sse._ANCHOR in dictionary_text
 
@@ -119,7 +119,7 @@ def test_accept_suggestion_appends_to_existing_staged_entries(tmp_path, monkeypa
         suggestion = sse.draft_suggestion(query, result, use_llm=True)
         sse.accept_suggestion(suggestion, docs_dir=tmp_path)
 
-    entries = yaml.safe_load((tmp_path / "agent_patterns.yaml").read_text())
+    entries = yaml.safe_load((tmp_path / "agent_patterns.yaml").read_text(encoding="utf-8"))
     assert len(entries) == 2
 
 

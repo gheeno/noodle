@@ -291,7 +291,7 @@ def test_download_content_assertion_reads_a_binary_export(tmp_path):
 def test_csv_download_still_counts_lines(tmp_path):
     from noodle.agents.web import actions
     c = tmp_path / "e.csv"
-    c.write_text("h1,h2\na,1\nb,2\n")
+    c.write_text("h1,h2\na,1\nb,2\n", encoding="utf-8")
     dl = SimpleNamespace(suggested_filename="e.csv", path=lambda: str(c))
     page = SimpleNamespace(url="http://x/", wait_for_timeout=lambda ms: None)
     actions.assert_download_content(page, [dl], needle="a,1", rows=2)
@@ -435,7 +435,7 @@ def test_audit_flags_a_self_report_contradicted_by_the_run(tmp_path):
     (tmp_path / "artifacts").mkdir()
     (tmp_path / "artifacts" / "last_run.json").write_text(json.dumps(
         {"passed": 1, "failed": 2, "verified": False,
-         "unverified_reasons": ["healed via dom-scan"]}))
+         "unverified_reasons": ["healed via dom-scan"]}), encoding="utf-8")
     verdict = R.score(_claims_green(), str(tmp_path))
     assert verdict["verdict"] == "REGRESSED"
     assert any("claim green" in r for r in verdict["regressions"])
@@ -445,14 +445,14 @@ def test_audit_flags_a_self_report_contradicted_by_the_run(tmp_path):
 def test_audit_passes_when_artifacts_agree(tmp_path):
     (tmp_path / "artifacts").mkdir()
     (tmp_path / "artifacts" / "last_run.json").write_text(json.dumps(
-        {"passed": 2, "failed": 0, "verified": True}))
+        {"passed": 2, "failed": 0, "verified": True}), encoding="utf-8")
     assert R.score(_claims_green(), str(tmp_path))["verdict"] == "PASS"
 
 
 def test_audit_flags_a_green_claim_over_zero_scenarios(tmp_path):
     (tmp_path / "artifacts").mkdir()
     (tmp_path / "artifacts" / "last_run.json").write_text(json.dumps(
-        {"passed": 0, "failed": 0, "verified": True}))
+        {"passed": 0, "failed": 0, "verified": True}), encoding="utf-8")
     verdict = R.score(_claims_green(), str(tmp_path))
     assert verdict["verdict"] == "REGRESSED"
     assert any("0 passed" in r for r in verdict["regressions"])

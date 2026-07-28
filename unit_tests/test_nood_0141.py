@@ -172,7 +172,7 @@ def test_pom_raw_locator_and_entry_summary(tmp_path):
     resources = tmp_path / "app" / "resources"
     resources.mkdir()
     (resources / "pom.yaml").write_text(
-        "suggestion row:\n  css: 'span.nl-suggestion'\n")
+        "suggestion row:\n  css: 'span.nl-suggestion'\n", encoding="utf-8")
     pom_mod.set_context(str(features))
     try:
         pom_mod._load_yaml.cache_clear()
@@ -553,15 +553,24 @@ def _suggest_goal(**overrides):
     return goal
 
 
-def _suggest_probe_result():
-    return {"pages": [{
+def _suggest_probe_result(followed=True):
+    """NOOD_0195 — `followed`: goal mode now passes --follow, so the probe
+    clicks the suggestion and the landed results page arrives as the `search`
+    block (the same shape --search produces). Pass followed=False for the old
+    shape, where the probe read the list and closed it."""
+    pg = {
         "controls": [], "headings": [], "revealed": [],
         "suggest": probe_mod._suggest_block(
             [{"text": "vaccum cleaner", "id": "", "href": "",
               "base": '[role="option"]', "icon": "trigger-typeahead-icon"},
              {"text": "vaccuum", "id": "", "href": "", "base": "", "icon": ""}],
             "Vaccu"),
-    }]}
+    }
+    if followed:
+        pg["search"] = {"term": "vaccum cleaner", "controls": [],
+                        "pom_yaml": "", "followed_from": "Vaccu",
+                        "headings": ["BISSELL PowerLifter Stick Vacuum"]}
+    return {"pages": [pg]}
 
 
 def test_goal_validate_accepts_suggest():
@@ -599,13 +608,26 @@ def test_goal_probe_args_carry_suggest_term():
     assert args["discover"] is False
 
 
-def test_goal_checks_after_suggest_are_runtime_asserted():
+def test_goal_checks_after_suggest_are_proven_on_the_followed_page():
+    # NOOD_0195 — this used to assert the check was runtime-asserted, because
+    # the probe never clicked the suggestion through. It follows now, so the
+    # results page is real evidence and the check is PROVEN against it.
+    # Runtime-asserting it meant `ready: true` had checked nothing.
     from noodle.repl import goal as goal_mod
     ev = goal_mod.evidence(_suggest_goal(), _suggest_probe_result())
     assert ev["blocking"] == []
     assert ev["proven"]["suggest:Vaccu"] == "vaccum cleaner"
-    # the post-click results check can't be probe-proven — the run owns it
-    assert ev["runtime_asserted"] == ['the user sees "BISSELL PowerLifter"']
+    assert ev["proven"]["see:BISSELL PowerLifter"] == \
+        "BISSELL PowerLifter Stick Vacuum"
+    assert ev["runtime_asserted"] == []
+
+
+def test_goal_check_absent_from_the_followed_page_now_blocks():
+    from noodle.repl import goal as goal_mod
+    probe = _suggest_probe_result()
+    probe["pages"][0]["search"]["headings"] = ["Showing 0 results"]
+    ev = goal_mod.evidence(_suggest_goal(), probe)
+    assert any("BISSELL PowerLifter" in b for b in ev["blocking"]), ev
 
 
 def test_goal_suggest_blocks_on_uncaptured_option():
@@ -690,7 +712,7 @@ def test_collect_gathers_scenario_wide_warnings(tmp_path):
                                "trace": "", "warnings": []}},
         ],
     }
-    (tmp_path / "a-result.json").write_text(json.dumps(result))
+    (tmp_path / "a-result.json").write_text(json.dumps(result), encoding="utf-8")
     entries = rca_report.collect(str(tmp_path))
     assert len(entries) == 1
     assert any("no observable effect" in w

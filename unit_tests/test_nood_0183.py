@@ -183,7 +183,7 @@ def test_preflight_accepts_lane_only_credentials(tmp_path, monkeypatch):
     app = tmp_path / "shop"
     (app / "features").mkdir(parents=True)
     (app / "features" / "login.feature").write_text(
-        "Feature: L\n  Scenario: S\n    When User enters '{env:SHOP_USER}' in the user field\n")
+        "Feature: L\n  Scenario: S\n    When User enters '{env:SHOP_USER}' in the user field\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     # resolved_feature= bypasses target resolution, which would otherwise skip
     # the whole check (ok=True) outside a real workspace and prove nothing.
@@ -345,10 +345,10 @@ def test_failed_rerun_reads_the_last_run_results(tmp_path, monkeypatch):
     from noodle.cli import _failed_scenario_names
     results = tmp_path / "artifacts" / "allure-results"
     results.mkdir(parents=True)
-    (results / "a-result.json").write_text(json.dumps({"name": "Checkout works", "status": "passed"}))
-    (results / "b-result.json").write_text(json.dumps({"name": "Login rejects a bad password", "status": "failed"}))
-    (results / "c-result.json").write_text(json.dumps({"name": "Cart totals", "status": "broken"}))
-    (results / "d-result.json").write_text("not json")           # must not crash the rerun
+    (results / "a-result.json").write_text(json.dumps({"name": "Checkout works", "status": "passed"}), encoding="utf-8")
+    (results / "b-result.json").write_text(json.dumps({"name": "Login rejects a bad password", "status": "failed"}), encoding="utf-8")
+    (results / "c-result.json").write_text(json.dumps({"name": "Cart totals", "status": "broken"}), encoding="utf-8")
+    (results / "d-result.json").write_text("not json", encoding="utf-8")           # must not crash the rerun
     monkeypatch.delenv("NOODLE_ARTIFACTS_DIR", raising=False)
 
     assert _failed_scenario_names(str(tmp_path)) == ["Cart totals", "Login rejects a bad password"]
@@ -413,7 +413,7 @@ def test_advance_clock_rejects_a_unit_it_cannot_convert():
 def test_init_script_reads_a_js_file_but_passes_inline_js_through(tmp_path, monkeypatch):
     from noodle.agents.web import actions
     monkeypatch.chdir(tmp_path)
-    Path("stub.js").write_text("window.FLAG = 1;")
+    Path("stub.js").write_text("window.FLAG = 1;", encoding="utf-8")
     page = MagicMock()
 
     actions.add_init_script(page, "stub.js")

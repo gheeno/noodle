@@ -16,7 +16,7 @@ def _scaffold(tmp_path):
 
 
 def test_prompt_template_is_paste_clean(tmp_path):
-    tpl = (_scaffold(tmp_path) / "PROMPT_TEMPLATE.md").read_text()
+    tpl = (_scaffold(tmp_path) / "PROMPT_TEMPLATE.md").read_text(encoding="utf-8")
     for line in tpl.splitlines():
         assert line == line.lstrip(), f"indented line breaks chat paste: {line!r}"
     # one logical item per line — a sentence hard-wrapped mid-way would leave
@@ -27,7 +27,7 @@ def test_prompt_template_is_paste_clean(tmp_path):
 
 
 def test_prompt_template_has_no_hard_wrapped_sentences(tmp_path):
-    tpl = (_scaffold(tmp_path) / "PROMPT_TEMPLATE.md").read_text()
+    tpl = (_scaffold(tmp_path) / "PROMPT_TEMPLATE.md").read_text(encoding="utf-8")
     # every non-blank line is a complete field or sentence — a hard-wrapped
     # line would end mid-phrase, without a terminator
     for line in tpl.splitlines():
@@ -39,6 +39,6 @@ def test_claude_md_points_at_agents_md_without_importing(tmp_path):
     # NOOD_0117 — the @-import doubled AGENTS.md on every model call once
     # Claude Code started loading AGENTS.md natively; the pointer is now
     # plain text so no client injects the file twice.
-    claude = (_scaffold(tmp_path) / "CLAUDE.md").read_text()
+    claude = (_scaffold(tmp_path) / "CLAUDE.md").read_text(encoding="utf-8")
     assert "AGENTS.md" in claude
     assert "@AGENTS.md" not in claude, "an @-import double-injects AGENTS.md"

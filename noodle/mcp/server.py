@@ -713,7 +713,7 @@ def read_docs(name: str | None = None, query: str | None = None,
         if not f.is_file():
             return {"error": f"no doc named {name!r}",
                     "available": [p.stem for p in files]}
-        text = f.read_text()
+        text = f.read_text(encoding="utf-8")
         secs = _doc_sections(text)
         if section:
             hit = _pick_section(secs, section)
@@ -735,7 +735,7 @@ def read_docs(name: str | None = None, query: str | None = None,
         hits = []
         for f in files:
             sec = "(preamble)"       # NOOD_0159: name the section so a hit is
-            for i, line in enumerate(f.read_text().splitlines(), 1):
+            for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
                 if line.startswith("## "):     # retrievable without an index
                     sec = line[3:].strip()     # round trip
                 if q in line.lower():
@@ -746,7 +746,7 @@ def read_docs(name: str | None = None, query: str | None = None,
         return {"query": query, "hits": hits}
 
     def _entry(f: Path) -> dict:
-        text = f.read_text()
+        text = f.read_text(encoding="utf-8")
         summary = next((ln.strip() for ln in text.splitlines()
                         if ln.strip() and not ln.startswith("#")), "")
         # NOOD_0159: cost rides in the index so the caller knows what a

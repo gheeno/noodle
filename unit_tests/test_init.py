@@ -27,19 +27,19 @@ def test_init_creates_all_workspace_files(tmp_path):
         assert (tmp_path / rel).exists(), f"missing {rel}"
     # every generated file opens with a purpose comment
     for rel in ["noodle.yaml", ".env", "noodle_tests/sample_app/features/login.feature"]:
-        assert (tmp_path / rel).read_text().startswith("#"), f"no header comment in {rel}"
+        assert (tmp_path / rel).read_text(encoding="utf-8").startswith("#"), f"no header comment in {rel}"
     # noodle.yaml points the engine at the scaffolded tests dir
-    assert "tests_dir: noodle_tests" in (tmp_path / "noodle.yaml").read_text()
+    assert "tests_dir: noodle_tests" in (tmp_path / "noodle.yaml").read_text(encoding="utf-8")
     # sample feature points at the steps dictionary and keeps steps commented
-    sample = (tmp_path / "noodle_tests/sample_app/features/login.feature").read_text()
+    sample = (tmp_path / "noodle_tests/sample_app/features/login.feature").read_text(encoding="utf-8")
     assert "steps_dictionary" in sample
     assert "    # Given" in sample
     # feature template points at its POM file
     assert "pageobjects/login_pom.yaml" in sample
     # AI instructions cover layout + workflow; CLAUDE.md defers to AGENTS.md
-    agents = (tmp_path / "AGENTS.md").read_text()
+    agents = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
     assert "noodle_tests/<app>" in agents and "validate" in agents
-    assert "AGENTS.md" in (tmp_path / "CLAUDE.md").read_text()
+    assert "AGENTS.md" in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
 
 
 def test_app_report_dir_detection(tmp_path):
@@ -87,7 +87,7 @@ def test_summary_follows_routed_run(tmp_path, monkeypatch):
     results = tmp_path / "noodle_tests/sample_app/report/allure-results"
     results.mkdir(parents=True)
     (results / "a-result.json").write_text(
-        '{"name": "S", "status": "passed", "start": 0, "stop": 1}')
+        '{"name": "S", "status": "passed", "start": 0, "stop": 1}', encoding="utf-8")
     monkeypatch.setenv("NOODLE_ARTIFACTS_DIR", "noodle_tests/sample_app/report")
     _paths.record_last_run_root(str(tmp_path))
     monkeypatch.delenv("NOODLE_ARTIFACTS_DIR")
@@ -99,15 +99,15 @@ def test_summary_follows_routed_run(tmp_path, monkeypatch):
 def test_init_is_idempotent(tmp_path):
     runner.invoke(app, ["init", str(tmp_path)])
     marker = tmp_path / ".env"
-    marker.write_text("USER_EDITED=true\n")
+    marker.write_text("USER_EDITED=true\n", encoding="utf-8")
     result = runner.invoke(app, ["init", str(tmp_path)])
     assert result.exit_code == 0
-    assert marker.read_text() == "USER_EDITED=true\n"  # never overwrites
+    assert marker.read_text(encoding="utf-8") == "USER_EDITED=true\n"  # never overwrites
 
 
 def test_init_without_llm_leaves_model_commented_out(tmp_path):
     runner.invoke(app, ["init", str(tmp_path)])
-    env_text = (tmp_path / ".env").read_text()
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "#NOODLE_MODEL=" in env_text
     assert "NOODLE_LLM_URL" not in env_text
 
@@ -115,7 +115,7 @@ def test_init_without_llm_leaves_model_commented_out(tmp_path):
 def test_init_llm_ollama_persists_model_and_url(tmp_path):
     result = runner.invoke(app, ["init", str(tmp_path), "--llm", "ollama"])
     assert result.exit_code == 0
-    env_text = (tmp_path / ".env").read_text()
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "NOODLE_MODEL=ollama/llama3.2" in env_text
     assert "NOODLE_LLM_URL=http://localhost:11434" in env_text
 
@@ -123,7 +123,7 @@ def test_init_llm_ollama_persists_model_and_url(tmp_path):
 def test_init_llm_claude_no_ollama_url(tmp_path):
     result = runner.invoke(app, ["init", str(tmp_path), "--llm", "claude"])
     assert result.exit_code == 0
-    env_text = (tmp_path / ".env").read_text()
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "NOODLE_MODEL=anthropic/claude-sonnet-5" in env_text
     assert "NOODLE_LLM_URL" not in env_text
 
@@ -131,13 +131,13 @@ def test_init_llm_claude_no_ollama_url(tmp_path):
 def test_init_llm_model_override(tmp_path):
     result = runner.invoke(app, ["init", str(tmp_path), "--llm", "ollama", "--model", "ollama/llava"])
     assert result.exit_code == 0
-    assert "NOODLE_MODEL=ollama/llava" in (tmp_path / ".env").read_text()
+    assert "NOODLE_MODEL=ollama/llava" in (tmp_path / ".env").read_text(encoding="utf-8")
 
 
 def test_init_llm_ignored_when_env_already_exists(tmp_path):
     runner.invoke(app, ["init", str(tmp_path)])
-    before = (tmp_path / ".env").read_text()
+    before = (tmp_path / ".env").read_text(encoding="utf-8")
     result = runner.invoke(app, ["init", str(tmp_path), "--llm", "ollama"])
     assert result.exit_code == 0
-    assert (tmp_path / ".env").read_text() == before  # untouched, not silently rewritten
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == before  # untouched, not silently rewritten
     assert "ignored" in result.output

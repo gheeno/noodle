@@ -13,7 +13,7 @@ def test_healing_records_and_reports(tmp_path):
     report = tmp_path / "healing-report.txt"
     healing.write_report(str(report))
 
-    text = report.read_text()
+    text = report.read_text(encoding="utf-8")
     assert "2 event(s)" in text
     assert "Add to cart" in text and "burger menu" in text
     # POM suggestion line per distinct locator

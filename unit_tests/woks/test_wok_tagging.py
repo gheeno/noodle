@@ -98,7 +98,7 @@ def test_retag_feature_swaps_routing_keeps_markers():
 
 @pytest.fixture
 def ws(tmp_path, monkeypatch):
-    (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n")
+    (tmp_path / "noodle.yaml").write_text("tests_dir: tests\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -107,7 +107,7 @@ def test_create_test_retags_engine_template(ws):
     r = core.create_test("load test the home page", "example.com", workspace=str(ws))
     assert r["ok"] is True
     assert r["wok_tag"] == "perf"
-    content = (ws / r["feature"]).read_text()
+    content = (ws / r["feature"]).read_text(encoding="utf-8")
     assert content.splitlines()[0].startswith("@perf")
     assert "@web" not in content
 
@@ -115,18 +115,18 @@ def test_create_test_retags_engine_template(ws):
 def test_create_test_keeps_web_for_web_intent(ws):
     r = core.create_test("login test", "example.com", workspace=str(ws))
     assert r["ok"] is True and "wok_tag" not in r
-    assert "@web" in (ws / r["feature"]).read_text()
+    assert "@web" in (ws / r["feature"]).read_text(encoding="utf-8")
 
 
 def test_write_feature_adds_tag_when_missing(ws):
     r = core.write_feature("tests/web/x/features/t.feature", _UNTAGGED,
                            workspace=str(ws))
     assert r["ok"] is True and r["wok_tag"] == "perf"
-    assert (ws / r["feature"]).read_text().splitlines()[0] == "@perf"
+    assert (ws / r["feature"]).read_text(encoding="utf-8").splitlines()[0] == "@perf"
 
 
 def test_write_feature_keeps_callers_tag(ws):
     r = core.write_feature("tests/web/x/features/t2.feature",
                            "@web\n" + _UNTAGGED, workspace=str(ws))
     assert r["ok"] is True and "wok_tag" not in r
-    assert (ws / r["feature"]).read_text().splitlines()[0] == "@web"
+    assert (ws / r["feature"]).read_text(encoding="utf-8").splitlines()[0] == "@web"

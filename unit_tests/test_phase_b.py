@@ -85,7 +85,7 @@ def _write_result(tmp_path, name, status, tags):
         "status": status,
         "labels": [{"name": "tag", "value": t} for t in tags],
     }
-    (tmp_path / f"{name}-result.json").write_text(json.dumps(r))
+    (tmp_path / f"{name}-result.json").write_text(json.dumps(r), encoding="utf-8")
 
 
 def test_quarantine_none_when_no_results(tmp_path):

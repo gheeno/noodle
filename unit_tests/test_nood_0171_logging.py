@@ -162,7 +162,7 @@ def test_file_log_is_json_in_json_mode(tmp_path):
     for h in log.logger.handlers:
         if isinstance(h, _logging.FileHandler):
             h.flush()
-    obj = json.loads(p.read_text().strip().splitlines()[-1])
+    obj = json.loads(p.read_text(encoding="utf-8").strip().splitlines()[-1])
     assert obj["event"] == "run.end"
     assert obj["run_id"] == "deadbeefdeadbeef"
     assert obj["attributes"]["failed"] == 0
@@ -358,6 +358,6 @@ def test_llm_payload_log_is_opt_in_and_redacted(monkeypatch, tmp_path, capsys):
     # opted in → written, redacted
     monkeypatch.setenv("NOODLE_LOG_LLM_PAYLOADS", "1")
     client.ask("password is hunter2-secret-value")
-    body = (tmp_path / "llm" / "testrun01.jsonl").read_text()
+    body = (tmp_path / "llm" / "testrun01.jsonl").read_text(encoding="utf-8")
     assert "hunter2-secret-value" not in body and "***" in body
     assert json.loads(body.strip().splitlines()[-1])["purpose"] == "llm"

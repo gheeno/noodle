@@ -38,7 +38,7 @@ def test_write_creates_md_with_front_matter(ws, tmp_path):
     assert fm["triggers"] == ["hard-fail", "slow-dev"]
     assert fm["duration_min"] == 27.4 and fm["attempts"] == 10
     assert fm["agent"] == "codex 5.3" and fm["agent_cost"] == "23 AIC"
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     for section in ("What went wrong", "Timeline", "Suspected cause", "Fixes tried"):
         assert section in text
     assert r["updated"] is False and r["count"] == 1
@@ -60,7 +60,7 @@ def test_same_session_updates_not_duplicates(ws, tmp_path):
     assert r1["path"] == r2["path"]
     files = list((tmp_path / "diagnostics").glob("*.md"))
     assert len(files) == 1
-    assert "second take" in files[0].read_text()
+    assert "second take" in files[0].read_text(encoding="utf-8")
 
 
 def test_same_app_in_window_updates_without_session(ws, tmp_path):
@@ -96,7 +96,7 @@ def test_secret_values_scrubbed(ws):
     try:
         r = _write(ws, summary="login with Hunter2Pass failed",
                    fixes_tried="retyped Hunter2Pass by hand")
-        text = Path(r["path"]).read_text()
+        text = Path(r["path"]).read_text(encoding="utf-8")
         assert "Hunter2Pass" not in text
         assert "***" in text
     finally:
@@ -105,7 +105,7 @@ def test_secret_values_scrubbed(ws):
 
 def test_narrative_fields_truncated(ws):
     r = _write(ws, timeline="x" * 20_000)
-    text = Path(r["path"]).read_text()
+    text = Path(r["path"]).read_text(encoding="utf-8")
     assert "truncated by noodle" in text
     assert len(text) < 12_000
 
@@ -145,7 +145,7 @@ def test_engine_facts_appended_when_run_exists(ws, tmp_path, monkeypatch):
     (results / "demo-result.json").write_text(json.dumps({
         "name": "Valid login", "status": "failed", "start": 0, "stop": 1000,
         "statusDetails": {"message": "element not found: login"},
-        "labels": [{"name": "feature", "value": "Login"}]}))
+        "labels": [{"name": "feature", "value": "Login"}]}), encoding="utf-8")
     r = _write(ws)
     fm = diagnostics._front_matter(Path(r["path"]))
     assert fm.get("last_run", {}).get("failed") == 1
@@ -172,7 +172,7 @@ def test_green_run_resets_streak(ws, tmp_path):
     import json
     diagnostics.track_run(ws, "t.feature", failed=True)
     diagnostics.track_run(ws, "t.feature", failed=False)
-    state = json.loads((tmp_path / ".noodle" / "diag_state.json").read_text())
+    state = json.loads((tmp_path / ".noodle" / "diag_state.json").read_text(encoding="utf-8"))
     assert "t.feature" not in state
     # next red run counts as a fresh first attempt
     assert "first-attempt-fail" in diagnostics.track_run(ws, "t.feature", failed=True)
@@ -183,11 +183,11 @@ def test_slow_dev_fires_past_threshold_even_on_green(ws, tmp_path, monkeypatch):
     monkeypatch.setenv("NOODLE_DIAG_SLOW_MIN", "20")
     diagnostics.track_run(ws, "t.feature", failed=True)
     f = tmp_path / ".noodle" / "diag_state.json"
-    state = json.loads(f.read_text())
+    state = json.loads(f.read_text(encoding="utf-8"))
     from datetime import datetime, timedelta, timezone
     old = (datetime.now(timezone.utc) - timedelta(minutes=25)).isoformat(timespec="seconds")
     state["t.feature"]["first_run_at"] = old
-    f.write_text(json.dumps(state))
+    f.write_text(json.dumps(state), encoding="utf-8")
     assert "slow-dev" in diagnostics.track_run(ws, "t.feature", failed=False)
 
 
@@ -196,10 +196,10 @@ def test_stale_state_restarts_as_fresh_session(ws, tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
     diagnostics.track_run(ws, "t.feature", failed=True)
     f = tmp_path / ".noodle" / "diag_state.json"
-    state = json.loads(f.read_text())
+    state = json.loads(f.read_text(encoding="utf-8"))
     old = (datetime.now(timezone.utc) - timedelta(minutes=300)).isoformat(timespec="seconds")
     state["t.feature"].update(first_run_at=old, last_run_at=old)
-    f.write_text(json.dumps(state))
+    f.write_text(json.dumps(state), encoding="utf-8")
     # a run 5 hours later is a NEW dev session: first-attempt fires again,
     # and the 5-hour gap must not read as slow-dev
     fired = diagnostics.track_run(ws, "t.feature", failed=True)
@@ -209,7 +209,7 @@ def test_stale_state_restarts_as_fresh_session(ws, tmp_path, monkeypatch):
 def test_track_run_never_raises(tmp_path):
     # unwritable state file must not break the run
     bad = tmp_path / ".noodle"
-    bad.write_text("a file where a dir should be")
+    bad.write_text("a file where a dir should be", encoding="utf-8")
     assert diagnostics.track_run(str(tmp_path), "t", failed=True) == []
 
 
@@ -240,7 +240,7 @@ def test_gitignore_and_templates_carry_diagnostics():
     assert "diagnostics/" in cli._WORKSPACE_README
     # the full trigger vocabulary lives in the doc + the MCP tool docstring,
     # NOT in the byte-capped always-on surfaces
-    doc = (Path(__file__).resolve().parent.parent / "docs" / "session-diagnostics.md").read_text()
+    doc = (Path(__file__).resolve().parent.parent / "docs" / "session-diagnostics.md").read_text(encoding="utf-8")
     for trigger in diagnostics.TRIGGERS:
         assert trigger in doc
         assert trigger in server.log_diagnostic.__doc__
@@ -252,8 +252,8 @@ def test_init_scaffolds_gitignored_diagnostics(tmp_path):
     from noodle.cli import app
     result = CliRunner().invoke(app, ["init", str(tmp_path)])
     assert result.exit_code == 0
-    assert "diagnostics/" in (tmp_path / ".gitignore").read_text()
-    assert "Session diagnostics" in (tmp_path / "AGENTS.md").read_text()
+    assert "diagnostics/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert "Session diagnostics" in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
 
 
 def test_cli_log_and_list(tmp_path):
@@ -286,7 +286,7 @@ def test_guide_command_works_without_mcp():
 def test_guide_doc_bundled_into_wheel():
     # NOOD_0145 pattern: installed distributions must carry the doc so
     # `noodle diagnostic guide` doesn't depend on a source checkout
-    pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
+    pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8")
     assert '"docs/session-diagnostics.md" = "noodle/_docs/session-diagnostics.md"' in pyproject
 
 

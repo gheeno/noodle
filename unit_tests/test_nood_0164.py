@@ -65,7 +65,7 @@ def test_budget_is_a_knob(monkeypatch):
 # --- the boundary: no tool and no --json door may skip it --------------------
 
 def test_every_mcp_tool_is_registered_through_the_budgeted_decorator():
-    src = (REPO / "noodle" / "mcp" / "server.py").read_text()
+    src = (REPO / "noodle" / "mcp" / "server.py").read_text(encoding="utf-8")
     raw = [ln for ln in src.splitlines() if ln.strip() == "@mcp.tool()"]
     assert not raw, ("register tools with @_tool() (payload-budgeted), not "
                      f"@mcp.tool(): {len(raw)} raw registration(s)")
@@ -73,7 +73,7 @@ def test_every_mcp_tool_is_registered_through_the_budgeted_decorator():
 
 
 def test_no_cli_json_door_bypasses_the_helper():
-    src = (REPO / "noodle" / "cli.py").read_text()
+    src = (REPO / "noodle" / "cli.py").read_text(encoding="utf-8")
     helper = src.split("def _json_out")[1].split("\ndef ")[0]
     doors = [ln.strip() for ln in src.splitlines()
              if re.search(r"typer\.echo\(json\.dumps\(", ln)]

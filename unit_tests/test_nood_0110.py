@@ -91,7 +91,7 @@ def test_playbook_has_spa_field_notes():
     # into the on-demand playbook (instruction-floor diet); AGENTS.md now
     # points there instead of carrying them.
     playbook = " ".join(
-        (REPO / "docs" / "agent-playbook.md").read_text().split())
+        (REPO / "docs" / "agent-playbook.md").read_text(encoding="utf-8").split())
     assert "SPA field notes" in playbook
     # the five stall recipes, one key phrase each (playbook wording)
     for phrase in (

@@ -21,7 +21,7 @@ def latest_results(results_dir: str = None) -> list[dict]:
     latest: dict = {}
     for f in files:
         try:
-            r = json.loads(f.read_text())
+            r = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
         key = r.get("historyId") or r.get("fullName") or f.name
@@ -41,7 +41,7 @@ def mark_flaky(results_dir: str = None) -> int:
     groups: dict = {}
     for f in files:
         try:
-            r = json.loads(f.read_text())
+            r = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
         key = r.get("historyId") or r.get("fullName") or f.name
@@ -56,7 +56,7 @@ def mark_flaky(results_dir: str = None) -> int:
             continue
         final.setdefault("statusDetails", {})["flaky"] = True
         try:
-            path.write_text(json.dumps(final, indent=2))
+            path.write_text(json.dumps(final, indent=2), encoding="utf-8")
             stamped += 1
         except OSError:
             continue
@@ -82,7 +82,7 @@ def collect(results_dir: str = None) -> dict:
     attempts: dict = {}
     for f in files:
         try:
-            r = json.loads(f.read_text())
+            r = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
         if "start" in r:

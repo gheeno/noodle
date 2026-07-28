@@ -125,7 +125,7 @@ class TestWriteFeature:
         ]
         r._write_feature()
 
-        content = out.read_text()
+        content = out.read_text(encoding="utf-8")
         assert "Feature: Login Test" in content
         assert "Scenario: Login Test" in content
         assert "@web" in content
@@ -144,6 +144,6 @@ class TestWriteFeature:
         out = tmp_path / "empty.feature"
         r = Recorder(str(out))
         r._write_feature()
-        content = out.read_text()
+        content = out.read_text(encoding="utf-8")
         assert "Feature:" in content
         assert "Scenario:" in content

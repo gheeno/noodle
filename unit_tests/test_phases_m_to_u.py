@@ -310,7 +310,7 @@ def test_appium_caps_loader(tmp_path):
     caps = load_capabilities('{"platformName": "Android"}')
     assert caps == {"platformName": "Android"}
     p = tmp_path / "caps.json"
-    p.write_text('{"platformName": "iOS"}')
+    p.write_text('{"platformName": "iOS"}', encoding="utf-8")
     assert load_capabilities(str(p)) == {"platformName": "iOS"}
     with pytest.raises(AssertionError, match="not set"):
         load_capabilities(None)

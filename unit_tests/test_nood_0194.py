@@ -32,7 +32,7 @@ def test_binding_the_report_server_never_resolves_a_hostname(monkeypatch):
 def test_the_server_still_serves_after_skipping_the_lookup(tmp_path):
     """server_bind is overridden — prove the socket is actually usable, not
     just constructed, so the shortcut can't pass by not binding at all."""
-    (tmp_path / "index.html").write_text("<html>noodle</html>")
+    (tmp_path / "index.html").write_text("<html>noodle</html>", encoding="utf-8")
     httpd = builder._make_server(str(tmp_path), "127.0.0.1", 0)
     try:
         import threading
@@ -56,7 +56,7 @@ def test_a_pass_that_ran_no_steps_is_not_verified(tmp_path):
 
     (tmp_path / "a-result.json").write_text(_json.dumps(
         {"name": "Sample — login", "status": "passed", "steps": [],
-         "historyId": "sample", "start": 0, "stop": 1}))
+         "historyId": "sample", "start": 0, "stop": 1}), encoding="utf-8")
     empty = summary.collect(str(tmp_path))
     assert empty["passed"] == 1 and empty["failed"] == 0
     assert empty["verified"] is False
@@ -66,6 +66,6 @@ def test_a_pass_that_ran_no_steps_is_not_verified(tmp_path):
     (tmp_path / "a-result.json").write_text(_json.dumps(
         {"name": "Sample — login", "status": "passed", "historyId": "sample",
          "start": 0, "stop": 1,
-         "steps": [{"name": "User clicks the 'Login' button", "status": "passed"}]}))
+         "steps": [{"name": "User clicks the 'Login' button", "status": "passed"}]}), encoding="utf-8")
     real = summary.collect(str(tmp_path))
     assert real["passed"] == 1 and real["verified"] is True

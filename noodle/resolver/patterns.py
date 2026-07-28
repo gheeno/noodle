@@ -1666,7 +1666,7 @@ def _agent_patterns() -> list[dict]:
     entries: list[dict] = []
     path = _agent_patterns_path()
     if yaml is not None and path.exists():
-        raw = yaml.safe_load(path.read_text()) or []
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or []
         if isinstance(raw, list):
             entries = raw
     _agent_patterns_cache = entries

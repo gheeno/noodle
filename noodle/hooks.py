@@ -139,7 +139,7 @@ def _load_environments():
     def _apply(path: Path, override: bool = False):
         if not path.exists():
             return
-        data = yaml.safe_load(path.read_text()) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         for key, value in data.items():
             k = key.upper()
             # NOOD_0177 — a config file has no legitimate reason to set the
@@ -261,7 +261,11 @@ def before_all(context):
         # Each behavex worker is its own process — give it a private results
         # subdir so workers don't wipe/overwrite each other's files. The CLI
         # cleans the shared parent once, before spawning the workers.
-        os.environ["NOODLE_RESULTS_DIR"] = str(_paths.artifacts_root() / "allure-results" / f"p{os.getpid()}")
+        # NOOD_0195 — as_posix: this env var crosses into worker subprocesses
+        # and Allure's own tooling, and Windows accepts forward slashes in a
+        # path anyway. One spelling everywhere beats two.
+        os.environ["NOODLE_RESULTS_DIR"] = (
+            _paths.artifacts_root() / "allure-results" / f"p{os.getpid()}").as_posix()
         log.attach_file_handler(str(_paths.logs_dir() / f"noodle.p{os.getpid()}.log"))
         # NOOD_0171 — all workers share the run_id (inherited via env), so a
         # merged log needs a per-lane tag to disentangle interleaved features/
@@ -1222,7 +1226,7 @@ def after_scenario(context, scenario):
                 "failed_responses": ctx_get(context, "_failed_responses", []),
                 "ws_frames": [_safe_ws_frame(f) for f in context._ws_frames],
             }
-            net_path.write_text(log.redact(json.dumps(net_doc, indent=2)))
+            net_path.write_text(log.redact(json.dumps(net_doc, indent=2)), encoding="utf-8")
             ar_net = _allure_result(context)
             if ar_net is not None:
                 ar_net.add_attachment("network log", str(net_path), "application/json")
