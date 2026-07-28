@@ -2,6 +2,7 @@ import functools
 import http.server
 import json
 import shutil
+import socketserver
 import subprocess
 from pathlib import Path
 
@@ -140,9 +141,27 @@ class _NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         return None
 
 
+class _ReportServer(http.server.ThreadingHTTPServer):
+    """NOOD_0194 — bind WITHOUT the reverse-DNS lookup.
+
+    `HTTPServer.server_bind()` calls `socket.getfqdn(host)` purely to set
+    `self.server_name`, which nothing in Noodle reads. On a box whose resolver
+    is slow to answer a reverse lookup — corporate VPN, a container with no
+    resolver, a self-hosted CI agent — that call blocks before the socket is
+    usable: measured at 35s on one interpreter vs 0.01s on another, on the same
+    machine. `cli._spawn_report_server` gives the child 30s to register, so the
+    report-hosting step that every run is supposed to end with died with
+    "didn't bind within 30s" while the server was, in fact, coming up fine.
+    """
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def _make_server(report_dir: str, host: str = "127.0.0.1", port: int = 8000) -> http.server.ThreadingHTTPServer:
     handler = functools.partial(_NoCacheHandler, directory=report_dir)
-    return http.server.ThreadingHTTPServer((host, port), handler)
+    return _ReportServer((host, port), handler)
 
 
 def report_urls(report_dir: str, host: str, port: int) -> list[str]:

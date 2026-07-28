@@ -22,6 +22,7 @@ Transports (NOOD_0045 — MAF/Foundry support):
 import argparse
 import functools
 import hmac
+import inspect
 import logging
 import os
 import sys
@@ -140,6 +141,14 @@ def _tool():
                           duration_ms=dur,
                           payload_bytes=payload_budget.size(result) if result is not None else 0)
         wrapper.__budgeted__ = True
+        # NOOD_0194 — a tool's docstring IS its published description (MCP
+        # tools/list and the OpenAPI spec both read it). Python 3.13 strips
+        # common leading whitespace from docstrings at compile time and 3.11
+        # does not, so the same source generated two different specs and the
+        # docs/openapi.json drift guard could only ever be green on one
+        # interpreter. cleandoc makes the published text version-independent.
+        if wrapper.__doc__:
+            wrapper.__doc__ = inspect.cleandoc(wrapper.__doc__)
         return mcp.tool()(wrapper)
     return decorate
 

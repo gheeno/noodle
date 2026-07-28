@@ -63,6 +63,37 @@ jobs:
       - run: ruff check .
       - run: python -m pytest unit_tests -q
 
+  # NOOD_0194 — the two platforms the project CLAIMS and never tested. README
+  # sells a Windows 11 path and pyproject says `requires-python = ">=3.11"`,
+  # but every job above this was ubuntu + 3.11, so the first person to hit
+  # either was going to be an alpha tester. Unit suite only: lint, the
+  # constraints-drift diff and the browser suites are platform-independent and
+  # already gated once above — repeating them here buys nothing but minutes.
+  #
+  # The legs vary ONE thing each against that ubuntu-3.11 baseline, so a red
+  # leg names its own cause instead of leaving you to bisect an OS and an
+  # interpreter at once.
+  unit-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            python-version: '3.11'
+          - os: ubuntu-latest
+            python-version: '3.13'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install -e ".[all,llm]" -c constraints.txt
+      # The touch-gesture tests need a real browser or they skip (see above).
+      - run: playwright install chromium
+      - run: python -m pytest unit_tests -q
+
   e2e:
     needs: lint-and-unit
     runs-on: ubuntu-latest

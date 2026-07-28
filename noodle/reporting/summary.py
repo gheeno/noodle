@@ -144,6 +144,19 @@ def collect(results_dir: str = None) -> dict:
                                    "(center-scroll failed)")
         if r.get("status") == "passed":
             passed += 1
+            # NOOD_0194 — a scenario whose body is empty or entirely commented
+            # out "passes" having executed nothing. `noodle init`'s sample ships
+            # that way on purpose (a fresh workspace runs green), so a new
+            # tester's very first run printed a bare ✅ that proved neither
+            # their browser nor their install worked; the same thing happens
+            # mid-debug when someone comments a body out and forgets. Same
+            # class as NOOD_0187's 0-scenarios guard, one level down — and
+            # exactly what `verified` exists to say: green, but nothing backs
+            # it. A reason, not a failure: shipping the sample pre-commented is
+            # deliberate, and a placeholder scenario isn't an error.
+            if not r.get("steps"):
+                reasons.append(f"{scenario} — passed without running a single "
+                               "step (empty or commented-out scenario body)")
         elif r.get("status") == "skipped":
             skipped += 1
         elif r.get("status") in ("failed", "broken"):
@@ -187,8 +200,11 @@ def render(results_dir: str = None, report_dir: str = None,
     # NOOD_0156 — a green run that only passed via fuzzy healing/lenient
     # ambiguity is NOT verified; say so where the pass counts are read.
     if s.get("verified") is False and not s["failed"]:
-        lines.append("⚠️  UNVERIFIED — passing steps leaned on fuzzy healing "
-                     "or lenient ambiguity:")
+        # NOOD_0194 — the reasons list is no longer only about fuzzy matching
+        # (a zero-step pass lands here too), so the banner names the property
+        # they share rather than one cause of it.
+        lines.append("⚠️  UNVERIFIED — the green above isn't backed by "
+                     "evidence:")
         for reason in s.get("unverified_reasons", [])[:6]:
             lines.append(f"   • {reason}")
     lines.append(f"⏱️  Total: {s['seconds']}s")

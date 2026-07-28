@@ -87,11 +87,24 @@ def test_mounting_leaves_the_mcp_endpoint_intact():
 def test_committed_openapi_matches_the_live_registry():
     """docs/openapi.json is generated (`python -m noodle.mcp.rest`), so a tool
     added without regenerating it must fail here rather than ship a spec that
-    lies to whoever generated a client from it."""
+    lies to whoever generated a client from it.
+
+    NOOD_0194 — `info.version` is excluded. It is the running build's version,
+    not part of the API's shape, and comparing it made this guard fail for two
+    reasons that have nothing to do with drift: every release bumps the version
+    (so CLAUDE.md's mandatory bump would red CI until someone regenerated a
+    file no tool had changed), and an interpreter without noodle's metadata
+    installed — anyone who runs `python -m pytest` outside the venv — renders
+    it "unknown (not installed)". The live server always reports the true
+    version at /api/health."""
+    def shape(spec):
+        return {**spec, "info": {k: v for k, v in spec["info"].items() if k != "version"}}
+
     committed = json.loads((REPO / "docs" / "openapi.json").read_text())
     live = asyncio.run(rest.openapi())
-    assert committed == live, ("docs/openapi.json is stale — regenerate with:\n"
-                              "  python -m noodle.mcp.rest > docs/openapi.json")
+    assert shape(committed) == shape(live), (
+        "docs/openapi.json is stale — regenerate with:\n"
+        "  python -m noodle.mcp.rest > docs/openapi.json")
 
 
 def test_openapi_covers_the_four_required_capabilities():
