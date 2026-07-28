@@ -4,6 +4,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a12] — 2026-07-28
+
+**NOOD_0196** — fix: an `--expect` verdict now answers for a goal that never
+searches, so the feature-regression benchmark stops blocking a check its own
+probe proved.
+
+`noodle feature-regression` on `main` came back REGRESSED on
+`tc3_api_seeds_ui_verifies` — while the test it generated ran green and
+verified. Authoring blocked on
+
+    check "From Wikipedia, the free encyclopedia": no probed heading or
+    control shows that text
+
+against a probe payload recording that exact string as `found: true`.
+NOOD_0195 scoped expect verdicts to checks observing the search landing page,
+correct when the goal searches — but with no search in the goal the probe
+*ends* on the initial page, so the verdict describes the very page the check
+observes. Discarding it there blocked every check on body prose (Wikipedia's
+`#siteSub`), which a structured capture of headings and controls never
+carries. A check anchored before a search still ignores expect, and a
+`found: false` verdict still blocks.
+
 ### Fixed
 - **Every `Path.read_text()` in `noodle/` now passes `encoding="utf-8"`** (34
   files). Python picks the *locale* encoding when it's omitted — cp1252 on a
