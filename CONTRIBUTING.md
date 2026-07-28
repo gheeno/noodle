@@ -15,7 +15,13 @@ make test     # unit_tests/ — must be green
 make lint     # ruff check .
 ```
 
-Neither runs in CI automatically yet — `azure-pipelines*.yml` at the repo root are example pipelines for teams to adopt in *their own* pipeline, not a gate on this repo. Run both locally before asking for review.
+Both **do** gate this repo: [`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs
+lint + the unit suite (Linux and Windows), the bundled BusterBlock end-to-end
+suite, and a Docker build on every PR. Run them locally anyway — a red gate
+found on your laptop costs six minutes less than one found on the PR.
+
+`azure-pipelines*.yml` at the repo root are a different thing: example
+pipelines for teams to adopt in *their own* pipeline, not a gate here.
 
 ## Branch naming & commits
 

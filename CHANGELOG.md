@@ -4,6 +4,57 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a10] — 2026-07-27
+
+**NOOD_0194** — fix: alpha-readiness pass. Four things an alpha tester would
+have hit before we did.
+
+### Fixed
+- **`noodle report serve` no longer waits on reverse DNS to bind.**
+  `http.server.HTTPServer.server_bind()` calls `socket.getfqdn(host)` purely to
+  set `self.server_name`, which nothing in Noodle reads. Where the resolver is
+  slow to answer a reverse lookup — corporate VPN, a container with no
+  resolver, a self-hosted CI agent — that blocked the socket long enough for
+  `_spawn_report_server`'s 30s deadline to fire, so the report-hosting step
+  every run is supposed to end with reported "didn't bind within 30s" while
+  the server was coming up fine. Measured on one machine, same code, two
+  interpreters: **35.1s → 0.1s**.
+- **A pass that ran zero steps is now `verified: false`.** `noodle init`'s
+  sample ships with its scenario body commented out so a fresh workspace runs
+  green — which meant a new tester's first `noodle run` printed a bare ✅
+  having launched no browser and asserted nothing. Same silent-green class as
+  NOOD_0187's 0-scenarios guard, one level down, and reported through the
+  channel that already exists to say "green, but nothing backs it". Not a
+  failure: the pre-commented sample is deliberate and a placeholder scenario
+  isn't an error.
+- **The OpenAPI spec is stable across Python versions.** Python 3.13 strips
+  common leading whitespace from docstrings at compile time and 3.11 does not,
+  and a tool's docstring *is* its published description — so the same source
+  generated two different specs and `docs/openapi.json`'s drift guard could
+  only ever be green on one interpreter. Tool descriptions now go through
+  `inspect.cleandoc`.
+- The drift guard also no longer compares `info.version`: that's the running
+  build's version, not the API's shape, and comparing it failed for two
+  reasons unrelated to drift — every mandatory version bump reddened CI until
+  someone regenerated a file no tool had changed, and running `python -m
+  pytest` outside the venv rendered it `unknown (not installed)`.
+
+### Added
+- CI now tests the two platforms the project claims and never exercised:
+  **Windows** (`windows-latest`, 3.11) and **Python 3.13** (`requires-python =
+  ">=3.11"` promised it). Unit suite only — lint, the constraints diff and the
+  browser suites are platform-independent and already gated once. Each leg
+  varies one thing against the ubuntu-3.11 baseline, so a red leg names its
+  own cause.
+
+### Changed
+- `CONTRIBUTING.md` said neither `make test` nor `make lint` runs in CI. That
+  stopped being true at NOOD_0187; a contributor reading it would skip both
+  believing nothing would catch them.
+- The UNVERIFIED banner no longer says "leaned on fuzzy healing or lenient
+  ambiguity" — it names what the reasons share, now that a zero-step pass is
+  one of them.
+
 ## [1.0.0a9] — 2026-07-27
 
 **NOOD_0193** — feature: the MCP server's tools are also reachable as plain
