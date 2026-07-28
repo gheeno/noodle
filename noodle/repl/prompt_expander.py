@@ -66,6 +66,28 @@ _WEBSITE_REF = re.compile(
 _PAREN = re.compile(r"\(([^()]{3,})\)")
 _CONJ = re.compile(r"\s+(?:and(?:\s+then)?|then)\s+", re.I)
 
+# NOOD_0197 — phrasing families normalized BEFORE verb matching. The verb
+# table is ^-anchored, so an unstripped preamble hides a perfectly parseable
+# clause; the session this fixes lost 3 of 6 ordinary-English steps to these:
+#   "As a user, I would like to search…"       → "search…"
+#   "On the results page, verify…"             → "verify…"
+#   "If the location prompt appears, close it" → "close location prompt"
+#   "Use the search bar to search for X"       → "search for X"
+_NARRATIVE = re.compile(
+    r"^as\s+an?\s+[^,]{1,40},\s*(?:i\s+(?:want|would\s+like|need|'d\s+like)"
+    r"\s+to\s+)?|^i\s+(?:want|would\s+like|need|'d\s+like)\s+to\s+", re.I)
+_PAGE_PREAMBLE = re.compile(
+    r"^on\s+the\s+.{1,40}?\s+(?:page|screen|tab|view),?\s+", re.I)
+_CONDITIONAL = re.compile(
+    r"^(?:if|when)\s+(?:the\s+)?(?P<thing>.{1,80}?)\s+"
+    r"(?:appears?|shows?(?:\s+up)?|pops?\s+up|opens?|"
+    r"is\s+(?:shown|displayed|present)|comes?\s+up)\s*[,:]?\s*(?:then\s+)?"
+    r"(?P<verb>close|dismiss|accept|handle)\s*(?:it|them|the\s+prompt)?$",
+    re.I)
+_INSTRUMENT = re.compile(
+    r"^(?:uses?|using)\s+(?:the\s+)?.{1,40}?\s+to\s+(?=[a-z])"
+    r"|^(?:using|via)\s+(?:the\s+)?.{1,40}?,\s*", re.I)
+
 VERBS_HELP = ("go to / open url / then url <url>; "
               # NOOD_0192 — the api wok reads the same as the web one.
               "GET|POST|PUT|PATCH|DELETE <url> | call the api at <url> | "
@@ -79,6 +101,8 @@ VERBS_HELP = ("go to / open url / then url <url>; "
               "upload <file> to <field>; press Enter; go back; "
               "select <date> from the <name> calendar; "
               "verify[:] <destination> has <item> | verify <text> | "
+              "verify <A> or <B> | verify at least <N> results with title "
+              "<A> or <B> | "
               "verify <text> is not visible | verify the url contains <part>; "
               "close popups / location prompt; take a screenshot")
 
@@ -119,8 +143,10 @@ _VERBS = [
         r"navigate(?:s)?\s+to|launch(?:es)?)?\s*(?:the\s+)?url\s+(\S+)$",
         re.I)),
     ("dismiss", re.compile(
+        # NOOD_0197 — consent joins the family (goal-side canon already maps
+        # it to popups); "use location" carries "location" and lands right.
         r"^(?:close|dismiss|accept|handle)s?\b.*\b"
-        r"(pop\s*-?\s*ups?|cookies?|banners?|modals?|overlays?|"
+        r"(pop\s*-?\s*ups?|cookies?|banners?|modals?|overlays?|consent|"
         r"location|geolocation|notifications?)", re.I)),
     ("nav", re.compile(
         r"^(?:go(?:es)?\s+to|open(?:s)?|visit(?:s)?|navigate(?:s)?\s+to|"
@@ -282,6 +308,13 @@ def _clauses(text: str) -> list[dict]:
         # means "next, navigate", never a click on "url <u>"
         ln = re.sub(r"^(?:and\s+then|then|next|and)\s+", "", ln,
                     flags=re.I)
+        # NOOD_0197 — the preamble/conditional families (defined above).
+        ln = _NARRATIVE.sub("", ln)
+        ln = _PAGE_PREAMBLE.sub("", ln)
+        cond = _CONDITIONAL.match(ln)
+        if cond:
+            ln = f"{cond.group('verb')} {cond.group('thing')}"
+        ln = _INSTRUMENT.sub("", ln)
         if not ln:
             continue
         # parenthetical compounds: '(and close all pop ups)' becomes its own
@@ -310,6 +343,48 @@ def _clauses(text: str) -> list[dict]:
 # kept for callers/tests that only need the flat step texts
 def split_steps(text: str) -> list[str]:
     return [c["text"] for c in _clauses(text)]
+
+
+def _split_alternatives(raw: str) -> list[str]:
+    """NOOD_0197 — 'Hot Wheels or Die Cast' / '"A", "B", or "C"' → members.
+    Only an explicit top-level ' or ' makes a disjunction, and a fully quoted
+    text is ONE literal even when it contains ' or '."""
+    raw = (raw or "").strip()
+    if not raw or not re.search(r"\s+or\s+", raw, re.I):
+        return []
+    if (len(raw) > 1 and raw[0] == raw[-1] and raw[0] in "\"'"
+            and raw.count(raw[0]) == 2):
+        return []
+    parts = re.split(r"\s*,\s*(?:or\s+)?|\s+or\s+", raw, flags=re.I)
+    out = [_clean(p).strip("\"'") for p in parts if p.strip()]
+    return out if len(out) > 1 else []
+
+
+# NOOD_0197 — one concrete rewrite per still-unresolved clause, so a partial
+# rejection teaches the fix instead of dumping the whole grammar and walking
+# away. Keyword → the grammar template it most likely wanted; first hit wins.
+_SUGGEST_RULES = (
+    (re.compile(r"result|found with|titled?", re.I),
+     'verify at least 1 result with title "<A>" or "<B>"'),
+    (re.compile(r"search", re.I), 'search for "<term>"'),
+    (re.compile(r"pop.?up|cookie|banner|location|notification|consent"
+                r"|close|dismiss", re.I),
+     '"close popups" / "close location prompt"'),
+    (re.compile(r"enter|type|fill|input", re.I), 'enter "<value>" in <field>'),
+    (re.compile(r"select|choose|pick", re.I),
+     'select "<option>" from <control>'),
+    (re.compile(r"click|press|tap|button|link", re.I), "click <control name>"),
+    (re.compile(r"go to|open|navigate|visit|url", re.I), "go to <url>"),
+    (re.compile(r"verify|see|shown|displayed|contain", re.I),
+     'verify "<text>"'),
+)
+
+
+def _suggest(text: str) -> str | None:
+    for rx, template in _SUGGEST_RULES:
+        if rx.search(text):
+            return f"rewrite as: {template}"
+    return None
 
 
 # --- Pass B: translate self-contained clauses into typed nodes ----------------
@@ -780,6 +855,17 @@ def expand(text: str, base_url: str | None = None) -> dict:
                 # bar contains "200".
                 status_m = _STATUS_CLAIM.match(text)
                 body_m = _BODY_CLAIM.match(text)
+                # NOOD_0197 — result-set assertions: "at least 1 result is
+                # found with title Hot Wheels or Die Cast".
+                res_m = re.match(
+                    r"^at\s+least\s+(?P<min>\d+)\s+"
+                    r"(?:results?|items?|matches?|entries?|products?|rows?)"
+                    r"(?:\s+(?:is|are|were|was))?"
+                    r"(?:\s+(?:found|shown|displayed|listed|returned|"
+                    r"present|visible))?"
+                    r"(?:\s+(?:with|having|containing)"
+                    r"(?:\s+(?:the\s+)?(?:titles?|names?|texts?|labels?))?"
+                    r"\s+(?P<terms>.+))?$", text, re.I)
                 if status_m or body_m:
                     if not api_calls:
                         _refuse(n, "an api assertion needs an api call "
@@ -810,7 +896,41 @@ def expand(text: str, base_url: str | None = None) -> dict:
                     assumptions.append(
                         f"step {no} '{n['raw']}': asserting '{gone}' is NOT "
                         "visible")
+                elif res_m:
+                    # NOOD_0197 — "at least N results [with title A or B]".
+                    # Titled → any_of (compiles to ONE disjunctive step);
+                    # untitled → a plain results-count check.
+                    raw_terms = res_m.group("terms") or ""
+                    want = int(res_m.group("min") or 1)
+                    terms = _split_alternatives(raw_terms) or (
+                        [_clean(raw_terms).strip("\"'")]
+                        if raw_terms.strip() else [])
+                    if terms:
+                        check = {"any_of": terms, "min": want}
+                        assumptions.append(
+                            f"step {no} '{n['raw']}': asserting at least "
+                            f"{want} of " + " / ".join(terms) + " is shown")
+                    else:
+                        check = {"count": "results", "min": want}
+                        assumptions.append(
+                            f"step {no} '{n['raw']}': asserting the results "
+                            f"count is at least {want}")
+                elif len(alts := _split_alternatives(text)) > 1:
+                    # NOOD_0197 — "verify A or B" is a disjunction. (Plain
+                    # "verify <text>" stays `see` — NOOD_0185's rule — this
+                    # branch needs an explicit unquoted ' or '.)
+                    check = {"any_of": alts}
+                    assumptions.append(
+                        f"step {no} '{n['raw']}': asserting any of "
+                        + " / ".join(alts) + " is visible")
                 else:
+                    # NOOD_0197 — "the Weekly Flyer is shown": the positive
+                    # visibility tail and the leading article are phrasing,
+                    # not page text; keeping them makes the literal stricter
+                    # than the page (substring matching: shorter is safer).
+                    text = re.sub(r"\s+(?:is|are)\s+(?:visible|shown|"
+                                  r"displayed|present)$", "", text, flags=re.I)
+                    text = _ARTICLE.sub("", text)
                     if len(text) > 1 and text[0] == text[-1] and text[0] in "\"'":
                         text = text[1:-1]
                     check = {"see": text}
@@ -830,12 +950,28 @@ def expand(text: str, base_url: str | None = None) -> dict:
         checks[-1]["evidence"] = "screenshot"
 
     if unrecognized:
+        # NOOD_0197 — a partial parse is returned, never discarded: the goal
+        # built from the clauses that DID parse plus a concrete rewrite per
+        # unresolved clause. One unknown step out of six no longer throws the
+        # other five away.
+        for u in unresolved:
+            s = _suggest(u.get("text") or "")
+            if s:
+                u["suggested"] = s
+        partial = None
+        if actions or checks or urls:
+            partial = {"scenario": "partial prompt flow",
+                       "dismissals": dismissals,
+                       "actions": actions, "checks": checks}
+            if urls:
+                partial["navigation"] = urls
         return {"ok": False,
                 "error": "prompt step(s) not understood — rewrite them or "
                          "author with goal. Supported: " + VERBS_HELP,
                 "unrecognized": unrecognized, "unresolved": unresolved,
                 "conflicts": conflicts, "assumptions": assumptions,
-                "clauses": clauses, "coverage": coverage, "goal": None}
+                "clauses": clauses, "coverage": coverage, "goal": None,
+                "goal_partial": partial}
     # NOOD_0192 — a pure-API prompt has no page to open, so its package is
     # named after the endpoint it calls. Without this the api wok could never
     # be reached from a prompt at all: "no URL in the prompt" for a prompt

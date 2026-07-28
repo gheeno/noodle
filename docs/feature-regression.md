@@ -7,8 +7,11 @@ average. It exists so that after new engine capabilities land, one command
 tells you whether the thing Noodle is actually for — fast, correct test
 generation — regressed.
 
-It runs **only when a human asks for it** ("run feature-regression").
-Nothing schedules it; CI does not run it (it drives a live site).
+It runs on demand ("run feature-regression") and, since NOOD_0197, as the
+**pre-PR gate for every engine branch**: after the branch's single squashed
+commit, before opening the PR, exit 0 required (see CONTRIBUTING.md).
+Nothing schedules it; CI does not run it (it drives a live site) — the
+local run is the only gate.
 
 Works on any OS and under any driving agent (Claude, Copilot, a plain
 terminal) as long as `noodle` is installed — it is **one command** that does

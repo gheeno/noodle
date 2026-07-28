@@ -687,6 +687,9 @@ def execute_step(step_text: str, context):
         actions.uncheck(page, action['locator'])
     elif t == 'assert_visible':
         actions.assert_visible(page, action['text'])
+    elif t == 'assert_any_visible':
+        actions.assert_any_visible(page, action['alternatives'],
+                                   action.get('min_count', 1))
     elif t == 'assert_hidden':
         actions.assert_hidden(page, action['text'])
     elif t == 'assert_on_screen':

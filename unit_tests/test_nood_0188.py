@@ -139,7 +139,9 @@ def test_check_verb_does_not_steal_an_ordinary_verify():
     # "check" is also the verify verb — only the checkbox noun claims it
     exp = pe.expand("1. Go to the URL https://x.com\n2. Check the total is 5")
     assert [a["do"] for a in exp["goal"]["actions"]] == []
-    assert exp["goal"]["checks"] == [{"see": "the total is 5"}]
+    # NOOD_0197 strips the leading article — substring matching makes the
+    # shorter literal strictly safer.
+    assert exp["goal"]["checks"] == [{"see": "total is 5"}]
 
 
 def test_press_verb_still_clicks_a_named_button():

@@ -33,6 +33,82 @@ carries. A check anchored before a search still ignores expect, and a
   `.feature`, a steps dictionary, or an agent-patterns file raised
   `UnicodeDecodeError` on Windows while reading fine on macOS/Linux.
 
+## [1.0.0a13] — 2026-07-28
+
+**NOOD_0197** — fix/feature: the retail-search session review
+(workspace 195), fixed at the engine. A green that was weaker than the ask,
+reached in 4 invocations instead of 1: `any_of` compiled to a conjunction,
+the prompt grammar rejected 3 of 6 ordinary-English steps, RCA blamed a
+background POST on a read-only scenario, and the CLI forced a heredoc the
+moment `--prompt` missed. (Version jumps a11 → a13: a12 is taken by the
+in-flight `patch/nood_0196` branch.)
+
+### Fixed
+- **`{any_of: [A, B]}` is a real disjunction** — compiles to ONE
+  `the user sees any of "A", "B"` step (`at least N of` when `min` > 1),
+  resolved by the new `assert_any_visible` action: passes when ≥ min
+  alternatives are visible under one shared smart-wait budget, and logs
+  WHICH member satisfied it. Replaces both NOOD_0195 shapes — the
+  per-member conjunctive expansion (a logic inversion: "A or B" went red on
+  a page correctly showing only A) and the union-selector count fallback.
+  Dictionary entries added ("any of" / "either" / "one of" /
+  "at least N of"), found by `noodle step-search`.
+- **RCA never claims `mutation-failed` on a read-only scenario** — the
+  correlation is gated on the scenario's own steps carrying something
+  mutation-shaped; background app XHR aborted by navigation no longer
+  produces "fix the ACTION" advice on a flow with no mutating action.
+- **RCA cites the goal node behind the failing step** — authoring persists
+  `intent_trace.json` (now carrying each check's terms); the compact RCA
+  appends `goal: … checks[i] …`, and a multi-term check names the
+  compilation as suspect #1.
+- **`failed_requests` capture keeps its failure tail** — `_safe_url` over
+  the whole `METHOD url — failure` composite destroyed everything after the
+  first `?`, so query-string mutations silently vanished from
+  `mutation_verdict`. URL-only redaction now.
+- **`feature_path` relocation is declared** — requested vs written paths
+  both ride the payload (`feature_path_requested`, a `warnings` entry) when
+  the wok layout moves the target, instead of silently echoing only the
+  final path.
+
+### Added
+- **Prompt grammar: the phrasings that failed** — conditional dismissals
+  ("if the location prompt appears, close it", + `consent`), instrument
+  preambles ("use the search bar to …" / "using …" / "via …"), narrative
+  preambles ("As a user, I would like to…", "On the results page,"),
+  result-set assertions ("at least 1 result with title A or B" →
+  `any_of`+`min`; untitled → `count`), and "verify A or B" disjunctions.
+  Positive-visibility tails ("… is shown") and leading articles are
+  stripped from `see` literals.
+- **Partial parse instead of a hard stop** — a rejection now returns
+  `goal_partial` (built from the clauses that DID parse) plus a concrete
+  `suggested` rewrite per unresolved clause; the error names the
+  `NOODLE_MODEL` opt-in for the one bounded interpretation call.
+- **`noodle author --spec` accepts the document inline** — a non-path
+  argument that parses as YAML/JSON is the spec itself: no heredoc, no
+  temp file, no shell approval. `--vocabulary` prints the goal schema +
+  example + prompt grammar on demand (no more learning the schema by
+  triggering rejections).
+- **`noodle doctor` checks Playwright browsers** — `install.browsers`
+  warns when no browser binaries exist on disk (read-only, never spawns).
+- **`probe_summary`** — one scalar line narrating the internal probe
+  (facts proven, popups closed, prompts, reuse), so the probe-inside-author
+  is auditable instead of looking skipped.
+- **Feature-regression gate** — `noodle feature-regression` (exit 0)
+  required before every engine-branch PR; wired into CLAUDE.md,
+  CONTRIBUTING.md, and the Copilot instructions (which also stop saying
+  "both" test cases — there are three).
+- **Parity guard** — a unit test pins every `_author_test_impl` parameter
+  reachable from BOTH the CLI author door and the MCP `author_test` tool.
+
+### Changed
+- AGENTS.md template + skill cards: an OR is ONE `sees any of` step, never
+  narrowed to a member to go green; `--spec` inline (never heredocs);
+  `noodle author --vocabulary` named next to the no-pipes rule — all within
+  the instruction byte budgets.
+- Playbook: "Updating an existing test" (overwrite / `append_to` /
+  `noodle task "update …"`), and the `mutation-failed` guidance now
+  documents the read-only gate + goal-node citation.
+
 ## [1.0.0a11] — 2026-07-28
 
 **NOOD_0195** — fix: a `ready: true` goal now compiles to something the

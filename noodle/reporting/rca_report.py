@@ -211,11 +211,22 @@ def collect(results_dir: str = None) -> list[dict]:
         # stronger than a low-confidence guess.
         if entry["heuristic"]["category"] in ("app-regression", "test-data",
                                               "unknown"):
-            net = _load_network(d, entry["scenario"])
+            # NOOD_0197 — the correlation is gated on the scenario's own
+            # steps: no mutation-shaped step, no mutation verdict. Background
+            # app XHR is not the scenario's mutation.
+            steps_text = " ".join(s.get("name", "") for s in r.get("steps", []))
+            net = (_load_network(d, entry["scenario"])
+                   if _MUTATION_STEP_RE.search(steps_text) else None)
             mv = mutation_verdict(entry, net) if net else None
             if mv and (mv["category"] == "mutation-failed"
                        or entry["heuristic"]["confidence"] == "low"):
                 entry["heuristic"] = mv
+        # NOOD_0197 — cite the goal node behind the failing step when the
+        # author's intent trace is reachable; assertion failures from a
+        # multi-term check name the compilation as suspect #1.
+        hint = goal_node_hint(entry, _load_intent_trace(d))
+        if hint:
+            entry["goal_node_hint"] = hint
         out.append(entry)
     _update_history(d, out)
     return out
@@ -387,6 +398,60 @@ _ANALYTICS_RE = re.compile(
 _ASSERTION_RE = re.compile(
     r"Expected |Comparison failed|should (contain|equal)|not found"
     r"|does not (contain|equal)|AssertionError")
+
+# NOOD_0197 — mutation_verdict may only speak when the scenario itself did
+# something mutation-shaped. A read-only flow (navigate → search → assert)
+# was classified mutation-failed off a BACKGROUND app XHR aborted by
+# navigation: same registrable domain, non-GET, so the correlation fired and
+# sent the agent to "fix the action" on a scenario with no mutating action.
+_MUTATION_STEP_RE = re.compile(
+    r"sav\w+|submit|creat\w+|delet\w+|remov\w+|updat\w+|upload|register"
+    r"|add(?:s|ed|ing)? |send|approv\w+|pay\w*|purchas\w+|order|book"
+    r"|check(?:s|ed)? ?out|buy|log(?:s)? ?in|sign(?:s)? ?(?:in|up)"
+    r"|\bPOST\b|\bPUT\b|\bPATCH\b|\bDELETE\b", re.I)
+
+
+def _load_intent_trace(results_dir: Path) -> dict:
+    """NOOD_0197 — the author-persisted goal trace (scenario → node entries).
+    Author-time and run-time artifact roots usually coincide (the atomic
+    author→run flow); when a per-app reroute separates them the classic
+    workspace root is the second candidate, and absence just means no
+    citation."""
+    for p in (results_dir.parent / "intent_trace.json",
+              Path("artifacts") / "intent_trace.json"):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except (OSError, json.JSONDecodeError):
+            continue
+    return {}
+
+
+def goal_node_hint(entry: dict, traces: dict) -> str | None:
+    """NOOD_0197 — name the goal node that produced the failing step, so RCA
+    points at the compiler's input instead of an unrelated request. A
+    multi-term (any_of) node makes the COMPILATION suspect #1: the session
+    this fixes watched a correct disjunction compiled as a conjunction while
+    RCA blamed a background POST."""
+    rec = traces.get(entry.get("scenario") or "")
+    if not isinstance(rec, dict):
+        return None
+    quoted = re.findall(r'["\']([^"\']+)["\']', entry.get("step") or "")
+    if not quoted:
+        return None
+    for t in rec.get("trace") or []:
+        terms = [str(x) for x in (t.get("terms") or [])]
+        req = str(t.get("requirement") or "")
+        if any(q in terms or q in req for q in quoted):
+            node = str(t.get("node") or "?")
+            hint = f"This step was compiled from goal node {node} ({req})."
+            if len(terms) > 1:
+                hint += (" That node is a multi-term check — verify its "
+                         "compilation (one disjunctive step, every member "
+                         "present) before touching any action.")
+            return hint
+    return None
 
 
 def _url_parts(url: str) -> tuple[str, str]:
@@ -874,6 +939,8 @@ def render_compact(results_dir: str = None) -> str:
         lines.append(f"[{cat}/{conf}] {e['scenario']} — failing step: {e['step']}")
         lines.append(f"  why: {' '.join(reason.split())[:300]}")
         lines.append(f"  fix: {' '.join(fix.split())[:300]}")
+        if e.get("goal_node_hint"):
+            lines.append(f"  goal: {e['goal_node_hint']}")
     for h in healed:
         detail = f" ({h['detail']})" if h.get("detail") else ""
         lines.append(f"[passed-with-healing] {h['scenario']} — step: {h['step']}"

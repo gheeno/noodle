@@ -76,8 +76,8 @@ Every `do:` — inventing one is rejected (`target` = a control name,
   extra RCA/report/serve calls repeat it; URLs pre-checked (`http_ok`)
   — no curl, no jq.
 - "run feature-regression" → `noodle feature-regression`. ONE call:
-  generates both test cases, runs, serves, prints the table. Never
-  hand-build `results.json` or read host telemetry.
+  generates the three test cases, runs, serves, prints the table.
+  Never hand-build `results.json` or read host telemetry.
 - Fastest path first: only standard-visible-control pages skip the
   probe; hidden/config/custom/SPA probe first (`--discover`,
   `probe-app`). `append_to` adds a scenario; `use_llm=True` last
@@ -101,6 +101,9 @@ Feature: Login
 - Parameters: `{env:NAME}` (config/secrets), `{var:NAME}` (captured),
   `{pom:NAME}` (force POM).
 - Never hardcode credentials or base URLs — `{env:...}` only.
+- "A or B" is ONE step: `Then the user sees any of "A", "B"` (also
+  `either`/`at least N of`) — never narrow an OR to one member to go
+  green; a blocked author is the correct outcome.
 - Prompt credentials: pass once as `author_test(secret_values=…)` —
   they land only in the gitignored `<app>_secrets.env`, never echoed.
 - Count via the page's summary-number step, never rendered cards.

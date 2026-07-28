@@ -445,11 +445,14 @@ def test_compiled_pom_always_opens_with_match_block():
     assert pom.splitlines()[1].startswith("match: {}")
 
 
-def test_alternatives_both_survive_in_one_constrained_selector():
-    (_, pom), _ = _compiled()
-    sel_line = next(ln for ln in pom.splitlines()
-                    if "Hot Wheels" in ln or "Die Cast" in ln)
-    assert "Hot Wheels" in sel_line and "Die Cast" in sel_line
+def test_alternatives_both_survive_in_one_disjunctive_step():
+    # NOOD_0197 — the any_of used to become a union POM selector (and before
+    # that, N conjunctive sees). Both alternatives now ride ONE `sees any of`
+    # step; neither is dropped, and neither is required alone.
+    (feat, _), _ = _compiled()
+    step = next(ln for ln in feat.splitlines() if "sees any of" in ln)
+    assert "Hot Wheels" in step and "Die Cast" in step
+    assert feat.count("Die Cast") == 1, "a member must appear in ONE step only"
 
 
 def test_requested_minimum_is_preserved():
