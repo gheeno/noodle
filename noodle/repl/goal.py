@@ -826,11 +826,9 @@ def _block_texts(blk: dict) -> list[str]:
     # heading or control shows that text" while the probe was holding the
     # caption all along. Verified live on canadiantire.ca: both requested
     # products were in result_items, neither was reachable from here.
-    # ponytail: captions are truncated to ~60 chars by the probe, so a longer
-    # title matches only through _find_text's reverse direction and never
-    # earns the _find_literal upgrade — it falls back to the count form, which
-    # is verifiable now. Raise the probe's caption cap if that fallback ever
-    # costs more than the payload bytes would.
+    # (Captions are truncated to ~60 chars by the probe — _find_text's reverse
+    # direction still matches longer titles, and since NOOD_0197 an `any_of`
+    # compiles to one disjunctive step regardless, so truncation costs nothing.)
     for it in blk.get("result_items") or []:
         if it.get("caption"):
             texts.append(it["caption"])
@@ -994,17 +992,6 @@ def _find_text(needle: str, blocks: list[dict]) -> str | None:
             if n in tn or (tn in n and len(tn.split()) >= 2):
                 return t
     return None
-
-
-def _find_literal(needle: str, blocks: list[dict]) -> bool:
-    """NOOD_0195 — strict containment: some probed text carries the WHOLE
-    needle. _find_text above also matches when the probe saw only a prefix
-    ("Hoover WindTunnel 2" for a full product title), which is fine for
-    readiness but would compile a `see` step for text the page never renders
-    in full."""
-    n = _norm(needle)
-    return bool(n) and any(n in _norm(t) for blk in blocks
-                           for t in _block_texts(blk))
 
 
 def _find_control(target: str, blocks: list[dict]) -> dict | None:
@@ -1403,16 +1390,10 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                 if hit is not None:
                     texts.add(_norm(hit))
             if len(texts) >= want:
+                # NOOD_0197 — the proven members feed ONE disjunctive step
+                # (`sees any of …`); the NOOD_0195 per-member literal expansion
+                # is gone — it compiled "A or B" into "A and B".
                 proven[f"any_of[{i}]"] = sorted(texts)
-                # NOOD_0195 — every member rendered IN FULL on the probed page:
-                # the compiler emits one literal `see` per member instead of a
-                # count assertion. A count resolves no single element, so the
-                # evidence checker can neither centre it in the shot nor
-                # confirm a fresh exact match — the run passed and reported
-                # verified:false, behind an author that had said ready:true.
-                if all(_norm(alt) in expect or _find_literal(alt, blks)
-                       for alt in c["any_of"]):
-                    proven[f"any_of_literal[{i}]"] = list(c["any_of"])
             else:
                 blocking.append(
                     "check any_of " + "/".join(c["any_of"])
@@ -1775,7 +1756,13 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
             ok = any(str(c[kind]) in s for s in runtime)
         else:
             ok = f"any_of[{i}]" in proven or bool(runtime)
+        # NOOD_0197 — the check's own term(s) ride the trace so RCA can map a
+        # failing compiled step back to this node (an any_of carries every
+        # member — the "multi-term check, suspect the compilation" signal).
+        terms = ([str(x) for x in c["any_of"]] if kind == "any_of"
+                 else [str(c.get(kind, ""))])
         entry = {"requirement": f"check {kind}", "node": f"checks[{i}]",
+                 "terms": terms,
                  "evidence": (("runtime:rest-client"
                                if kind in ("status", "response_contains")
                                else "probe+runtime") if ok else "missing"),
@@ -1826,22 +1813,6 @@ def _yaml_str(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-_JS_RE_SPECIAL = re.compile(r"([.*+?^${}()|\[\]\\/])")
-
-
-def _any_of_selector(alts: list[str]) -> str:
-    """ONE constrained selector carrying EVERY requested alternative — link
-    text, title, and alt attributes (where result-tile captions live).
-    JS-regex escaping, not re.escape: Python escapes spaces, which a
-    unicode-mode JS RegExp rejects."""
-    pat = "|".join(_JS_RE_SPECIAL.sub(r"\\\1", a) for a in alts)
-    parts = [f'a:text-matches("{pat}", "i")']
-    for a in alts:
-        safe = a.replace('"', '\\"')
-        parts += [f'[title*="{safe}" i]', f'[alt*="{safe}" i]']
-    return ", ".join(parts)
-
-
 def _check_step(c: dict, captions: dict | None = None) -> tuple[str, str | None]:
     """(step body, pom name needed or None) for one check. `captions` maps
     pick-action ids to their bound result captions (item checks). A check with
@@ -1881,8 +1852,16 @@ def _check_step(c: dict, captions: dict | None = None) -> tuple[str, str | None]
                                    c.get("expected_from", ""))
         body, pom = f'the user sees "{cap}"', None
     elif "any_of" in c:
-        name = c.get("name") or "result titles"
-        body, pom = f'should see at least {c.get("min", 1)} "{name}"', name
+        # NOOD_0197 — a disjunction stays a disjunction. This used to compile
+        # to either N conjunctive `sees` steps (NOOD_0195 literal path — a
+        # logic inversion: "A or B" went red on a page correctly showing only
+        # A) or a union-selector count. One step, resolved by
+        # assert_any_visible, which records the satisfying member.
+        alts = ", ".join(f'"{a}"' for a in c["any_of"])
+        want = c.get("min", 1)
+        body = (f"the user sees any of {alts}" if want == 1
+                else f"the user sees at least {want} of {alts}")
+        pom = None
     else:
         # NOOD_0188 — was a silent `else: any_of`, so a new kind added to the
         # tables but not here compiled a bogus count assertion that still
@@ -1966,45 +1945,7 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
     bound = ev.get("bound_targets") or {}
     captions = {k: v.get("caption", "") for k, v in bound.items()}
 
-    # NOOD_0163 — one POM key per distinct locator. Every unnamed `any_of`
-    # check defaulted to the key "result titles", and `pom_entries.setdefault`
-    # keeps the FIRST selector — so a goal checking two pages compiled its
-    # second assertion against the first page's locator: the probe proved both
-    # texts, the run asserted one of them twice. Distinct selectors now get
-    # distinct keys; identical ones still share. (A `count` check keys off its
-    # own `count` name, and `see`/`field`/item checks need no POM at all.)
-    locator_names: dict[str, str] = {}
-
-    def _named(c: dict) -> dict:
-        if "any_of" not in c or c.get("name"):
-            return c
-        name = locator_names.get(sel := _any_of_selector(c["any_of"]))
-        if name is None:
-            name = "result titles" + (f" {len(locator_names) + 1}"
-                                      if locator_names else "")
-            locator_names[sel] = name
-        return {**c, "name": name}
-
-    # NOOD_0195 — which any_of checks the probe proved member-by-member. Keyed
-    # by identity: evidence() and compile_goal always read the SAME checks list
-    # (core.author_test rebuilds goal and re-runs evidence together), so the
-    # index the proven key carries and the dict here are the same object.
-    literal_members = {
-        id(c): (ev.get("proven") or {}).get(f"any_of_literal[{i}]")
-        for i, c in enumerate(checks)}
-
     def _emit_check(c: dict):
-        members = literal_members.get(id(c))
-        if members:
-            # One literal assertion per expected item — each resolves its own
-            # element, so each can be scrolled into view and shot. This is an
-            # AND: the probe saw all of them, so all of them are assertable.
-            for alt in members:
-                body, _ = _check_step({"see": alt,
-                                       "evidence": c.get("evidence")})
-                steps.append(("Then", body))
-            return
-        c = _named(c)
         dest = c.get("item_in_destination") if "item_in_destination" in c \
             else None
         if dest:
@@ -2035,10 +1976,6 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
                 pom_entries.setdefault(
                     pom_name, [f"{pom_name}:",
                                f'  css: {_yaml_str(rsum["selector"])}'])
-        else:
-            pom_entries.setdefault(
-                pom_name, [f"{pom_name}:",
-                           f'  css: {_yaml_str(_any_of_selector(c["any_of"]))}'])
 
     def _anchored(aid):
         for c in checks:

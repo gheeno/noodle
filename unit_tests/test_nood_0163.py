@@ -7,7 +7,6 @@ every unnamed count/any_of check defaulted to the POM key "result titles",
 where `setdefault` kept the first selector — so the second page's assertion
 re-used the first page's locator.
 """
-import re
 
 from noodle.repl import goal as G
 
@@ -33,25 +32,29 @@ def _compile(after="start"):
 def test_start_anchored_check_precedes_the_action():
     assert G.validate(_goal()) == []
     steps, _ = _compile()
-    first_then = next(i for i, s in enumerate(steps) if "at least" in s)
+    landing = next(i for i, s in enumerate(steps) if "<landing text>" in s)
     search = next(i for i, s in enumerate(steps) if "searches for" in s)
-    assert first_then < search, steps
+    assert landing < search, steps
 
 
 def test_unanchored_check_still_observes_the_end_state():
     steps, _ = _compile(after=None)
-    first_then = next(i for i, s in enumerate(steps) if "at least" in s)
+    landing = next(i for i, s in enumerate(steps) if "<landing text>" in s)
     search = next(i for i, s in enumerate(steps) if "searches for" in s)
-    assert first_then > search, steps
+    assert landing > search, steps
 
 
-def test_each_distinct_locator_gets_its_own_pom_key():
+def test_each_any_of_compiles_its_own_inline_step():
+    # NOOD_0197 — any_of no longer synthesizes a POM key at all, so the
+    # shared-"result titles"-key collision this file was written for cannot
+    # recur: each disjunction carries its members inline in its own step.
     steps, pom = _compile()
-    names = [re.search(r'"([^"]+)"$', s).group(1)
-             for s in steps if "should see at least" in s]
-    assert len(set(names)) == 2, names
-    for n in names:
-        assert f"{n}:" in pom, pom
+    disjunctive = [s for s in steps if "sees any of" in s]
+    assert len(disjunctive) == 2, steps
+    assert any("<landing text>" in s for s in disjunctive)
+    assert any("<result text>" in s for s in disjunctive)
+    # The count check keeps its own POM key; nothing else lands in the POM.
+    assert "results:" in pom and "result titles" not in pom, pom
 
 
 def test_unknown_anchor_names_start_in_the_error():

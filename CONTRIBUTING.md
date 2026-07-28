@@ -11,14 +11,22 @@ playwright install chromium
 ## Before opening a PR
 
 ```bash
-make test     # unit_tests/ — must be green
-make lint     # ruff check .
+make test                  # unit_tests/ — must be green
+make lint                  # ruff check .
+noodle feature-regression  # engine branches — exit 0 (PASS) required
 ```
 
-Both **do** gate this repo: [`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs
+The first two **do** gate this repo: [`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs
 lint + the unit suite (Linux and Windows), the bundled BusterBlock end-to-end
 suite, and a Docker build on every PR. Run them locally anyway — a red gate
 found on your laptop costs six minutes less than one found on the PR.
+
+`noodle feature-regression` is the end-to-end authoring benchmark
+([docs/feature-regression.md](docs/feature-regression.md)): ~90 seconds,
+zero LLM cost, exit 0 PASS / 1 REGRESSED. CI cannot run it (it drives a
+live site), so it runs on your machine — required before any PR that
+changes engine code (`noodle/`, `pyproject.toml`); docs-only or
+workspace-only branches are exempt.
 
 `azure-pipelines*.yml` at the repo root are a different thing: example
 pipelines for teams to adopt in *their own* pipeline, not a gate here.

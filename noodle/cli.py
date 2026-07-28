@@ -1095,9 +1095,8 @@ _AGENTS_MD = """\
 # AI agent instructions — Noodle test workspace
 
 You are in a Noodle BDD test workspace: plain-English Gherkin matched
-against a fixed step dictionary — no step code. Full reference: the
-agent-playbook — `read_docs('agent-playbook')` (CLI: `noodle docs
-agent-playbook`) — every catalog this file points at.
+against a fixed step dictionary — no step code. Full reference:
+`read_docs('agent-playbook')` (CLI: `noodle docs agent-playbook`).
 
 North star: deterministic, plain-English, token-cheap, honest.
 
@@ -1105,8 +1104,8 @@ Nouns: **engine** = the installed framework (never edited here);
 THIS folder = a **workspace** (`noodle init`; refresh `--force`);
 **wok** = capability area, tag-routed (`read_docs('woks')`). Noodle is
 universal, not web-only: independent woks are web · api (REST,
-browserless, `@api` — `read_docs('steps_dictionary', query='REST')`) ·
-mobile · desktop · perf. Never say "Noodle can't": read the wok.
+browserless, `@api`) · mobile · desktop · perf. Never say "Noodle
+can't": read the wok.
 
 ## The pipeline — 3 operations
 
@@ -1123,15 +1122,14 @@ mobile · desktop · perf. Never say "Noodle can't": read the wok.
 2. Author once — reuse first: `list_tests(query=<app>)`; copying a
    green same-app test and retargeting `{env:}` beats authoring
    (playbook §1).
-   `author_test` (`noodle author --spec -`): the whole package in one
-   transaction. New single-flow test: `--prompt` (numbered user steps,
+   `author_test` (`noodle author --spec '<yaml>'`, never a heredoc):
+   the whole package in one transaction. New single-flow test: `--prompt` (numbered user steps,
    passed RAW) or `goal`, + `--run` — THE rule;
    feature_content only on a named goal blocker. `ready: true` =
    parsed, matched, POM scoped, `{env:}` resolved — do not validate/
    preflight separately; run next. `ready: false`? Fix `blocking`,
    re-author — no bypass, no guessed action. Base URL lands in
-   `resources/environments.yaml` under the returned `base_url_key`;
-   use that key. Steps: probe output or `search_step`
+   `resources/environments.yaml` under the returned `base_url_key`. Steps: probe output or `search_step`
    (`noodle steps <kw>…` — all words, ONE call); `use_llm=True` last;
    `append_to` adds a scenario sans regen (llm-performance).
    Result-pick binding, `after:` check anchoring and
@@ -1152,8 +1150,7 @@ inconclusive — vision costs ~10× text. Reproduce it ONCE (`probe
 --do` replays the flow), re-author from evidence; cause-backed fixes
 only, cap NOODLE_DEV_FIX_ATTEMPTS (default 10).
 Hand-edited? `validate_feature` before re-running. Wrong element
-(`inspect_locator`) and the failure taxonomy
-(mutation-failed = fix the ACTION, never the assertion): playbook.
+(`inspect_locator`) and the failure taxonomy: playbook.
 
 ## Rules
 
@@ -1161,6 +1158,8 @@ Hand-edited? `validate_feature` before re-running. Wrong element
 - Never invent assertion text absent from probe evidence; assert
   durable state, not a toast. Dynamic/decorated text? Assert the
   smallest stable substring; never silently drop the asked-for verify.
+  An OR is ONE `sees any of` step, never narrowed to a member;
+  blocked authoring IS correct.
 - Report success ONLY on passed AND `verified: true`; a healed/warned
   green is an anomaly — say so and log it.
 - Selectors live in POM files, never inline (playbook: POM scoping).
@@ -1172,8 +1171,8 @@ Hand-edited? `validate_feature` before re-running. Wrong element
 - Re-hosting an older run: ONLY `noodle report serve` (`serve_report`)
   — never `allure serve`, `http.server`, or `file://`.
 - Payloads are pre-bounded: read as returned, no jq/grep/sed/head
-  pipes; URLs pre-checked (no curl); workspace map: `noodle list`,
-  not find/ls sweeps.
+  pipes; URLs pre-checked (no curl); schema: `noodle author
+  --vocabulary`; workspace map: `noodle list`, not find/ls sweeps.
 - Progress updates: max 2 sentences of current intent (e.g. "Serving
   the reports now"); quote only failing steps/errors. "do not output
   the shell command"? Then echo no command line.
@@ -1640,12 +1639,13 @@ def install_extension(
 
 @app.command()
 def author(
-    spec: str = typer.Option(None, "--spec", help="Path to a JSON or YAML spec file (or '-' for stdin) with: app_name, base_url, feature_path, and EITHER feature_content (one Gherkin string; pom_content is likewise one YAML string, never a filename map) OR goal (NOOD_0137 constrained mode — the engine probes and compiles the feature/POM itself; see author_test). Optionally: environment_values, required_secret_keys, secret_values, overwrite."),
+    spec: str = typer.Option(None, "--spec", help="A JSON or YAML spec: a file path, '-' for stdin, or the document itself inline (NOOD_0197 — no heredoc or temp file needed: --spec \"$(cat)\" style plumbing is never required, quote the YAML directly). Fields: app_name, base_url, feature_path, and EITHER feature_content (one Gherkin string; pom_content is likewise one YAML string, never a filename map) OR goal (NOOD_0137 constrained mode — the engine probes and compiles the feature/POM itself; see author_test). Optionally: environment_values, required_secret_keys, secret_values, overwrite."),
     prompt: str = typer.Option(None, "--prompt", help="NOOD_0169 — numbered plain-English steps ('1. go to <url> 2. search for X 3. add to cart 4. verify cart has X'); the engine expands them deterministically into a goal (ambiguous steps borrow their subject from neighbouring steps, every inference echoed under prompt_expansion.assumptions) and derives app_name/base_url/feature_path from the URL. No spec file needed; combine with --run for prompt → authored → run → reports in ONE call."),
     workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
     run: bool = typer.Option(False, "--run", help="NOOD_0137 — atomic author+run: after a ready author, run once (headless, retries=0), serve both reports, and fail when 0 scenarios passed. Blocked authoring launches no browser."),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing .feature at the target path. A blocked authoring attempt leaves its files behind (fix-in-place contract) — without this flag the retry refuses. Spec key `overwrite` works too; prompt mode has only this flag."),
+    vocabulary: bool = typer.Option(False, "--vocabulary", help="NOOD_0197 — print the goal vocabulary, a minimal example, and the prompt grammar as JSON, then exit. The schema on demand instead of discoverability-by-rejection (no more scraping --help for it)."),
 ):
     """NOOD_0128 — write a whole test package in one transaction (app package +
     environments.yaml + POM + feature + missing secret placeholders), validated,
@@ -1675,6 +1675,16 @@ def author(
     import yaml
 
     from noodle.repl import core
+    if vocabulary:
+        # NOOD_0197 — the goal schema + prompt grammar on demand. Before this
+        # the only machine-readable copy rode a rejection payload, so agents
+        # learned the vocabulary by failing (or by paging --help through sed).
+        from noodle.repl import goal as goal_mod
+        from noodle.repl.prompt_expander import VERBS_HELP
+        _json_out({"ok": True, "example": goal_mod.EXAMPLE,
+                   "vocabulary": goal_mod.vocabulary(),
+                   "prompt_grammar": VERBS_HELP})
+        raise typer.Exit(0)
     if (spec is None) == (prompt is None):
         raise typer.BadParameter("pass exactly one of --spec or --prompt",
                                  param_hint="'--spec' / '--prompt'")
@@ -1683,7 +1693,22 @@ def author(
         result = core.author_test(prompt=prompt, run_after_author=run,
                                   overwrite=overwrite, workspace=workspace)
     else:
-        raw = sys.stdin.read() if spec == "-" else Path(spec).read_text(encoding="utf-8")
+        if spec == "-":
+            raw = sys.stdin.read()
+        else:
+            # NOOD_0197 — --spec accepts the document inline: an argument
+            # that resolves to no file is the spec itself. This removes the
+            # heredoc/temp-file dance (and the shell approval it costs an
+            # agent) the moment --prompt can't express a flow.
+            try:
+                is_file = Path(spec).is_file()
+            except OSError:            # inline docs can exceed PATH_MAX
+                is_file = False
+            if not is_file and ":" not in spec and "{" not in spec:
+                raise typer.BadParameter(f"spec file not found: {spec}",
+                                         param_hint="'--spec'")
+            raw = (Path(spec).read_text(encoding="utf-8") if is_file
+                   else spec)
         try:
             data = yaml.safe_load(raw) or {}
         except Exception as e:

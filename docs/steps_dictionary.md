@@ -631,6 +631,17 @@ Then User should have url containing '/checkout'
 Then the page title should contain 'My App'
 ```
 
+Disjunctive assertion (NOOD_0197) — any of / either / one of. Passes when at
+least one alternative (or `at least N of` them) is visible; the run log names
+which alternative satisfied it. This is an OR — never write one `should see`
+per alternative, that asserts all of them:
+```gherkin
+Then the user sees any of "Hot Wheels", "Die Cast"
+Then the user sees either "Order placed" or "Order confirmed"
+Then the user sees one of "Saved", "Updated", "Done"
+Then the user sees at least 2 of "Monitor", "Keyboard", "Mouse"
+```
+
 Count comparisons (NOOD_0009) — exact counts make list tests brittle:
 ```gherkin
 Then User should see at least 3 'Shipped' items

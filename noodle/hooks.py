@@ -56,6 +56,19 @@ def _safe_url(url) -> str:
         return ""
 
 
+def _safe_failed_request(line) -> str:
+    """NOOD_0197 — redact only the URL inside a 'METHOD url — failure'
+    composite. Running _safe_url over the whole line partitioned on the first
+    '?', destroying the failure tail RCA parses — so failed requests with a
+    query string silently vanished from mutation_verdict while bare URLs
+    fired."""
+    m = re.match(r"^(\S+)\s+(\S+)\s+—\s+(.*)$", str(line or ""))
+    if not m:
+        return _safe_url(line)
+    method, url, failure = m.groups()
+    return f"{method} {_safe_url(url)} — {failure}"
+
+
 def _safe_ws_frame(frame) -> dict:
     """Keep the shape of a WebSocket frame, drop the body — an auth handshake
     puts the bearer token in the first frame's payload."""
@@ -1219,7 +1232,8 @@ def after_scenario(context, scenario):
             net_doc = {
                 "console_errors": context._console_errors,
                 "page_errors": context._page_errors,
-                "failed_requests": [_safe_url(u) for u in context._failed_requests],
+                "failed_requests": [_safe_failed_request(u)
+                                    for u in context._failed_requests],
                 "requests": [_safe_url(u) for u in context._requests],
                 # NOOD_0156 — mutation-aware RCA inputs
                 "mutations": ctx_get(context, "_mutations", []),

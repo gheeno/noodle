@@ -15,6 +15,12 @@ def _q(s: str) -> str:
     return s
 
 
+def _alternatives(raw: str) -> list[str]:
+    """NOOD_0197 — the quoted alternatives of a disjunctive assertion:
+    '"A", "B" or "C"' → ['A', 'B', 'C']."""
+    return re.findall(r'["\']([^"\']+)["\']', raw)
+
+
 # NOOD_0182 — per-step REST budget: "... within 90 seconds" on any step that
 # waits on a backend (REST call, API call, response wait). Optional; without it
 # the run-wide NOODLE_REST_TIMEOUT applies.
@@ -1186,6 +1192,14 @@ PATTERNS = [
                                                    'assert_a11y',    lambda m: {'impact': m.group(2), 'max': int(m.group(1))}),
     (r'^(?:the (?:page|screen) should have|should see) at most (\d+) accessibility violations?$',
                                                    'assert_a11y',    lambda m: {'impact': None, 'max': int(m.group(1))}),
+    # NOOD_0197 — the disjunctive assertion ("any of" / "either" / "one of").
+    # An OR of alternatives is one step, never N conjunctive `sees` steps.
+    # MUST precede the count comparisons: their `at least (\d+) "X"` shape
+    # would swallow `at least 2 of "A", "B"` with locator `of "A", "B"`.
+    (r'^(?:should see|sees?) (?:(?:any|one) of|either) ((?:["\'][^"\']+["\'](?:,? *(?:or )?)?)+)$',
+                                                   'assert_any_visible', lambda m: {'alternatives': _alternatives(m.group(1))}),
+    (r'^(?:should see|sees?) at least (\d+) of ((?:["\'][^"\']+["\'](?:,? *(?:or )?)?)+)$',
+                                                   'assert_any_visible', lambda m: {'alternatives': _alternatives(m.group(2)), 'min_count': int(m.group(1))}),
     # Count comparisons (NOOD_0009) — exact counts make list tests brittle.
     (r'^should see at least (\d+) ["\']?(.+?)["\']?(?: items?| results?| rows?| elements?| entries?)?$',
                                                    'assert_count',   lambda m: {'count': int(m.group(1)), 'locator': _q(m.group(2)), 'op': '>='}),

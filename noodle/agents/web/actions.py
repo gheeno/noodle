@@ -607,6 +607,33 @@ def _find_probe_visible(page: Page, text: str, poll: bool = False) -> bool:
         return False
 
 
+def assert_any_visible(page: Page, alternatives: list[str],
+                       min_count: int = 1):
+    """NOOD_0197 — a real disjunction: passes when at least `min_count` of the
+    alternatives are visible. An `any_of` goal check used to compile to one
+    conjunctive `sees` step per member, so "A or B" went red on a page that
+    correctly showed only A. The satisfying member is named in the log so the
+    Allure step records WHICH disjunct proved the check.
+
+    One shared smart-wait budget for the whole disjunction — polling each
+    absent alternative separately would stack N timeouts."""
+    deadline = time.monotonic() + _find_timeout_ms() / 1000
+    seen: list[str] = []
+    while True:
+        seen = [a for a in alternatives if _find_probe_visible(page, a)]
+        if len(seen) >= min_count:
+            logger.info(f"\n  ✓ any-of satisfied by {seen} "
+                        f"(needed {min_count} of {alternatives})")
+            return
+        if time.monotonic() >= deadline:
+            break
+        page.wait_for_timeout(500)
+    raise AssertionError(
+        f"Expected at least {min_count} of {alternatives} visible — found "
+        f"{len(seen)}: {seen} — smart wait exhausted "
+        f"(NOODLE_FIND_TIMEOUT={_find_timeout_ms()}ms).\nURL: {page.url}")
+
+
 def _assert_visible_ocr_or_fail(page: Page, text: str):
     """Phase T — when the DOM lookup misses and the OCR fallback is opted in,
     text rendered inside a closed shadow root can still pass via pixels."""

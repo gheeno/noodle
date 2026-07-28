@@ -190,6 +190,14 @@ cheaper of two routes:
   <kw>` confirms a phrasing is dictionary-valid — so the new test reads like
   the rest of the suite.
 
+**Updating an existing test** (NOOD_0197) — no separate command, three
+shapes: same `feature_path` + `overwrite: true` re-authors the whole test
+from the amended goal (the engine re-probes and re-verifies — reuse the
+`feature` path the previous author RETURNED, which is where the wok layout
+actually wrote it); `append_to` adds a scenario without regenerating the
+rest; `noodle task "update the <x> test …"` routes to the overwrite path
+from plain English.
+
 **Fresh or scaffold-only workspace** → author from a `goal` (§2), and anchor
 each check to the page it was observed on: `after: start` for the landing
 page, `after: <action id>` for the page an action lands on, unanchored for
@@ -844,7 +852,11 @@ an exit code alone is neither. Before reporting success:
    action, read the compact RCA first: a `mutation-failed` verdict means
    the engine correlated the run's own network capture (aborted request,
    or a non-success status, redacted to method + path) — fix the action;
-   never weaken the assertion or guess a repair step.
+   never weaken the assertion or guess a repair step. (NOOD_0197: this
+   verdict only fires when the scenario itself carries a mutation-shaped
+   step — a read-only flow never gets it — and a `goal:` line in the RCA
+   names the goal node behind the failing step; when it names a
+   multi-term check, verify the compilation before touching any action.)
 7. A green-with-warnings/healing outcome belongs in the session diagnostic
    (§7.5) — log the anomaly, don't bury it.
 

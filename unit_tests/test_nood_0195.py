@@ -13,15 +13,17 @@ refuse to call green. Rewriting the identical intent as literal `see:` checks
 passed and verified on the first try, so the compiler had chosen an assertion
 shape its own verifier rejects while the author reported ready.
 
-Pinned here:
-  A  every any_of member rendered in full on the probed page → one literal
-     `see` step per member, no synthesized locator, evidence marker carried
-  B  a member the probe saw only in part keeps the count form (a `see` for
-     text the page never renders in full would be a red run)
-  C  an unproven any_of still blocks — the upgrade never invents evidence
+Pinned here (re-pinned by NOOD_0197 — the per-member literal expansion this
+suite originally asserted was a logic inversion: it compiled "A or B" into
+"A and B", and a page correctly showing only A went red):
+  A  a proven any_of compiles to ONE disjunctive `sees any of` step — never
+     one conjunctive `see` per member, never a synthesized locator; the
+     evidence marker rides that single step
+  B  partial proof (a member seen only in part) compiles the same disjunctive
+     step — the disjunction is satisfiable by the member that does render
+  C  an unproven any_of still blocks — compilation never invents evidence
   D  assert_count registers its first counted element, so a genuine count
-     check can still produce a valid evidence shot (the shape that has no
-     literal upgrade)
+     check can still produce a valid evidence shot
   E  near-miss repair hints: an invented `do`, and a suggestion option one
      edit off the page's own (misspelled) typeahead
 """
@@ -54,42 +56,54 @@ def _compile(goal, probe):
     return ev, thens, pom
 
 
-# --- A: proven literals compile to per-item see steps -------------------------
+# --- A: a proven any_of compiles to ONE disjunctive step ----------------------
 
-def test_fully_proven_any_of_compiles_one_see_per_member():
+def test_proven_any_of_compiles_one_disjunctive_step():
     ev, thens, pom = _compile(_goal([_BISSELL, _HOOVER]),
                               _probe([_BISSELL, _HOOVER]))
     assert ev["blocking"] == []
-    assert thens == [f'the user sees "{_BISSELL}"',
-                     f'the user sees "{_HOOVER}"'], thens
+    assert thens == [f'the user sees any of "{_BISSELL}", "{_HOOVER}"'], thens
     # No count assertion, and no synthesized regex locator to go with it.
     assert not any("at least" in t for t in thens)
     assert pom is None, pom
 
 
-def test_evidence_marker_rides_every_generated_see():
+def test_evidence_marker_rides_the_disjunctive_step():
     _, thens, _ = _compile(_goal([_BISSELL, _HOOVER], evidence="screenshot"),
                            _probe([_BISSELL, _HOOVER]))
-    assert all(t.endswith("( take a screenshot )") for t in thens), thens
+    assert len(thens) == 1 and thens[0].endswith("( take a screenshot )"), thens
 
 
-# --- B: partial evidence keeps the count form ---------------------------------
+def test_min_above_one_compiles_at_least_n_of():
+    goal = _goal([_BISSELL, _HOOVER])
+    goal["checks"][0]["min"] = 2
+    _, thens, pom = _compile(goal, _probe([_BISSELL, _HOOVER]))
+    assert thens == [
+        f'the user sees at least 2 of "{_BISSELL}", "{_HOOVER}"'], thens
+    assert pom is None
 
-def test_member_seen_only_in_part_keeps_the_count_assertion():
-    # The probe saw a prefix of the Hoover title. `see "<full title>"` would
-    # assert text the page never renders — the count form stays honest.
+
+# --- B: partial evidence compiles the same disjunctive step -------------------
+
+def test_member_seen_only_in_part_still_compiles_the_disjunction():
+    # The probe saw a prefix of the Hoover title. The disjunction stays whole:
+    # at run time the member that does render satisfies it, and the run
+    # payload records which one did.
     _, thens, pom = _compile(_goal([_BISSELL, _HOOVER]),
                              _probe([_BISSELL, "Hoover WindTunnel 2"]))
-    assert thens == ['should see at least 1 "result titles"'], thens
-    assert pom and "result titles:" in pom
+    assert thens == [f'the user sees any of "{_BISSELL}", "{_HOOVER}"'], thens
+    assert pom is None
 
 
 # --- C: unproven any_of still blocks ------------------------------------------
 
-def test_unproven_any_of_blocks_and_never_upgrades():
+def test_unproven_any_of_blocks_and_never_narrows():
     ev, thens, _ = _compile(_goal([_BISSELL, _HOOVER]), _probe(["Groceries"]))
     assert any("any_of" in b for b in ev["blocking"]), ev["blocking"]
-    assert not any("the user sees" in t for t in thens), thens
+    # The compiled step stays the faithful disjunction — blocking is the
+    # honest outcome, never a narrowed assertion that would go green.
+    assert not any(t == f'the user sees "{_BISSELL}"'
+                   or t == f'the user sees "{_HOOVER}"' for t in thens), thens
 
 
 # --- D: a real count check still yields valid evidence ------------------------
@@ -217,10 +231,10 @@ def test_unanchored_check_takes_its_evidence_from_the_landed_page():
                                    "pom_yaml": ""}
     ev = G.evidence(goal, probe)
     assert ev["blocking"] == [], ev["blocking"]
-    # ...and with real results-page evidence, the literal upgrade fires.
+    # ...and with real results-page evidence, the disjunction compiles whole.
     feature, pom = G.compile_goal(goal, ev, "APP")
-    assert f'the user sees "{_BISSELL}"' in feature, feature
-    assert f'the user sees "{_HOOVER}"' in feature, feature
+    assert (f'the user sees any of "{_BISSELL}", "{_HOOVER}"' in feature), \
+        feature
     assert "at least" not in feature and pom is None
 
 
@@ -249,8 +263,7 @@ def test_product_titles_are_provable_from_search_result_captions():
 
 def test_expect_verdicts_prove_a_title_the_captures_truncate():
     # The live blocker after result_items landed: captions cap at ~60 chars, so
-    # a 68-char product title could never be proven WHOLE from them, and the
-    # literal upgrade could never fire on the flow it was written for.
+    # a 68-char product title could never be proven WHOLE from them.
     # --expect is an exact full-text search of the page the probe ended on.
     goal = {"scenario": "s",
             "actions": [{"do": "suggest", "term": "Vaccu",
@@ -267,10 +280,10 @@ def test_expect_verdicts_prove_a_title_the_captures_truncate():
                                    {"text": _HOOVER, "found": True}]
     ev = G.evidence(goal, probe)
     assert ev["blocking"] == []
-    assert "any_of_literal[0]" in ev["proven"], "expect FOUND is full-render"
+    assert "any_of[0]" in ev["proven"], "expect FOUND is evidence"
     feature, pom = G.compile_goal(goal, ev, "APP")
-    assert f'the user sees "{_BISSELL}"' in feature
-    assert f'the user sees "{_HOOVER}"' in feature
+    assert (f'the user sees any of "{_BISSELL}", "{_HOOVER}"' in feature), \
+        feature
     assert "at least" not in feature and pom is None
 
 

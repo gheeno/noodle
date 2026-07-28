@@ -702,12 +702,20 @@ def author_test(*, prompt: str | None = None,
                        "launched: " + "; ".join(review["problems"])}
         if not exp["ok"]:
             needs = bool(exp.get("unresolved")) and not exp.get("conflicts")
-            return {"ok": False, "error": exp["error"],
+            err = exp["error"]
+            if needs and not model_calls:
+                err += (" (set NOODLE_MODEL to allow one bounded "
+                        "interpretation call)")
+            return {"ok": False, "error": err,
                     "needs_interpretation": needs,
                     "unrecognized_steps": exp.get("unrecognized") or [],
                     "unresolved": exp.get("unresolved") or [],
                     "conflicts": exp.get("conflicts") or [],
                     "assumptions": exp.get("assumptions") or [],
+                    # NOOD_0197 — the deterministic work is never discarded:
+                    # the goal built from the clauses that DID parse, so a
+                    # re-author only has to fill the unresolved ones.
+                    "goal_partial": exp.get("goal_partial"),
                     "example": goal_mod.EXAMPLE,
                     "vocabulary": goal_mod.vocabulary(),
                     "planner": {"state": ("NEEDS_INTERPRETATION" if needs
@@ -1112,16 +1120,29 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         # Unproven requested actions/checks block FIRST — the compiled
         # artifacts still carry every request verbatim (never dropped).
         blocking = goal_ev["blocking"] + blocking
+    # NOOD_0197 — path contract honesty: the wok layout keeps only the
+    # basename of the requested feature_path, and the reviewed session had to
+    # GUESS the corrected path for its overwrite retry. Requested vs written,
+    # plus a warning whenever they differ.
+    warnings = validate.redundant_post_nav_waits(content)
+    requested_norm = Path(feature_path).as_posix().removesuffix(".feature")
+    if not rel(feat_dest).removesuffix(".feature").endswith(requested_norm):
+        warnings = [
+            f"feature_path relocated: requested '{feature_path}', written "
+            f"'{rel(feat_dest)}' (the layout is "
+            "<tests_dir>/<wok>/<app>/features/ — reuse the written path for "
+            "overwrite retries)"] + warnings
     result = {
         "ok": True, "app": app, "app_dir": rel(app_dir),
         "base_url_key": app.upper(),
         "feature": rel(feat_dest),
+        "feature_path_requested": str(feature_path),
         "pom": rel(pom_path) if pom_content is not None else None,
         "environments": rel(env_path), "secrets": rel(secrets_path),
         "created_secret_keys": new_secret_keys,
         "missing_secret_keys": missing_secret_keys,
         "unmatched": unmatched_steps,
-        "warnings": validate.redundant_post_nav_waits(content),
+        "warnings": warnings,
         "llm_required": llm_required,
         # NOOD_0135 — explicit: authoring already parsed, matched, linted and
         # resolved everything; a separate validate call adds nothing.
@@ -1193,6 +1214,17 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             result["evidence"]["browserless"] = True
         if goal_ev.get("bound_targets"):
             result["evidence"]["bound_targets"] = goal_ev["bound_targets"]
+        # NOOD_0197 — the internal probe, narrated in one scalar line. It
+        # runs inside this transaction (a separate probe_page would
+        # double-bill), but invisibly — which reads as "skipped" to an
+        # auditor. One line makes it auditable without growing the payload.
+        e = result["evidence"]
+        result["probe_summary"] = (
+            "probe skipped (browserless api goal)" if browserless else
+            f"probed {supplied_url}: {len(e.get('proven') or {})} fact(s) "
+            f"proven, {e.get('popups_closed') or 0} popup(s) closed, "
+            f"prompts: {', '.join(e.get('permission_prompts') or []) or 'none'}"
+            + (" [probe reused — browser not re-opened]" if cache_hit else ""))
         # NOOD_0156 — intent provenance: what the user asked for, what got
         # bound to concrete probe evidence, and every extra step with its
         # required_by/evidence justification.
@@ -1204,6 +1236,24 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         result["intent_trace"] = trace
         if not all(t.get("ok") for t in trace):
             result["intent_verified"] = False
+        # NOOD_0197 — persist the trace where RCA can reach it
+        # (rca_report.goal_node_hint): a failing compiled step is then traced
+        # back to the goal node that produced it instead of blaming whatever
+        # background request the network capture happened to hold.
+        try:
+            tp = Path(workspace) / _paths.artifacts_root() / "intent_trace.json"
+            tp.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                traces = json.loads(tp.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                traces = {}
+            if not isinstance(traces, dict):
+                traces = {}
+            traces[goal.get("scenario") or rel(feat_dest)] = {
+                "feature": rel(feat_dest), "trace": trace}
+            tp.write_text(json.dumps(traces, indent=1), encoding="utf-8")
+        except OSError:
+            pass  # the trace is advisory — never fail authoring over it
         # ONE typed repair code per blocked payload — the driving agent fixes
         # the named gap instead of inventing an exploration strategy.
         if blocking:

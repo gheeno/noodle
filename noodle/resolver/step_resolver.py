@@ -186,7 +186,8 @@ def _suggest(step_text: str) -> str:
 # the runner is a flat dispatch with no list to import. If a new action type is
 # added there, add it here (test_llm_resolve_rejects guards the common slips).
 VALID_TYPES = frozenset({
-    'api_call', 'assert_attribute', 'assert_cell', 'assert_compare',
+    'api_call', 'assert_any_visible', 'assert_attribute', 'assert_cell',
+    'assert_compare',
     'assert_count', 'assert_hidden', 'assert_number', 'assert_on_screen',
     'assert_row_count',
     'assert_semantic',

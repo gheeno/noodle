@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -189,7 +190,41 @@ def install_checks() -> list[Check]:
             remediation="noodle update"))
     checks.append(_launcher_check())
     checks.append(_login_shell_check())
+    checks.append(_browsers_check())
     return checks
+
+
+def _browsers_check() -> Check:
+    """NOOD_0197 — are Playwright's browser binaries actually installed?
+    "MCP declared, workspace green, first run dies downloading Chromium" is a
+    doctor-shaped failure. Read-only per this module's charter: looks for the
+    browsers directory on disk, never spawns or downloads anything."""
+    root = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if root == "0":
+        # ponytail: browsers vendored inside the package env — trust it.
+        return Check("install.browsers", "install", "info",
+                     "PLAYWRIGHT_BROWSERS_PATH=0 (browsers live inside the "
+                     "package env; presence not probed)")
+    if root:
+        cand = [Path(root)]
+    elif sys.platform == "darwin":
+        cand = [Path.home() / "Library" / "Caches" / "ms-playwright"]
+    elif os.name == "nt":
+        cand = [Path(os.environ.get("LOCALAPPDATA", "")) / "ms-playwright"]
+    else:
+        cand = [Path.home() / ".cache" / "ms-playwright"]
+    for c in cand:
+        try:
+            if any(d.name.startswith(("chromium", "firefox", "webkit"))
+                   for d in c.iterdir() if d.is_dir()):
+                return Check("install.browsers", "install", "pass",
+                             f"Playwright browsers present ({c})")
+        except OSError:
+            continue
+    return Check("install.browsers", "install", "warn",
+                 "no Playwright browser binaries found — the first web run "
+                 "will fail (or stall downloading) instead of testing",
+                 remediation="playwright install chromium")
 
 
 def _login_shell_check() -> Check:

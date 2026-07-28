@@ -1293,10 +1293,15 @@ def test_collect_correlates_mutation_from_network_capture(tmp_path):
     no probe/inspect/screenshot needed."""
     results = tmp_path / "allure-results"
     results.mkdir()
-    _result_json(results, [_step(
-        "Then the user sees 'Paw Patrol Toy Truck'", status="failed",
-        message="Comparison failed: expected 'Paw Patrol Toy Truck'",
-        trace="")], status="failed", name="buy a toy")
+    # NOOD_0197 — the scenario must carry its own mutation-shaped step for
+    # the correlation to speak at all (a read-only flow never gets this
+    # verdict, whatever background XHR the capture holds).
+    _result_json(results, [
+        _step("When User clicks 'Add to Cart'"),
+        _step(
+            "Then the user sees 'Paw Patrol Toy Truck'", status="failed",
+            message="Comparison failed: expected 'Paw Patrol Toy Truck'",
+            trace="")], status="failed", name="buy a toy")
     net_dir = tmp_path / "network"
     net_dir.mkdir()
     (net_dir / "buy_a_toy.json").write_text(json.dumps(_net(

@@ -99,8 +99,9 @@ tests or start test apps unless also asked.
    specific python scripts live in that app's `resources/scripts/`.
 
 9. **"run feature-regression"** → `noodle feature-regression`. ONE call:
-   generates both test cases, runs, serves, prints the table. Never
-   hand-build `results.json` or read host telemetry.
+   generates the three test cases, runs, serves, prints the table. Never
+   hand-build `results.json` or read host telemetry. Run it before any
+   engine-branch PR; exit 0 required.
 
 ## Edge cases (playbook §8 has the full list)
 
