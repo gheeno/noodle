@@ -52,8 +52,13 @@ def outside_asyncio(fn):
             return ex.submit(fn, *args, **kwargs).result()
     return wrapper
 
-# Same walk cap as dom_scan. ponytail: raise if a real page buries its
-# controls below the cap.
+# Walk cap. Unlike dom_scan's (NOOD_0199, tunable via NOODLE_DOM_SCAN_MAX,
+# where any attribute — `class` included — makes an element count, so the cap
+# is effectively a DOM-node count), this counter only advances for INTERACTIVE
+# elements: the `continue` below rejects everything that isn't a real control.
+# 3000 controls on one screen is not a shape real pages take, so this is a
+# runaway guard rather than a limit anything meets.
+# ponytail: raise if a real page buries its controls below the cap.
 _MAX_ELEMENTS = 3000
 
 _COLLECT_JS = """

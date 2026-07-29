@@ -44,12 +44,14 @@ def _cand(**kw):
 
 
 class _Scope:
-    """dom_scan scope double: .evaluate returns the candidate list."""
+    """dom_scan scope double: .evaluate returns the collect payload (NOOD_0199
+    — candidates plus the walk-truncation metadata)."""
     def __init__(self, cands):
         self._cands = cands
 
-    def evaluate(self, _js):
-        return self._cands
+    def evaluate(self, _js, _arg=None):
+        return {"cands": self._cands, "truncated": False,
+                "total": len(self._cands)}
 
 
 class _ZeroLoc:

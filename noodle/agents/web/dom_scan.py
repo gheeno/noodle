@@ -17,6 +17,7 @@ accessibility tier already owns text. One exception (NOOD_0109): a class
 token carrying a known automation prefix (e2e_/qa-/test-/...) is identity,
 not styling, and counts as strong — see _AUTOMATION_CLASS_RE.
 """
+import os
 import re
 
 from noodle.log import logger
@@ -27,15 +28,50 @@ _TOKEN = re.compile(r"[a-z0-9]+")
 _STOP = {"the", "a", "an", "of", "to", "in", "on", "at", "and", "or", "for",
          "user", "users", "it", "its", "then", "with"}
 
-# Cap the walk: huge pages (10k+ nodes) get the first N attribute-bearing
-# elements. ponytail: raise if a real page buries its target below the cap.
-_MAX_ELEMENTS = 3000
+# Cap the walk: huge pages get the first N attribute-bearing elements, in
+# document order. NOOD_0199 — an element counts toward this the moment it has
+# ANY of the collected attributes, and `class` is one of them, so on a
+# component-framework app (every styled div carries a class) the cap is really
+# "the first N DOM nodes". ERP/CRM single-page apps clear 3000 nodes on one
+# screen and the deep grid/form content — the part a step actually targets —
+# is exactly what falls off the end. Raise it with NOODLE_DOM_SCAN_MAX.
+_DEFAULT_MAX_ELEMENTS = 3000
 
+
+def _max_elements() -> int:
+    """Walk cap, from NOODLE_DOM_SCAN_MAX (default 3000). Unset, unparseable
+    or non-positive all mean the default — a bad value must not silently
+    disable the tier. Pure: unit-testable without a page."""
+    try:
+        value = int(os.getenv("NOODLE_DOM_SCAN_MAX", "") or _DEFAULT_MAX_ELEMENTS)
+    except ValueError:
+        return _DEFAULT_MAX_ELEMENTS
+    return value if value > 0 else _DEFAULT_MAX_ELEMENTS
+
+
+# NOOD_0199 — one function body serves both call shapes, because Playwright
+# passes arguments differently depending on the scope:
+#   Page/Frame.evaluate(fn, opts) → fn(opts)
+#   Locator.evaluate(fn, opts)    → fn(element, opts)
+# Detecting which by "did a second argument arrive" is what lets a Locator
+# scope (a row, a panel) genuinely narrow the walk. Before this, the body
+# hardcoded `document`, so scoping a step to a row still walked the whole page
+# and still truncated at the same cap — the one obvious mitigation for a big
+# SPA bought nothing.
 _COLLECT_JS = """
-() => {
+(arg0, arg1) => {
+  const scoped = arg1 !== undefined;
+  const opts = scoped ? arg1 : arg0;
+  const root = scoped ? arg0 : document;
+  const max = opts.max;
+  // A scoped root is itself a candidate (the row you scoped to may BE the
+  // target); a document root is not.
+  const nodes = scoped ? [root].concat(Array.from(root.querySelectorAll('*')))
+                       : Array.from(root.querySelectorAll('*'));
   const out = [];
-  for (const el of document.querySelectorAll('*')) {
-    if (out.length >= %d) break;
+  let truncated = false;
+  for (const el of nodes) {
+    if (out.length >= max) { truncated = true; break; }
     const attr = n => el.getAttribute(n) || '';
     const id = el.id || '';
     const name = attr('name');
@@ -54,9 +90,9 @@ _COLLECT_JS = """
                          el.hasAttribute('onclick') ||
                          role === 'option' || role === 'link')});
   }
-  return out;
+  return {cands: out, truncated: truncated, total: nodes.length};
 }
-""" % _MAX_ELEMENTS
+"""
 
 # Attribute → weight per overlapping token. Identity attributes beat classes:
 # a class token is often generic ("panel", "button") and shared page-wide.
@@ -157,7 +193,11 @@ def best_selector(scope, phrase: str) -> str | None:
     attributes best match `phrase`, or None. Visible candidates win ties —
     but a hidden element with the only strong match (the dev-panel case) is
     still returned; the click layer handles the force-click + warning.
-    Best-effort: any page/JS failure returns None, never raises."""
+    Best-effort: any page/JS failure returns None, never raises.
+
+    `scope` may be a Page, a Frame, or a Locator; a Locator narrows the walk to
+    that subtree (NOOD_0199), which is what makes this tier usable on a page
+    too large to walk whole."""
     tokens = _tokens(phrase)
     # Single-word phrases ("login") are too ambiguous for attribute matching —
     # one shared token would equate id="login-username" (a field) with a login
@@ -165,8 +205,13 @@ def best_selector(scope, phrase: str) -> str | None:
     # needs a compound phrase to be precise about.
     if len(tokens) < 2:
         return None
+    cap = _max_elements()
     try:
-        cands = scope.evaluate(_COLLECT_JS)
+        raw = scope.evaluate(_COLLECT_JS, {"max": cap})
+    except Exception:
+        return None
+    cands, truncated, total = _unpack(raw)
+    try:
         # NOOD_0141 (E4) — activation affordance (a[href], onclick, role=
         # option|link) is the LAST tiebreak: when a no-op icon and a real
         # navigating row score the same, the row wins. Never outranks score
@@ -177,11 +222,31 @@ def best_selector(scope, phrase: str) -> str | None:
             key = (s, bool(c.get("visible")), bool(c.get("afford")))
             if s and key > best_key:
                 best, best_key = c, key
-        if best is None:
-            return None
-        sel = _selector_for(best)
-        logger.info(f"\n  🔎 DOM scan: '{phrase}' → {sel}"
-                    + ("" if best.get("visible") else " (hidden element)"))
-        return sel
+        if best is not None:
+            sel = _selector_for(best)
+            logger.info(f"\n  🔎 DOM scan: '{phrase}' → {sel}"
+                        + ("" if best.get("visible") else " (hidden element)"))
+            return sel
     except Exception:
         return None
+    # NOOD_0199 — a truncated walk that found nothing used to return None
+    # silently, so "the target was past the cap" and "no such element" were
+    # indistinguishable in the log of a step that was about to fail. Say which
+    # one it was, and name the knob.
+    if truncated:
+        logger.warning(
+            f"\n  ⚠️  DOM scan for '{phrase}' stopped at {cap} elements "
+            f"(page has {total}) — the target may be past the cap and was "
+            f"never examined. Raise NOODLE_DOM_SCAN_MAX (e.g. "
+            f"{max(cap * 4, total)}), or pin this element in pom.yaml.")
+    return None
+
+
+def _unpack(raw) -> tuple[list, bool, int]:
+    """Normalize the collect payload to (candidates, truncated, total).
+    Anything that isn't the expected object (a page that closed mid-evaluate
+    and answered None) scans as empty rather than raising."""
+    if not isinstance(raw, dict):
+        return [], False, 0
+    cands = raw.get("cands") or []
+    return cands, bool(raw.get("truncated")), int(raw.get("total") or len(cands))

@@ -1760,6 +1760,30 @@ opted back into strict certs with `@secure_certs` or
 `NOODLE_IGNORE_HTTPS_ERRORS=false`, a self-signed cert stalls the load and
 looks identical to slowness.
 
+**Big ERP/CRM single-page app: a step can't find an element the page
+clearly has, and the log says the DOM scan "stopped at 3000 elements"**
+The DOM-attribute heal tier walks the page collecting `id`/`name`/
+`data-testid`/`aria-label`/`title`/`placeholder`/`class`, and stops at
+`NOODLE_DOM_SCAN_MAX` (default 3000). Because a `class` is enough to make an
+element count, and every styled `div` in a component-framework app has one,
+that cap is effectively a **DOM-node** count — an ERP screen with a wide grid
+clears it on the chrome alone, and the grid rows you were targeting are past
+the end of the walk. Raise it in `.env`:
+`NOODLE_DOM_SCAN_MAX=25000`.
+
+Two things worth knowing before you reach for it. This tier is a *heal*, not
+the primary path: anything with a role, label, placeholder, title or visible
+text already resolves through the accessibility strategies, which query the
+full document and have no cap — so the fix only matters for elements named by
+machine identity (`e2e_grid_row-actions`, a dynamic id, a hidden panel).
+And whatever this tier resolves is a fuzzy match, so the run reports
+`verified: false` (see *Green is not automatically verified*). The durable
+fix for an element you target often is a `pom.yaml` entry: first tier,
+uncapped, deterministic, and it keeps the run verified.
+
+Scoping the step to a row or panel also genuinely narrows the walk, so a
+scoped step can stay under the cap on a page that blows past it.
+
 **Windows: `python --version` opens the Microsoft Store instead of printing
 a version**
 An App execution alias is shadowing the real interpreter. Settings → Apps →

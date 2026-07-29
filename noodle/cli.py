@@ -918,6 +918,7 @@ NOODLE_TIMEOUT=10000            # per-action timeout, milliseconds (clicks, page
 #NOODLE_REST_TIMEOUT=30         # REST/API budget, SECONDS — a ceiling, not a wait: the step continues the instant the response lands. Slow report/batch/cold-start endpoint? raise it, e.g. 180. Per step: "... within 180 seconds"
 #NOODLE_FIND_TIMEOUT=120000     # element-find + page-load budget, ms — a CEILING, not a wait: steps proceed the instant the element appears. Slow internal site? raise it, e.g. 300000 (5 min)
 #NOODLE_WAIT_EXTENSION=30000    # one extra wait granted at the find deadline while the page is still loading (network active)
+#NOODLE_DOM_SCAN_MAX=3000       # elements the DOM-attribute heal tier walks before it stops. Any attribute counts (`class` included), so on a component-framework app this is really a DOM-node cap. Big ERP/CRM SPA where a step can't find an element the page clearly has? raise it, e.g. 25000
 # Authoring on a SLOW/spinner-heavy site? Uncomment this dev-loop floor so a missed
 # element fails fast instead of eating the full ceiling — then RAISE/REMOVE it for the
 # real CI run, or a genuinely slow-but-valid load will false-fail:
@@ -1150,17 +1151,19 @@ can't": read the wok.
 2. Author once — reuse first: `list_tests(query=<app>)`; copying a
    green same-app test and retargeting `{env:}` beats authoring
    (playbook §1).
-   `author_test` (`noodle author --spec '<yaml>'`, never a heredoc):
-   the whole package in one transaction. New single-flow test: `--prompt` (numbered user steps,
-   passed RAW) or `goal`, + `--run` — THE rule;
+   ONE command = package+run+reports:
+   `noodle author --prompt "<the ask, verbatim>" --run --json`
+   (MCP: `author_test`) — ask passed RAW, never `--help` first;
+   a refusal names the rewrite. `--spec '<yaml>'`
+   (inline, never a heredoc) or `goal` once `--prompt` refuses;
    feature_content only on a named goal blocker. `ready: true` =
    parsed, matched, POM scoped, `{env:}` resolved — do not validate/
    preflight separately; run next. `ready: false`? Fix `blocking`,
-   re-author — no bypass, no guessed action. Base URL lands in
-   `resources/environments.yaml` under the returned `base_url_key`. Steps: probe output or `search_step`
-   (`noodle steps <kw>…` — all words, ONE call); `use_llm=True` last;
-   `append_to` adds a scenario sans regen (llm-performance).
-   Result-pick binding, `after:` check anchoring and
+   re-author — no bypass, no guessed action. Base URL →
+   `resources/environments.yaml` (`base_url_key`). Steps: probe
+   output or `search_step` (`noodle steps <kw>…` — all words, ONE
+   call); `use_llm=True` last; `append_to` appends a scenario
+   (llm-performance). Result-pick binding, `after:` anchoring,
    `evidence: screenshot`: playbook.
 3. Execute + report — one call: `run_and_report` with `headless=True,
    retries=0, serve_reports=True` (`noodle run noodle_tests/<app>

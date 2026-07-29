@@ -112,9 +112,14 @@ def test_selector_forms():
     assert dom_scan._selector_for(_cand(tag="input", name="server")) == 'input[name="server"]'
 
 
-def _fake_scope(candidates):
+def _fake_scope(candidates, truncated=False, total=None):
+    """A scope whose collect-JS answers the NOOD_0199 payload shape."""
     scope = MagicMock()
-    scope.evaluate.return_value = candidates
+    scope.evaluate.return_value = {
+        "cands": candidates,
+        "truncated": truncated,
+        "total": len(candidates) if total is None else total,
+    }
     return scope
 
 
