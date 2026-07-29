@@ -704,6 +704,16 @@ def _try_strategies(scope, text: str, prefer: str | None = None) -> tuple[Locato
 # the loop returns the instant a match appears, so a present element costs one
 # pass and only a genuinely absent one pays the full budget.
 _DOM_SCAN_AFTER_S = 5.0     # start attribute re-scans after this long w/o a match
+# NOOD_0199 — ceiling on those re-scans within ONE find. The settle early exit
+# normally ends the poll long before this matters, but it needs BOTH a quiet
+# network and a stable DOM, and an ERP/CRM SPA (websocket tiles, a polling
+# notification badge, a live clock) satisfies neither — so the poll runs the
+# full budget and used to pay a whole-page DOM walk every _DOM_SCAN_AFTER_S
+# throughout (~24 walks on the default 2-minute budget, each one a
+# getBoundingClientRect per element serialized over CDP). The accessibility
+# strategies keep retrying every 100ms and are uncapped; this heuristic tier
+# only ever needed a few looks.
+_DOM_SCAN_MAX_PASSES = 6
 _NETWORK_QUIET_S = 2.0      # "page settled" = no non-noise request for this long
 _SETTLE_SAMPLE_S = 1.0      # DOM-fingerprint sampling interval while polling
 _SETTLE_STABLE_SAMPLES = 3  # consecutive identical fingerprints = DOM stable
@@ -753,7 +763,10 @@ def _poll_strategies(scope, text: str, prefer: str | None = None,
     - After _DOM_SCAN_AFTER_S without a match, periodically re-scan the DOM for
       an attribute-token match (dom_scan) — the phrase may name an id/data-*
       identity the accessibility strategies can't see, or a dynamic id whose
-      stable tokens still overlap the phrase.
+      stable tokens still overlap the phrase. Bounded to _DOM_SCAN_MAX_PASSES
+      walks per find (NOOD_0199): the walk is whole-page and expensive, and on
+      a page that never settles the poll would otherwise repeat it for the
+      entire budget.
     - At the deadline, if the network was active in the last _NETWORK_QUIET_S
       the page is likely still loading: grant ONE extension of
       NOODLE_WAIT_EXTENSION ms (default 30s). One, and bounded, so a page with
@@ -769,6 +782,7 @@ def _poll_strategies(scope, text: str, prefer: str | None = None,
       loading long ago — for EVERY label, not any specific action."""
     deadline = time.monotonic() + _find_timeout_ms() / 1000
     next_scan = time.monotonic() + _DOM_SCAN_AFTER_S
+    scans_left = _DOM_SCAN_MAX_PASSES
     settle_ms = _settle_timeout_ms()
     settle_at = (time.monotonic() + settle_ms / 1000) if settle_ms > 0 else None
     next_sample = 0.0
@@ -806,8 +820,9 @@ def _poll_strategies(scope, text: str, prefer: str | None = None,
         # NOOD_0156 — assertion callers poll WITHOUT the attribute re-scans:
         # a literal "should see" must only ever match text/accessible names,
         # never a machine-identity token overlap (the header-cart false pass).
-        if allow_dom_scan and now >= next_scan:
+        if allow_dom_scan and scans_left > 0 and now >= next_scan:
             next_scan = now + _DOM_SCAN_AFTER_S
+            scans_left -= 1
             sel = dom_scan.best_selector(scope, text)
             if sel:
                 try:

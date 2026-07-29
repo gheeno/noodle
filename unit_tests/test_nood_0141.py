@@ -246,11 +246,14 @@ def test_dom_scan_tiebreak_prefers_activation_affordance():
     row = {"tag": "a", "id": "suggestion-row", "name": "", "testid": "",
            "aria": "vaccum cleaner", "title": "", "ph": "", "cls": "",
            "visible": True, "afford": True}
+    def _payload(cands):
+        return {"cands": cands, "truncated": False, "total": len(cands)}
+
     scope = MagicMock()
-    scope.evaluate.return_value = [icon, row]   # icon first in DOM order
+    scope.evaluate.return_value = _payload([icon, row])  # icon first in DOM order
     assert dom_scan.best_selector(scope, "vaccum cleaner") == '[id="suggestion-row"]'
     # the icon still wins when it is the ONLY match — no worse than before
-    scope.evaluate.return_value = [icon]
+    scope.evaluate.return_value = _payload([icon])
     assert dom_scan.best_selector(scope, "vaccum cleaner") == '[id="trigger-icon"]'
 
 

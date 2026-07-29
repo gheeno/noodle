@@ -185,7 +185,7 @@ def test_invented_verb_names_the_nearest_real_one():
 
 
 # --- F: the live re-run's own findings ----------------------------------------
-# Verifying the fixes above against canadiantire.ca surfaced three more, all
+# Verifying the fixes above against a live retail site surfaced three more, all
 # the same defect class: `ready: true` resting on nothing.
 
 def test_a_one_letter_control_cannot_prove_a_product_title():

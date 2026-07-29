@@ -18,7 +18,8 @@ def _cand(**kw):
 
 def _fake_scope(candidates):
     scope = MagicMock()
-    scope.evaluate.return_value = candidates
+    scope.evaluate.return_value = {"cands": candidates, "truncated": False,
+                                   "total": len(candidates)}
     return scope
 
 

@@ -166,6 +166,9 @@ NOODLE_IGNORE_HTTPS_ERRORS=true # dev/sandbox certs: TLS errors ignored by defau
 NOODLE_AUTO_DISMISS=true       # auto-close overlays that block a click + RCA warning;
                                # false = fail the click instead
 NOODLE_STRICT_LOCATOR=false    # true = ambiguous locators FAIL (recommended in CI)
+NOODLE_DOM_SCAN_MAX=3000       # NOOD_0199: how many elements the DOM-attribute heal tier
+                               # walks. `class` counts, so this is really a DOM-NODE cap —
+                               # raise it on an ERP/CRM SPA whose one screen exceeds it
 NOODLE_RETRIES=1               # re-run a failed scenario N extra times (flaky guard)
 NOODLE_PIXEL_THRESHOLD=0.01    # max fraction of changed pixels for "match the baseline"
 NOODLE_PROBE_CACHE_TTL=0       # NOOD_0188: seconds an authoring probe may be REUSED on a

@@ -824,7 +824,7 @@ def _block_texts(blk: dict) -> list[str]:
     # titles in structured `result_items`, never in headings or control names,
     # so a `see`/`any_of` naming a real product hard-blocked with "no probed
     # heading or control shows that text" while the probe was holding the
-    # caption all along. Verified live on canadiantire.ca: both requested
+    # caption all along. Verified live on a retail site: both requested
     # products were in result_items, neither was reachable from here.
     # (Captions are truncated to ~60 chars by the probe — _find_text's reverse
     # direction still matches longer titles, and since NOOD_0197 an `any_of`
@@ -994,6 +994,36 @@ def _find_text(needle: str, blocks: list[dict]) -> str | None:
     return None
 
 
+def _shared_phrase(needle: str, blocks: list[dict],
+                   floor: int = 2) -> tuple[str, str] | None:
+    """NOOD_0199 — (longest run of the needle a probed text contains, that
+    text), or None. The decorated-text case: a human asks to verify "Weekly
+    Flyer image" and the page renders "Banner 2 of 8 View the Weekly Flyer
+    now." Neither contains the other, so `_find_text` blocks — on a page that
+    demonstrably shows what was asked about. This is the "assert the smallest
+    stable substring" rule the workspace already tells authors to apply, done
+    by the engine WITH provenance instead of refusing.
+
+    ponytail: contiguous word runs, longest first, floor of two whole words —
+    the same floor `_find_text` uses against one-letter matches. Word-level
+    fuzzy matching (stemming, edit distance) is the upgrade path if real
+    prompts turn out to need it; nothing measured has."""
+    words = (needle or "").split()
+    if len(words) <= floor:
+        return None                # a one/two-word ask has no shorter form
+    texts = [(t, _norm(t)) for blk in blocks for t in _block_texts(blk)]
+    for size in range(len(words) - 1, floor - 1, -1):
+        for start in range(len(words) - size + 1):
+            run = " ".join(words[start:start + size])
+            rn = _norm(run)
+            if not rn:
+                continue
+            for t, tn in texts:
+                if rn in tn:
+                    return run, t
+    return None
+
+
 def _find_control(target: str, blocks: list[dict]) -> dict | None:
     t = _norm(target)
     for blk in blocks:
@@ -1040,7 +1070,7 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                 "popups_closed": 0, "results_summary": None, "controls": {},
                 "bound_targets": {}, "resolved_controls": {},
                 "mutation_plans": {}, "navigation_health": [],
-                "revealed_headings": {}, "headings": []}
+                "revealed_headings": {}, "headings": [], "narrowed": []}
 
     pages = probe_result.get("pages") or []
     if not pages:
@@ -1110,6 +1140,8 @@ def evidence(goal: dict, probe_result: dict) -> dict:
     searched = any(a["do"] in ("search", "suggest") for a in actions)
 
     blocking, proven, runtime, bound, resolved = [], {}, [], {}, {}
+    narrowed: list[dict] = []      # NOOD_0199 — see-checks cut to their
+                                   # probe-proven substring, never silently
     mplans: dict[str, dict] = {}
     if nav_block:
         blocking.append(nav_block)
@@ -1359,6 +1391,15 @@ def evidence(goal: dict, probe_result: dict) -> dict:
         if "see" in c:
             hit = c["see"] if _norm(c["see"]) in expect \
                 else _find_text(c["see"], scope)
+            if hit is None and (nar := _shared_phrase(c["see"], scope)):
+                # NOOD_0199 — narrow to the probe-proven part rather than
+                # block. The check dict is rewritten in place ON PURPOSE: the
+                # compiled step must assert what the evidence supports, and
+                # `narrowed` carries the change into the payload's warnings so
+                # it is never a silent weakening.
+                run, hit = nar
+                narrowed.append({"from": c["see"], "to": run, "probed": hit})
+                c["see"] = run
             if hit is None:
                 blocking.append(f'check "{c["see"]}": no probed heading or '
                                 "control shows that text")
@@ -1416,7 +1457,8 @@ def evidence(goal: dict, probe_result: dict) -> dict:
             "results_summary": rsum, "controls": controls,
             "bound_targets": bound, "resolved_controls": resolved,
             "mutation_plans": mplans, "navigation_health": nav_health,
-            "revealed_headings": revealed_headings, "headings": headings}
+            "revealed_headings": revealed_headings, "headings": headings,
+            "narrowed": narrowed}
 
 
 # --- automatic postcondition synthesis (NOOD_0156) ---------------------------

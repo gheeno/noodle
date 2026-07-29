@@ -1125,6 +1125,12 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     # GUESS the corrected path for its overwrite retry. Requested vs written,
     # plus a warning whenever they differ.
     warnings = validate.redundant_post_nav_waits(content)
+    # NOOD_0199 — a check the engine cut down to its probe-proven substring is
+    # a weaker assertion than the one asked for, so it is stated, never silent.
+    for nar in ((goal_ev or {}).get("narrowed") or []):
+        warnings = [f"check narrowed: asked for {nar['from']!r}, asserting "
+                    f"{nar['to']!r} — the probe found it inside "
+                    f"{nar['probed']!r}"] + warnings
     requested_norm = Path(feature_path).as_posix().removesuffix(".feature")
     if not rel(feat_dest).removesuffix(".feature").endswith(requested_norm):
         warnings = [

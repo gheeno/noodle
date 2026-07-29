@@ -4,6 +4,153 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a15] — 2026-07-29
+
+**NOOD_0199** — feature: the DOM-attribute heal tier survives a page too large
+to walk whole (ERP/CRM SPAs).
+
+The DOM-attribute scan — the tier that resolves elements named by machine
+identity (`e2e_grid_row-actions`, a dynamic id, a hidden dev panel) rather
+than by anything a human can read — walked at most 3000 elements, hardcoded at
+import time. An element counts toward that the moment it carries *any* of the
+collected attributes, and `class` is one of them, so on a component-framework
+app where every styled `div` has a class the cap is really "the first 3000 DOM
+nodes". An ERP screen clears that on its chrome and ribbon alone, and the grid
+and form content a step actually targets sits past the end of the walk.
+
+Four things were wrong with how that played out. The cap could not be moved.
+Hitting it produced a **silent** miss — `best_selector` returned `None` with no
+log line, so "the target was past the cap" and "no such element exists" were
+indistinguishable in the log of a step about to fail. Scoping the step to a row
+or panel, the obvious mitigation, bought nothing: the collect JS hardcoded
+`document`, so a `Locator` scope still walked the whole page and still
+truncated at the same point. And on a page that never satisfies the settle
+early exit — websocket tiles, a polling notification badge, a live clock, all
+routine in this class of app — the poll ran its full budget and repeated that
+whole-page walk every 5 seconds throughout, roughly 24 times per failed find.
+
+Unchanged: this is a heal tier, below POM and the accessibility strategies,
+which query the full document and have never had a cap. Anything it resolves
+is still a fuzzy match that reports `verified: false`.
+
+### Added
+- `NOODLE_DOM_SCAN_MAX` (default 3000) sets the walk cap. Unset, unparseable
+  and non-positive values all mean the default — a typo must not silently
+  disable the tier by collecting zero elements.
+- A truncated walk that finds nothing now warns with the cap, the page's real
+  element count, a suggested higher value and the `pom.yaml` alternative. A
+  walk that completes, or one that truncates but still matches, stays quiet.
+- `docs/manual.md` troubleshooting entry for the ERP/SPA case, and the knob in
+  the generated `.env` stub and `docs/encyclopedia.md`.
+
+### Fixed
+- A `Locator` scope now genuinely narrows the walk. Playwright calls
+  `Page.evaluate(fn, arg)` as `fn(arg)` but `Locator.evaluate(fn, arg)` as
+  `fn(element, arg)`; the collect function branches on which shape arrived and
+  roots itself accordingly, counting the scoped element itself as a candidate.
+- DOM re-scans within one `find()` are capped at `_DOM_SCAN_MAX_PASSES` (6).
+  The accessibility strategies keep retrying every 100ms and stay uncapped;
+  only the expensive whole-page walk is bounded.
+
+---
+
+**NOOD_0199** — fix: the `--prompt` door stops eating prompts, and the
+MCP-blocked CLI path stops paying a shell approval to find its own command.
+
+Two pastes that used to one-shot were measured at ~17 AIC (target < 12) on a
+Copilot/Codex host with MCP blocked, one of them burning a human approval on
+`noodle author --help | sed`. Running both through `expand()` said why: the
+first came back **`ok: true` with `actions: []` and `checks: []`** — the
+engine reporting success for a test that does nothing. A prose prompt was
+never split into sentences, so the whole flow was ONE clause; that clause
+mentioned "headed mode", which classifies a WHOLE clause as run-mode
+metadata; what survived was dismissals. The agent then paid inferences to
+discover the emptiness. This is not a recent regression — the file behaves
+identically at every revision back to the clean-history baseline — but it is
+the gap between "the prompt door exists" and "the prompt door works", and
+it is what the AIC went to.
+
+### Fixed
+- **A goal with no action and no check is a blocker, not an empty `ok:
+  true`.** It names the rewrite (numbered steps + the grammar) and carries a
+  `suggested` line per clause. The silent-empty class is closed at the door.
+- **An incidental run-mode mention no longer swallows its sentence** —
+  "once on the page on headed mode or even headless the location prompt
+  appears" kept exactly one clause's worth of metadata and dropped the flow.
+  The aside is lifted out and the sentence keeps parsing; a clause that IS
+  only a run note is untouched and still filed as metadata.
+- **Prose is split into sentences** before connectors, on a capital OR a
+  lowercase grammar verb after the stop (humans type "go to x.com. search
+  for kettles"), and never inside a URL.
+- **Preamble stripping runs on both halves of a compound** — `_depreamble`
+  is factored out and `_recognizable` applies it, so "verify X and then use
+  the search bar to search for Y" splits (the verb table is `^`-anchored, so
+  the right half looked verbless and the split never happened).
+- **Assertion filler is stripped** — "verify that there is at least 1 result
+  found with the title A or B" reached the results-count grammar for the
+  first time; it used to leak the whole sentence into the `any_of` members.
+- **`PROMPT_TEMPLATE.md` parses at the door it feeds.** `Base URL: [ … ]` is
+  navigation, `User goal:` wraps the flow, `Credentials/config:` and friends
+  are named metadata (with the note that credentials belong in `--spec`
+  `secret_values`), and a bracketed placeholder is punctuation. `Verify:`
+  stays grammar. Noodle's own template used to hard-fail `noodle author
+  --prompt`.
+- **The narrative dismissal** — "a few known popups would appear, close
+  those too" — is read as a dismissal. The thing and the close land in
+  different comma segments, which `_CONDITIONAL` (if/when, one clause) never
+  covered, so the sentence compiled into a click on a 200-character target.
+- **Prompt ORDER anchors a check to the page it observes.** A check written
+  before the first action now compiles with `after: start`, so the evidence
+  pass matches it against the landing page. Unanchored it scoped to the
+  post-search page (`goal._check_scope`), and a fact the probe had literally
+  proven on the landing page blocked authoring. Goals with no actions are
+  untouched — there is no later page to confuse them with.
+- **A decorated-text check narrows to its probed substring instead of
+  blocking** — asked "verify X Y image" against a page rendering "Banner 2
+  of 8 View the X Y now.", neither string contains the other, so the check
+  blocked on a page that plainly showed it. `goal._shared_phrase` finds the
+  longest contiguous run of the ask that a probed text contains (floor: two
+  whole words, the same floor `_find_text` uses), narrows the check to it,
+  and the payload carries `check narrowed: asked for …, asserting … — the
+  probe found it inside …`. This is the "assert the smallest stable
+  substring" rule the workspace tells authors to apply, done by the engine
+  WITH provenance. A one-word overlap still blocks.
+
+### Added
+- **Markdown-brief shapes**: `—`/`–`/`>` bullets; a `Steps a human would
+  take:` header (which also makes the `User goal:` line above it a scenario
+  title, not a second bogus search); markdown table rows as expected values
+  (`| Product A |` → one check per cell); scene-setting narration ("then a
+  suggestion bar appears below the search bar") ignored and NAMED in
+  `assumptions` — deliberately narrow, so "the cart badge shows 1" is still
+  refused rather than silently dropped.
+- **`Click the Suggestion : "X"`** resolves to the typeahead `suggest`
+  action (spaced colon + quoted option), and a quoted search term ignores
+  the aside after it (`search for "<partial>" ( needs to be incomplete )`).
+
+### Changed
+- **Scaffolded `AGENTS.md` carries the literal one-shot command** —
+  `noodle author --prompt "<the ask, verbatim>" --run --json`, with "ask
+  passed RAW, never `--help` first". An MCP-blocked agent reads AGENTS.md
+  and nothing else; without the invocation it spends a shell approval on
+  `author --help` (5.9 KB, which NOOD_0165 fattened for exactly this
+  reader) before authoring. Net +86 bytes inside the ledger cap, paid for by
+  trimming the `base_url_key`, `append_to` and result-pick lines — no cap
+  raised. Existing workspaces refresh with `noodle init --force`.
+- `unit_tests/test_nood_0199.py` — one file, both halves (§1 DOM scan, §2
+  prompt door), 36 tests; both measured pastes as fixtures (shapes verbatim,
+  site-neutral content).
+- **The §1 truncation-warning tests read the output that actually carries
+  it.** They asserted on `caplog`, but `noodle/log.py` sets
+  `logger.propagate = False` and attaches its own stream handler, so no
+  record reaches the root logger pytest captures: `caplog.text` was empty
+  even when the warning fired. The warn test failed and both quiet-path
+  tests passed for the wrong reason. They read `capsys` now.
+
+Verified live: both pastes, one `noodle author --prompt <file> --run` call
+each, `ready: true` → `passed: 1, failed: 0, verified: true`, planner
+`VERIFIED` with 1 probe, 1 run and 0 interpretation model calls.
+
 ## [1.0.0a14] — 2026-07-28
 
 **NOOD_0198** — fix: a prompt written to a file gets into Noodle without going
@@ -176,7 +323,7 @@ Each was invisible until the layer above it stopped hiding it.
   probe read the typeahead, closed it, and returned only the LANDING page.
   Every check on the results page therefore had no evidence source at all.
 - **A one-letter control name could prove anything.** `_find_text` accepted
-  reverse containment with no floor, and canadiantire.ca's landing page
+  reverse containment with no floor, and the live retail landing page
   carries a control literally named `a` — which satisfied both 41-character
   product titles. `evidence()` recorded `proven any_of[0] == ['a']` and the
   goal reached `ready: true` on it. A reverse match now needs at least two

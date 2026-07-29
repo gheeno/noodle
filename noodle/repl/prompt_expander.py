@@ -39,7 +39,7 @@ import re
 from urllib.parse import urlsplit
 
 _MAX_CLAUSE_LEN = 600   # NOOD_0177 — a prompt clause is a sentence; bounds backtracking
-_BULLET = re.compile(r"^\s*(?:\d+\s*[.)]\s*|[-*•]\s+)")
+_BULLET = re.compile(r"^\s*(?:\d+\s*[.)]\s*|[-*•—–>]\s+)")   # NOOD_0199: — – >
 _INLINE_NUM = re.compile(r"\s+\d+\s*[.)]\s+")
 # NOOD_0188 — an explicit scheme accepts ANY host (dotless + port), so a local
 # dev server works: `go to the url http://localhost:3333`. Without a scheme a
@@ -60,8 +60,16 @@ _EVIDENCE = re.compile(
 _RUN_MODE = re.compile(r"\brun\b.*\b(headed|headless)\b|"
                        r"\b(headed|headless)\b.*\bmode\b|"
                        r"^\s*(headed|headless)\s*$", re.I)
+# NOOD_0199 — the same words as an ASIDE inside a flow sentence ("once on the
+# page on headed mode or even headless the location prompt appears"). _RUN_MODE
+# classifies a WHOLE clause, so one incidental mention dropped every step in
+# that sentence; this is the span to lift out instead.
+_RUN_MODE_PHRASE = re.compile(
+    r"\b(?:on|in|under)?\s*(?:headed|headless)(?:\s+mode)?"
+    r"(?:\s*(?:,|or(?:\s+even)?)\s*(?:headed|headless)(?:\s+mode)?)*", re.I)
 _WEBSITE_REF = re.compile(
-    r"^(?:the\s+)?(?:web\s?site|site|page|app(?:lication)?|url|"
+    r"^(?:the\s+)?(?:base\s+|start(?:ing)?\s+|target\s+)?"
+    r"(?:web\s?site|site|page|app(?:lication)?|url|"
     r"home\s?page|browser)$", re.I)
 _PAREN = re.compile(r"\(([^()]{3,})\)")
 _CONJ = re.compile(r"\s+(?:and(?:\s+then)?|then)\s+", re.I)
@@ -84,9 +92,66 @@ _CONDITIONAL = re.compile(
     r"is\s+(?:shown|displayed|present)|comes?\s+up)\s*[,:]?\s*(?:then\s+)?"
     r"(?P<verb>close|dismiss|accept|handle)\s*(?:it|them|the\s+prompt)?$",
     re.I)
+# NOOD_0199 — the span is comma- and quote-free: with a bare `.{1,40}?` the
+# lazy match crossed both, so 'Use the search bar , search for "Vaccu" ( needs
+# to be incomplete )' stripped everything up to that far-away " to " and left
+# "be incomplete )". The comma arm now also accepts `use`, the form humans
+# actually write ("Use the search bar , search for X").
 _INSTRUMENT = re.compile(
-    r"^(?:uses?|using)\s+(?:the\s+)?.{1,40}?\s+to\s+(?=[a-z])"
-    r"|^(?:using|via)\s+(?:the\s+)?.{1,40}?,\s*", re.I)
+    r"^(?:uses?|using)\s+(?:the\s+)?[^,\"']{1,40}?\s+to\s+(?=[a-z])"
+    r"|^(?:uses?|using|via)\s+(?:the\s+)?[^,\"']{1,40}?\s*,\s*", re.I)
+
+# NOOD_0199 — PROMPT_TEMPLATE.md is a LABELLED brief ("Base URL: [ … ]",
+# "User goal: …"), and a human pastes it whole. Every label line was a clause
+# outside the grammar, so the template Noodle ships hard-failed its own
+# `--prompt` door. Three families: a URL label IS a navigation step, a goal
+# label wraps the flow, and the rest is brief metadata (named, never a step).
+_URL_LABEL = re.compile(
+    r"^(?:base|target|start(?:ing)?|site|app)?\s*url\s*:\s*", re.I)
+# NB: `Verify:` is NOT here — it is grammar (the verify verb reads its own
+# label), and stripping it would turn an assertion into an unknown clause.
+_GOAL_LABEL = re.compile(
+    r"^(?:user\s+)?(?:goal|story|steps?|flow|task|prompt|scenario)\s*:\s*",
+    re.I)
+_META_LABEL = re.compile(
+    r"^(?P<label>app(?:lication)?(?:\s+under\s+test)?|credentials?(?:/config)?"
+    r"|config|shell\s+commands[^:]*|environments?|browsers?|device|"
+    r"test\s+name|title|tags?)\s*:\s*", re.I)
+# a bracketed template placeholder is punctuation around the value
+_BRACKETED = re.compile(r"^\[\s*(.*?)\s*\]$")
+# NOOD_0199 — ordering words that open a sentence in prose ("After that, …").
+_LEAD_CONNECTOR = re.compile(
+    r"^(?:and\s+then|then|next|and|after\s+that|afterwards?|after\s+this|"
+    r"finally|lastly|first(?:ly)?|second(?:ly)?|now|subsequently|so)"
+    r"\s*,?\s+", re.I)
+# NOOD_0199 — a bare section header is punctuation between steps.
+_SECTION_HEADER = re.compile(
+    r"^(?:steps?(?:\s+(?:a\s+)?(?:human|user)\s+would\s+take)?|"
+    r"expected(?:\s+results?)?|acceptance(?:\s+criteria)?|notes?|context|"
+    r"pre-?conditions?|background)\s*:?\s*$", re.I)
+# NOOD_0199 — a markdown table row of expected values ("| Product A |"): the
+# way people paste a list of what the page must show.
+_TABLE_ROW = re.compile(r"^\|(.+)\|$")
+_TABLE_RULE = re.compile(r"^[\s|:-]+$")
+# NOOD_0199 — scene-setting between two real steps ("then a suggestion bar
+# appears below the search bar"). Deliberately narrow — a NAMED subject
+# ("the cart badge shows 1") is still an unknown clause the author must fix,
+# because silently dropping it would drop an assertion the user asked for.
+_NARRATION = re.compile(
+    r"^(?:a|an|the)?\s*(?:search\s+)?(?:suggestions?|autocomplete|typeahead|"
+    r"drop\s?-?down|results?|page|screen|window|tab|listings?)"
+    r"[\w\s]{0,30}?\s+(?:will\s+|would\s+|should\s+|may\s+|might\s+)?"
+    r"(?:appears?|shows?(?:\s+up)?|opens?|loads?|is\s+(?:shown|displayed))\b",
+    re.I)
+# NOOD_0199 — sentence boundary: prose prompts are paragraphs, not one step.
+# A capital starts one; so does a lowercase grammar verb, because humans type
+# their steps in lower case ("go to x.com. search for kettles"). Both arms
+# need whitespace after the stop, so a URL path never splits.
+_SENTENCE = re.compile(
+    r"(?<=[.!?])\s+(?=[\"'(\[]?(?:[A-Z0-9]|(?i:go|open|visit|navigate|"
+    r"search|look|click|tap|enter|type|fill|select|choose|verify|check|"
+    r"confirm|ensure|assert|close|dismiss|accept|add|press|hover|upload|"
+    r"scroll|wait|then|next|after|finally|lastly|use|using|on|the|a|an)\b))")
 
 VERBS_HELP = ("go to / open url / then url <url>; "
               # NOOD_0192 — the api wok reads the same as the web one.
@@ -245,6 +310,15 @@ def _overlaps(a: str, b: str) -> bool:
     return bool(ta and tb and (ta <= tb or tb <= ta or ta & tb))
 
 
+def _quoted_or_whole(raw: str) -> str:
+    """NOOD_0199 — a quoted value IS the value. 'search for "Vaccu" ( needs
+    to be incomplete )' searches for Vaccu; the aside after it is the human
+    explaining themselves, and it used to ride into the search box."""
+    if q := re.match(r"\s*([\"'])(.+?)\1", raw or ""):
+        return _clean(q.group(2))
+    return _clean(raw)
+
+
 def _is_anaphoric(item: str) -> bool:
     return not item or _clean(item).casefold() in _ANAPHORA
 
@@ -256,15 +330,105 @@ def _normalize_url(u: str) -> str:
 
 # --- Pass A: normalize + classify into clauses --------------------------------
 
+def _depreamble(ln: str) -> str:
+    """NOOD_0199 — every syntactic wrapper stripped, intent untouched: labels,
+    bullets, leading connectors, narrative/page/instrument preambles,
+    conditionals. Factored out of `_clauses` because `_recognizable` has to
+    apply the SAME normalization: the verb table is ^-anchored, so the second
+    half of 'verify X and then use the search bar to search for Y' looked
+    verbless to the compound-split gate and the sentence never split."""
+    ln = _BULLET.sub("", ln).replace("`", "").strip().rstrip(".;,")
+    if m := _BRACKETED.match(ln):
+        ln = m.group(1)
+    if _META_LABEL.match(ln):
+        return ""                      # brief metadata — handled by the caller
+    if m := _URL_LABEL.match(ln):
+        value = ln[m.end():].strip()
+        if b := _BRACKETED.match(value):    # "Base URL: [ https://… ]"
+            value = b.group(1)
+        ln = f"go to {value}"
+    else:
+        ln = _GOAL_LABEL.sub("", ln)
+        if b := _BRACKETED.match(ln):
+            ln = b.group(1)
+    ln = re.sub(r"^(?:the\s+)?users?\s+", "", ln, flags=re.I)
+    # leading connectors are ordering words, not verbs: "Then url <u>"
+    # means "next, navigate", never a click on "url <u>"
+    ln = _LEAD_CONNECTOR.sub("", ln)
+    # the preamble/conditional families (NOOD_0197, defined above).
+    ln = _NARRATIVE.sub("", ln)
+    ln = _PAGE_PREAMBLE.sub("", ln)
+    if cond := _CONDITIONAL.match(ln):
+        ln = f"{cond.group('verb')} {cond.group('thing')}"
+    ln = _INSTRUMENT.sub("", ln)
+    return ln.strip().rstrip(".;,")
+
+
+# NOOD_0199 — the narrative dismissal, the commonest shape in a human test ask:
+# "the location prompt would appear, close it, and then a few popups would
+# appear, close those too". _CONDITIONAL (NOOD_0197) only covers the if/when
+# form of ONE clause; in prose the thing and the close land in different
+# comma segments, so the whole sentence used to compile into a click on a
+# 200-character target.
+_APPEARS = re.compile(r"\b(?:appears?|shows?(?:\s+up)?|pops?\s+up|"
+                      r"comes?\s+up|is\s+(?:shown|displayed|present))\b", re.I)
+_CLOSE_CMD = re.compile(
+    r"^(?:so\s+|then\s+|please\s+|just\s+)*"
+    r"(?:close|dismiss|accept|handle|get\s+rid\s+of)\s+"
+    r"(?:it|them|those|these|that|all(?:\s+of\s+(?:them|those))?)"
+    r"(?:\s+(?:too|as\s+well|also))?$", re.I)
+_DISMISS_THING = re.compile(
+    r"\b(?P<thing>location|geo\w*|notifications?|pop\s?-?ups?|cookies?|"
+    r"consent|banners?|modals?|dialogs?|prompts?|overlays?)\b", re.I)
+
+
+def _pull_narrative_dismissals(ln: str) -> tuple[str, list[str]]:
+    """(remaining text, dismissal clauses) — a comma segment that is only
+    'close it' is paired with the nearest earlier segment naming something
+    that appears, and both leave the sentence as one grammar clause."""
+    segs = [s for s in ln.split(",")]
+    if len(segs) < 2:
+        return ln, []
+    used, extras = set(), []
+    for i, seg in enumerate(segs):
+        if i in used or not _CLOSE_CMD.match(seg.strip().rstrip(".;")):
+            continue
+        for j in range(i - 1, -1, -1):
+            thing = _DISMISS_THING.search(segs[j])
+            if j in used or not thing or not _APPEARS.search(segs[j]):
+                continue
+            extras.append(f"close {thing.group('thing').lower()}")
+            used |= {i, j}
+            break
+    if not extras:
+        return ln, []
+    rest = ", ".join(s for k, s in enumerate(segs) if k not in used)
+    return re.sub(r"\s{2,}", " ", rest).strip(" ,;"), extras
+
+
+def _has_verb(text: str) -> bool:
+    t = _depreamble(text.strip())
+    return bool(t) and (bool(_URLISH.match(t))
+                        or any(rx.match(t) for _, rx in _VERBS))
+
+
 def _recognizable(text: str) -> bool:
     """Does any grammar verb (or a URL / run-mode note) anchor this text?
     The compound-split gate: split only when BOTH halves are recognizable."""
     t = text.strip()
     if not t:
         return False
-    if _URLISH.match(t) or _RUN_MODE.search(t):
-        return True
-    return any(rx.match(t) for _, rx in _VERBS)
+    return bool(_RUN_MODE.search(t)) or _has_verb(t)
+
+
+def _strip_run_mode(ln: str) -> str:
+    """NOOD_0199 — lift an incidental run-mode aside out of a flow sentence.
+    A clause that IS only a run note keeps its text (nothing parseable is left
+    once the phrase goes), so `_parse_clause` still files it as metadata."""
+    if not _RUN_MODE.search(ln):
+        return ln
+    rest = re.sub(r"\s{2,}", " ", _RUN_MODE_PHRASE.sub(" ", ln)).strip(" ,;")
+    return rest if _has_verb(rest) else ln
 
 
 def _split_compound(text: str) -> list[str]:
@@ -295,31 +459,44 @@ def _clauses(text: str) -> list[dict]:
         lines = [(lines[0][0], part)
                  for part in re.split(r"\d+\s*[.)]\s+", lines[0][1])]
     frags: list[tuple[int, str]] = []
-    for line_no, ln in lines:
+    # NOOD_0199 — a prompt written as prose is a paragraph of sentences, not
+    # one step. Without this split the whole paragraph was ONE clause: it
+    # matched no verb (or matched one and swallowed the rest as its target),
+    # and the flow silently vanished. Sentences first, connectors after.
+    sentences = [(line_no, s)
+                 for line_no, ln in lines
+                 for s in _SENTENCE.split(re.sub(r"\s+", " ", ln))]
+    # NOOD_0199 — "User goal: <summary>" followed by a "Steps:" section is a
+    # scenario TITLE, not the flow; without this the summary parsed as a
+    # second, bogus search ahead of the numbered steps that follow it.
+    titled = any(_SECTION_HEADER.match(_BULLET.sub("", s).strip())
+                 for _, s in sentences)
+    for line_no, ln in sentences:
         # NOOD_0177 — collapse whitespace runs BEFORE any clause regex sees the
         # line. The clause patterns use (.+?) straddling two independent \s+
         # boundaries, which backtracks at ~n^2.9 in the number of spaces: a
         # 1200-space prompt ran past 120s in expand(). One space per gap makes
         # the split unambiguous. The cap bounds the remaining polynomial.
-        ln = re.sub(r"\s+", " ", ln)[:_MAX_CLAUSE_LEN]
-        ln = _BULLET.sub("", ln).replace("`", "").strip().rstrip(".;,")
-        ln = re.sub(r"^(?:the\s+)?users?\s+", "", ln, flags=re.I)
-        # leading connectors are ordering words, not verbs: "Then url <u>"
-        # means "next, navigate", never a click on "url <u>"
-        ln = re.sub(r"^(?:and\s+then|then|next|and)\s+", "", ln,
-                    flags=re.I)
-        # NOOD_0197 — the preamble/conditional families (defined above).
-        ln = _NARRATIVE.sub("", ln)
-        ln = _PAGE_PREAMBLE.sub("", ln)
-        cond = _CONDITIONAL.match(ln)
-        if cond:
-            ln = f"{cond.group('verb')} {cond.group('thing')}"
-        ln = _INSTRUMENT.sub("", ln)
+        ln = ln.strip()[:_MAX_CLAUSE_LEN]
+        bare = _BULLET.sub("", ln).strip()
+        if _META_LABEL.match(bare):
+            frags.append((line_no, bare))    # kept whole; parsed as metadata
+            continue
+        if _SECTION_HEADER.match(bare) or (titled and _GOAL_LABEL.match(bare)):
+            continue                         # header / title — not a step
+        if row := _TABLE_ROW.match(bare):
+            if not _TABLE_RULE.match(bare):    # the |---| rule is not a value
+                # every cell is one expected value → one check each
+                frags.extend((line_no, f"verify {cell.strip()}")
+                             for cell in row.group(1).split("|")
+                             if cell.strip())
+            continue
+        ln = _depreamble(_strip_run_mode(ln))
         if not ln:
             continue
+        ln, extras = _pull_narrative_dismissals(ln)
         # parenthetical compounds: '(and close all pop ups)' becomes its own
         # clause when it carries a verb; decorative parens stay in place.
-        extras = []
         def _pull(m):
             inner = re.sub(r"^and\s+", "", m.group(1).strip(), flags=re.I)
             if _recognizable(inner):
@@ -328,8 +505,12 @@ def _clauses(text: str) -> list[dict]:
             return m.group(0)
         ln = _PAREN.sub(_pull, ln).strip().rstrip(".;,")
         for piece in ([ln] if ln else []) + extras:
-            frags.extend((line_no, p.strip().rstrip(".;,"))
-                         for p in _split_compound(piece) if p.strip())
+            # re-normalize each piece: the preamble families are ^-anchored,
+            # so the RIGHT half of a compound ("… and then use the search bar
+            # to search for X") only sheds its preamble once it leads.
+            frags.extend((line_no, q)
+                         for p in _split_compound(piece)
+                         if (q := _depreamble(p).strip().rstrip(".;,")))
     out = []
     for line_no, frag in frags:
         evidence = bool(_EVIDENCE.search(frag))
@@ -358,6 +539,17 @@ def _split_alternatives(raw: str) -> list[str]:
     parts = re.split(r"\s*,\s*(?:or\s+)?|\s+or\s+", raw, flags=re.I)
     out = [_clean(p).strip("\"'") for p in parts if p.strip()]
     return out if len(out) > 1 else []
+
+
+# NOOD_0199 — filler between "verify" and the claim itself. Every assertion
+# grammar below is ^-anchored, so "verify that there is at least 1 result …"
+# missed the results-count arm and leaked the whole sentence into the any_of
+# members ('there is at least 1 result found with the title "Hot Wheels').
+_VERIFY_FILLER = re.compile(
+    r"^(?:that\s+|if\s+|whether\s+)*"
+    r"(?:(?:you|we|i|the\s+user)\s+(?:can|could|should)?\s*"
+    r"(?:see|sees|view|find)\s+)?"
+    r"(?:that\s+)?(?:there\s+(?:is|are)\s+)?", re.I)
 
 
 # NOOD_0197 — one concrete rewrite per still-unresolved clause, so a partial
@@ -397,11 +589,17 @@ def _parse_clause(c: dict) -> dict:
     if c.get("evidence_only"):
         node["kind"] = "evidence_only"
         return node
+    if m := _META_LABEL.match(text):   # NOOD_0199 — a brief field, not a step
+        node.update(kind="metadata", label=m.group("label").strip().lower())
+        return node
     if _RUN_MODE.search(text):
         node.update(kind="run_mode", mode=_RUN_MODE.search(text).group(0))
         return node
     if _URLISH.match(text):            # a naked URL clause is navigation
         node.update(kind="nav", url=_normalize_url(text))
+        return node
+    if not any(rx.match(text) for _, rx in _VERBS) and _NARRATION.match(text):
+        node["kind"] = "observation"       # NOOD_0199 — scene-setting prose
         return node
     for kind, rx in _VERBS:
         m = rx.match(text)
@@ -443,7 +641,7 @@ def _parse_clause(c: dict) -> dict:
             else:                    # "go to the cart" — navigation by click
                 node.update(kind="click", target=target)
         elif kind == "search":
-            node["term"] = _clean(m.group(1))
+            node["term"] = _quoted_or_whole(m.group(1))
         elif kind == "enter":
             node["value"], node["target"] = m.group(1), _clean(m.group(2))
         elif kind == "select":
@@ -522,6 +720,7 @@ def expand(text: str, base_url: str | None = None) -> dict:
     picks: dict[int, dict] = {}         # node index (of minting clause) → pick
     adds: dict[int, dict] = {}          # node index → add_to action
     consumed: set[str] = set()          # search ids already feeding a pick
+    pre_action_checks: list[dict] = []  # NOOD_0199 — checks written first
     api_calls: list[dict] = []          # NOOD_0192 — in prompt order
     counters = {"search": 0, "pick": 0, "add": 0, "api": 0}
     pending_evidence = False
@@ -584,6 +783,23 @@ def expand(text: str, base_url: str | None = None) -> dict:
                 "(--headed/--headless), not a test step — ignored here")
             _cover(n, "metadata")
             continue
+        if n["kind"] == "observation":
+            assumptions.append(
+                f"step {no} '{n['raw']}': narration of what the page does, "
+                "not an instruction — ignored here")
+            _cover(n, "metadata")
+            continue
+        if n["kind"] == "metadata":
+            # NOOD_0199 — a labelled brief field. Named, never silent, and
+            # never a blocker: refusing them made PROMPT_TEMPLATE.md, the
+            # thing users paste, unusable at the `--prompt` door.
+            note = ("credentials belong in `--spec` secret_values (written to "
+                    "the app's gitignored secrets.env), not in a step"
+                    if n["label"].startswith("credential")
+                    else "brief metadata, not a test step")
+            assumptions.append(f"step {no} '{n['raw']}': {note} — ignored here")
+            _cover(n, "metadata")
+            continue
         if n["kind"] == "evidence_only":
             pending_evidence = True
             _cover(n, "metadata")
@@ -633,13 +849,16 @@ def expand(text: str, base_url: str | None = None) -> dict:
             # typeahead flow, benchmark-proven unreachable by prompt before
             # this: the search action itself becomes a suggest (type the
             # term, pick option X from the dropdown, never submit).
-            sug = re.match(r"^(?:the\s+)?suggestions?:?\s+(.+)$",
+            # NOOD_0199 — 'the Suggestion : "X"': humans space the colon and
+            # quote the option; both used to leave a click on the label.
+            sug = re.match(r"^(?:the\s+)?suggestions?\s*:?\s+(.+)$",
                            n["target"], re.I)
             back = [s for j, s in sorted(searches.items())
                     if j < i and s["do"] == "search"]
             if sug and back:
                 src = back[-1]
-                src.update(do="suggest", option=_clean(sug.group(1)))
+                src.update(do="suggest",
+                           option=_clean(sug.group(1)).strip("\"'"))
                 _cover(n, "action", [src["id"]])
                 assumptions.append(
                     f"step {no} '{n['raw']}': picking '{src['option']}' from "
@@ -835,7 +1054,7 @@ def expand(text: str, base_url: str | None = None) -> dict:
                 # intent ("literal text is visible") maps to `see`, which
                 # compiles to `the user sees "<text>"`. Wrapping quotes from
                 # the prompt are part of the quoting, not the text.
-                text = rest.strip()
+                text = _VERIFY_FILLER.sub("", rest.strip()).strip()
                 # NOOD_0188 — two shapes the `see` fallback cannot express,
                 # both read straight off the clause (no inference):
                 #   "<text> is not visible" / "no <text>"  → not_see
@@ -940,6 +1159,14 @@ def expand(text: str, base_url: str | None = None) -> dict:
             if n["evidence"] or pending_evidence:
                 check["evidence"] = "screenshot"
                 pending_evidence = False
+            if not actions and "after" not in check:
+                # NOOD_0199 — prompt ORDER is the anchor. A check written
+                # BEFORE any action observes the landing page; unanchored, it
+                # scopes to the post-search page (goal.py `_check_scope`), so
+                # the evidence pass looked for it on the wrong page and
+                # blocked a fact the probe had proven. Only anchored once an
+                # action actually follows — see the post-pass below.
+                pre_action_checks.append(check)
             checks.append(check)
             _cover(n, "check")
         if n.get("evidence") and n["kind"] != "verify":
@@ -948,6 +1175,12 @@ def expand(text: str, base_url: str | None = None) -> dict:
     # a trailing "take a screenshot" step attaches to the last check
     if pending_evidence and checks and "evidence" not in checks[-1]:
         checks[-1]["evidence"] = "screenshot"
+    if actions:
+        # NOOD_0199 — anchor the checks the prompt put BEFORE its first
+        # action to the landing page. Skipped when the goal has no actions
+        # at all: there is no later page for them to be confused with.
+        for c in pre_action_checks:
+            c["after"] = "start"
 
     if unrecognized:
         # NOOD_0197 — a partial parse is returned, never discarded: the goal
@@ -988,6 +1221,27 @@ def expand(text: str, base_url: str | None = None) -> dict:
                 "unrecognized": [], "unresolved": [], "conflicts": [],
                 "assumptions": assumptions, "clauses": clauses,
                 "coverage": coverage, "goal": None}
+    if not actions and not checks:
+        # NOOD_0199 — the silent-empty class. Dismissals, navigation and
+        # metadata all parse without producing a step, so a prompt whose flow
+        # was swallowed came back ok:true with an EMPTY goal — the engine
+        # claiming success for a test that does nothing. It is a blocker, and
+        # it says what to write instead.
+        return {"ok": False,
+                "error": "the prompt parsed to setup only — no action and no "
+                         "check, so there is nothing to test. Write the flow "
+                         "as numbered steps: 1. go to <url> 2. search for "
+                         "\"<term>\" 3. verify \"<text>\". Supported: "
+                         + VERBS_HELP,
+                "unrecognized": [], "conflicts": [],
+                "unresolved": [{"clause": c["id"], "text": c["text"],
+                                "reason": "parsed, but contributes no action "
+                                          "or check",
+                                "suggested": _suggest(c["text"])
+                                or "rewrite as: search for \"<term>\""}
+                               for c in clauses],
+                "assumptions": assumptions, "clauses": clauses,
+                "coverage": coverage, "goal": None, "goal_partial": None}
     if api_only:
         # no browser, so no popups to dismiss — an empty list keeps the goal
         # honest about what it does.
