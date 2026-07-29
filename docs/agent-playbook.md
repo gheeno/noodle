@@ -204,7 +204,9 @@ page, `after: <action id>` for the page an action lands on, unanchored for
 the end state. A multi-page goal with no anchors asserts everything against
 the last page and goes red on the first run.
 
-Both routes, search hygiene: scope every `grep`/`rg` to the app package and
+Both routes, search hygiene: the leak-free map is `noodle list --query <app>`
+(`list_tests`) — it answers "what exists for this app" in one bounded payload.
+If you must fall back to `grep`/`rg`, scope it to the app package and
 exclude `artifacts/`, `archives/`, `report/`, `.noodle/` — a single run's
 artifacts outweigh every feature file in the workspace, and a search that can
 return >200 KB is mis-scoped. The workspace `AGENTS.md` and the skill card
@@ -228,10 +230,12 @@ whole package in one transaction — app folder, `environments.yaml` (base URL),
 POM, feature, and empty placeholders for the secret keys you name — validates
 the Gherkin, and rolls back every file it wrote if anything fails.
 
-Over the CLI, pass the spec on **stdin** (`--spec -`) as a heredoc rather than
-writing a temp spec file — one call instead of write-then-read-then-delete.
+Over the CLI, prefer `--prompt "<the ask, verbatim>"` — no file, no shell
+quoting beyond one string. When you do need a spec, pass it **inline**
+(`--spec '<yaml>'`) — never a heredoc (a raw shell construct that costs a
+human approval in most harnesses) and never a temp spec file.
 The spec keys are exactly `author_test`'s arguments, listed in the MCP tool
-schema and in `noodle author --help`. If the
+schema and in `noodle author --vocabulary`. If the
 original prompt supplied credential *values* (NOOD_0130), pass them once as
 `secret_values={KEY: value}`: they are written ONLY into the gitignored
 `<app>_secrets.env`, never echoed back or returned, and never placed in a
@@ -393,6 +397,14 @@ across every page (e.g. `shared_pom.yaml`), add an explicit `match: {}` or
 its keys will silently never resolve. See
 [feature-packages.md § Per-page POM files need `match:`](feature-packages.md#per-page-pom-files-need-match).
 `noodle validate --resolve` lints for this trap (warn-only).
+
+Goal-compiled POMs (NOOD_0200) are a `pages:` block resolved through the
+feature's own `@page:<slug>` tag — active on every URL the scenario visits,
+invisible to sibling features (no more same-key shadowing between two
+compiled features in one app). When hand-editing a compiled feature, keep
+its `@page:` tag and add new keys inside the same `pages:` block; keys
+meant to be shared across features belong in the app's `resources/pom.yaml`
+instead.
 
 ---
 
@@ -822,8 +834,11 @@ an exit code alone is neither. Before reporting success:
 
 1. Read `unverified_reasons` / `healing_events` / `warnings`; a healed or
    ambiguous green is an anomaly to report, not a pass.
-2. **Open the evidence/requested screenshot and check its contents** — a
-   filename never proves what the image shows.
+2. **Read the evidence/requested screenshot and check its contents** — a
+   filename never proves what the image shows. The run payload lists every
+   evidence image as `evidence: [{step, status, path}]` (NOOD_0200): read
+   the file at that path with your harness's file reader — never a shell
+   `open`, and never a hunt through `rca.md` for the path.
 3. Never author assertion text the probe didn't observe ("Added to cart"):
    assert durable state — a count delta, the same item in the destination —
    not a transient toast. Transient messages may supplement a durable check,
@@ -908,7 +923,12 @@ generate → validate → run → (mechanical fail?) → fix cause → run → �
   anti-pattern §8 calls out; this loop only makes the *mechanics* work.
 
 **Whenever a run happens — whether you triggered it or the user asked you
-to "run the tests" — always follow up with both of these, not just one:**
+to "run the tests" — both reports must end up served, every time.**
+NOOD_0200: `noodle run` and `run_and_report` do this themselves by default —
+the run's output/payload already carries the clickable URLs (`served.urls`),
+including the second and third run of a sequential authoring session. CLI
+opt-out: `--no-serve` (CI is auto-off). You only reach for the commands
+below to (re-)host results that exist without a fresh run:
 
 ```bash
 # One server, both reports (NOOD_0082) — hosts the Allure report AND rca.html
@@ -976,12 +996,13 @@ against a worktree's own `.venv/bin/noodle-mcp`, rather than the host's
 already-registered server) exits only when its parent process does, and a
 local dev server for the app-under-test (started for the run, not by the
 user for other work) has no lifecycle tie to the test run at all. Before
-ending the session/turn: `ps aux` for any noodle-mcp
-process you started, kill it, and stop any app server you started
-too — but never kill a process you didn't start this session (an
-already-registered MCP server, another session's report server, a
-long-lived dev server the user was already running) without confirming
-first.
+ending the session/turn: shut down what you yourself started, through the
+door you started it (the harness's own process/task controls — never an
+ad-hoc `ps`/`kill` sweep, which is a guaranteed human-approval prompt):
+a noodle-mcp you launched, an app server you launched. Never touch a
+process you didn't start this session (an already-registered MCP server,
+another session's report server, a long-lived dev server the user was
+already running).
 
 ---
 
@@ -1164,5 +1185,5 @@ bundle`. Full contract: [session-diagnostics.md](session-diagnostics.md).
 5a. While developing, iterate on mechanical failures (bad selector/locator/find-timeout) with a cause-backed fix per re-run — first mid-flow failure: reproduce the exact state once with `probe --do`, re-author from it (§5) — up to `NOODLE_DEV_FIX_ATTEMPTS` (default 10), then stop and report the test as flaky — never loop to mask a real failure (§5, §8).
 6. **Always** deliver both reports, every run, pass or fail: `noodle report serve --workspace <workspace>` hosts the Allure report and rca.html together on localhost (MCP: `serve_report`; driving the CLI yourself, add `--background` so the command returns with the URLs instead of blocking).
 7. Root-cause any failure via the RCA verdict before patching (§7); `@quarantine` a confirmed external bug rather than hiding it.
-8. Summarize what was written/run, pass/fail counts **plus the `verified` flag** (green + `verified: false` = unverified, say so — §5 "Green is not automatically verified"), and where both reports ended up; inspect any screenshot you cite before claiming what it shows.
+8. Summarize what was written/run, pass/fail counts **plus the `verified` flag** (green + `verified: false` = unverified, say so — §5 "Green is not automatically verified"), and where both reports ended up; read any screenshot you cite (its path is in the payload's `evidence` list) before claiming what it shows.
 9. Session end: if a failure trigger fired (hard-fail / first-attempt-fail / slow-dev / over-budget, or the prompt asked via `--diagnostic`), log ONE session diagnostic from memory — `noodle diagnostic log` / `log_diagnostic` (§7.5); no trigger → log nothing.

@@ -232,9 +232,10 @@ manual-Gherkin fallback that discarded the structured intent. A comparable
 test previously cost **~17 AIC on the pinned benchmark model (Codex 5.3)**
 despite having more steps. Budgets, on that pinned host/model:
 
-- **AIC target ≤ 17** for a comparable simple flow; **hard ceiling ≤ 25** —
-  a simple-flow result above 25 is rejected even when functionally green,
-  and anything above 17 requires a cost-delta explanation (optimize the
+- **AIC target < 12** for a comparable simple flow (the bar the NOOD_0195
+  and NOOD_0199 session postmortems measure against); **≤ 17 acceptable**
+  with a cost-delta explanation; **hard ceiling ≤ 25** — a simple-flow
+  result above 25 is rejected even when functionally green (optimize the
   largest contributor first: repeated model inference, resident tool
   output, payload size, output verbosity).
 - **Driving-agent model inferences ≤ 3**: request→goal, result handling,

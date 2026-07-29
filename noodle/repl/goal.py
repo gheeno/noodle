@@ -683,6 +683,26 @@ def _runtime_gate(actions: list) -> int | None:
 # decide WHICH result to click, and the evidence pass records the same caption
 # as the bound target — one rule, no drift.
 
+# NOOD_0200 — actions the probe's own transaction carries the page through, so
+# the snapshot it ends on IS that action's page. Everything else at or after the
+# runtime gate is performed only by the run.
+_PROBE_FOLLOWS = ("search", "suggest", "pick", "hover")
+
+
+def _beyond_probe_reach(actions: list) -> bool:
+    """True when the goal's actions carry the page past the last state the
+    probe snapshotted — so an END-state check has no probe evidence at all and
+    belongs to the run, not to `blocking` and not to `proven`.
+
+    Domain-agnostic by construction: it reads the action grammar only. A goal
+    that just searches (or follows a suggestion, or picks a result) keeps its
+    pre-run verification untouched — the probe really did land on that page."""
+    gate = _runtime_gate(actions)
+    if gate is None:
+        return False
+    return any(a.get("do") not in _PROBE_FOLLOWS for a in actions[gate:])
+
+
 def bind_result(controls: list[dict], term: str,
                 target: str | None = None,
                 items: list[dict] | None = None) -> tuple[dict | None, str | None]:
@@ -954,10 +974,14 @@ def _locate(target: str, blocks: list) \
     if len(names) == 1:
         return (*subs[0], None)
     if len(names) > 1:
+        # NOOD_0200 — name the candidate it would have picked and why it
+        # won't: "ambiguous" alone cost the reviewed session a full
+        # round-trip guessing which spelling the engine wanted.
         return None, None, None, (
             "ambiguous — matches " + ", ".join(f'"{n}"' for n in names[:4])
             + ("…" if len(names) > 4 else "")
-            + "; use the exact probed control name")
+            + f'; not guessing between them — if you meant "{names[0]}", '
+            "say exactly that, otherwise use the exact probed control name")
     return None, None, None, None
 
 
@@ -1140,6 +1164,12 @@ def evidence(goal: dict, probe_result: dict) -> dict:
     searched = any(a["do"] in ("search", "suggest") for a in actions)
 
     blocking, proven, runtime, bound, resolved = [], {}, [], {}, {}
+    # NOOD_0200 — provenance per proven CHECK: which probe phase's page the
+    # match came from (initial / search). Recording it is the structural
+    # guard against the end-state false positive: a check whose compiled
+    # scope and proven phase drift apart is visible in the payload (and
+    # pinned by tests) instead of shipping a green that verified nothing.
+    proven_phase: dict = {}
     narrowed: list[dict] = []      # NOOD_0199 — see-checks cut to their
                                    # probe-proven substring, never silently
     mplans: dict[str, dict] = {}
@@ -1329,6 +1359,7 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                 "evidence is blocked; change the term or fix the search flow "
                 "first")
     gate = _runtime_gate(actions)
+    beyond_reach = _beyond_probe_reach(actions)
     captions = {k: v["caption"] for k, v in bound.items()}
     for i, c in enumerate(goal.get("checks") or []):
         if "status" in c or "response_contains" in c:
@@ -1349,7 +1380,7 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                 continue
             dest = c.get("item_in_destination") or ""
             if dest:
-                dctrl, _, _, dnote = _locate(dest, blocks)
+                dctrl, dphase, _, dnote = _locate(dest, blocks)
                 if dctrl is None:
                     blocking.append(
                         f'check item_in_destination "{dest}": '
@@ -1357,14 +1388,27 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                                     "destination — cannot verify there"))
                     continue
                 proven[f"destination:{dest}"] = dctrl["name"]
+                proven_phase[f"destination:{dest}"] = dphase or "initial"
             runtime.append(_check_step(c, captions)[0])
             continue
         after = c.get("after")
         anchor_i = next((j for j, a in enumerate(actions)
                          if a.get("id") == after), -1) if after is not None else -1
-        if gate is not None and anchor_i >= gate:
+        if gate is not None and (anchor_i >= gate
+                                 or (after is None and beyond_reach)):
             # Anchored after data the probe never entered — the probe cannot
             # honestly prove it; the run must. Preserved verbatim, never dropped.
+            #
+            # NOOD_0200 — an UNANCHORED check is the END state (NOOD_0158
+            # compiles it after the last action). When the goal's own actions
+            # carry the page past the probe's reach, the probe holds no
+            # evidence for that page at ALL, so matching the check against the
+            # landing snapshot was wrong in both directions: it blocked text
+            # that only exists downstream, and it "proved" text that merely
+            # happens to appear on the landing page (footer/nav wording) while
+            # the compiled step asserts it somewhere else entirely. Route it
+            # to the run, which is the only honest witness. `after: start`
+            # still pins a check to the landing page.
             runtime.append(_check_step(c)[0])
             continue
         if "field" in c:
@@ -1401,10 +1445,22 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                 narrowed.append({"from": c["see"], "to": run, "probed": hit})
                 c["see"] = run
             if hit is None:
-                blocking.append(f'check "{c["see"]}": no probed heading or '
-                                "control shows that text")
+                # NOOD_0200 — every blocking entry names a legal next input:
+                # a bare rejection reads as "your text is wrong" when the
+                # real meaning may be "wrong page", and the one legal escape
+                # was undiscoverable (the reviewed session dropped four TRUE
+                # assertions over exactly this).
+                blocking.append(
+                    f'check "{c["see"]}": no probed heading or control shows '
+                    "that text on the page it is scoped to — fix the text to "
+                    "probed evidence, anchor it to the page it belongs to "
+                    "(`after: <action id>`, `after: start` for the landing "
+                    "page), or leave it unanchored on a flow whose later "
+                    "actions only the run performs (the run then proves it)")
             else:
                 proven[f"see:{c['see']}"] = hit
+                proven_phase[f"see:{c['see']}"] = \
+                    "search" if at_end else "initial"
         elif "count" in c:
             want = c.get("min", 1)
             if rsum is None:
@@ -1422,6 +1478,7 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                         f"the requested minimum {want}")
                 else:
                     proven[f"count:{c['count']}"] = rsum["text"]
+                    proven_phase[f"count:{c['count']}"] = "search"
         else:  # any_of — distinct matching alternatives, not one match ≥ min
             want = c.get("min", 1)
             blks = scope or initial_scope
@@ -1435,6 +1492,8 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                 # (`sees any of …`); the NOOD_0195 per-member literal expansion
                 # is gone — it compiled "A or B" into "A and B".
                 proven[f"any_of[{i}]"] = sorted(texts)
+                proven_phase[f"any_of[{i}]"] = \
+                    "search" if at_end else "initial"
             else:
                 blocking.append(
                     "check any_of " + "/".join(c["any_of"])
@@ -1451,7 +1510,8 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                 revealed_headings.setdefault(_norm(trig), []).extend(heads)
     headings = [h for blk, ph, _ in blocks if ph in ("initial", "reveal", "search")
                 for h in blk.get("headings", []) if str(h).strip()]
-    return {"blocking": blocking, "proven": proven, "runtime_asserted": runtime,
+    return {"blocking": blocking, "proven": proven,
+            "proven_phase": proven_phase, "runtime_asserted": runtime,
             "permission_prompts": pg.get("permission_prompts", []),
             "popups_closed": pg.get("popups_closed", 0),
             "results_summary": rsum, "controls": controls,
@@ -1962,8 +2022,9 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
                  nav_keys: list[str] | None = None) -> tuple[str, str | None]:
     """(feature_text, pom_text | None) — deterministically compiled, never
     model-authored. Observed prerequisites (permission prompts, popups) merge
-    with requested dismissals and deduplicate; the POM always opens with
-    `match: {}` so a scenario that navigates never scopes its keys away.
+    with requested dismissals and deduplicate; the POM is a pages: block
+    pinned by the feature's @page tag (NOOD_0200) — active on every URL the
+    scenario visits, invisible to sibling features.
     NOOD_0156 — `nav_keys` (from navigation_env) emits ONE ordered navigation
     Given per requested URL; without a navigation contract the single
     base-URL Given is unchanged."""
@@ -2166,7 +2227,14 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
         if c.get("after") is None:
             _emit_check(c)
 
-    lines = ["@web" if web else "@api", f"Feature: {goal['scenario']}", "",
+    # NOOD_0200 — a tag-safe slug of the scenario names the compiled POM's
+    # page block AND rides the feature as a @page pin, so the block resolves
+    # for THIS feature only (see the pom emission below).
+    slug = re.sub(r"[^a-z0-9]+", "_", goal["scenario"].lower()).strip("_") \
+        or "goal"
+    tag = ("@web" if web else "@api") \
+        + (f" @page:{slug}" if web and pom_entries else "")
+    lines = [tag, f"Feature: {goal['scenario']}", "",
              f"  Scenario: {goal['scenario']}"]
     prev = None
     for kw, body in steps:
@@ -2187,9 +2255,19 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
     pom = None
     if pom_entries:
         body = [line for entry in pom_entries.values() for line in entry]
+        # NOOD_0200 — pinned to this feature, not folder-global: `match: {}`
+        # made every compiled POM active on every URL, so a second compiled
+        # feature in the same app shadowed the first's same-named keys
+        # (alphabetically-first wins — warning noise today, silently wrong
+        # element tomorrow). A pages: block with no match: resolves ONLY via
+        # the scenario's @page pin (hooks.page_pin), which spans every page
+        # the scenario navigates — the same reach match: {} gave, invisible
+        # to sibling features. Keys the app hand-shares stay in the app's
+        # resources/pom.yaml, which this file never shadows.
         pom = "\n".join([f"# Page object — compiled from goal "
                          f"'{goal['scenario']}'",
-                         "match: {}   # active on EVERY url — the scenario "
-                         "may span pages",
-                         *body]) + "\n"
+                         "pages:",
+                         f"  {slug}:   # resolved via the feature's "
+                         f"@page:{slug} pin",
+                         *(f"    {ln}".rstrip() for ln in body)]) + "\n"
     return feature, pom

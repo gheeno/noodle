@@ -520,6 +520,14 @@ def run_and_report(target: str | None = None, *, tag: str | None = None,
     result["report"] = str(idx) if idx.is_file() else None
     result["rca_html"] = str(reports / "rca.html")
     result["rca_md"] = str(reports / "rca.md")
+    # NOOD_0200 — evidence images by PATH, on the payload: "open the image"
+    # with no path in hand sent shell-driven agents to `open`/`cat` hunts
+    # through rca.md — the TC-with-screenshot HIL leak. Read via harness
+    # file-read, never a shell.
+    from noodle.reporting import rca_report as _rca_rep
+    if ev := _rca_rep.collect_evidence(str(root / "allure-results")):
+        result["evidence"] = [{"step": e["step"], "status": e["status"],
+                               "path": e["path"]} for e in ev]
     # NOOD_0156 — a green-but-unverified run gets the compact RCA too: the
     # passed-with-healing lines are the evidence an agent needs before it may
     # claim the requested behavior actually passed (failed == 0 AND
@@ -1186,9 +1194,11 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     if removed_stale_pom:
         result["removed_stale_pom"] = rel(pom_path)
     if pom_content is not None and isinstance(pom_data, dict):
-        # element keys only — skip the scope header and nested scoped blocks
+        # element keys only — skip the scope headers (match/pages/shared,
+        # NOOD_0200: compiled POMs are pages:-scoped now) and nested scoped
+        # blocks
         if unused_pom := [k for k, v in pom_data.items()
-                          if k != "match"
+                          if k not in ("match", "pages", "shared")
                           and not (isinstance(v, dict) and "match" in v)
                           and str(k).lower() not in content.lower()]:
             result["unused_pom_keys"] = unused_pom
@@ -1200,7 +1210,10 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         # them.
         result["compiled"] = {"feature": content, "pom": pom_text}
         result["evidence"] = {k: goal_ev[k] for k in
-                              ("proven", "runtime_asserted",
+                              # NOOD_0200 — proven_phase: which probe phase's
+                              # page each proven check matched on, so probe-
+                              # proven vs run-proven is readable per fact.
+                              ("proven", "proven_phase", "runtime_asserted",
                                "permission_prompts", "popups_closed")
                               if k in goal_ev}
         # NOOD_0169 — setup-vs-action page health: broken setup URLs are
@@ -1228,7 +1241,8 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         result["probe_summary"] = (
             "probe skipped (browserless api goal)" if browserless else
             f"probed {supplied_url}: {len(e.get('proven') or {})} fact(s) "
-            f"proven, {e.get('popups_closed') or 0} popup(s) closed, "
+            f"proven, {len(e.get('runtime_asserted') or [])} check(s) "
+            f"run-proven, {e.get('popups_closed') or 0} popup(s) closed, "
             f"prompts: {', '.join(e.get('permission_prompts') or []) or 'none'}"
             + (" [probe reused — browser not re-opened]" if cache_hit else ""))
         # NOOD_0156 — intent provenance: what the user asked for, what got
@@ -1279,6 +1293,34 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         contracts[f"app:{app}"] = dict(entry)
         state["intent_contracts"] = contracts
         save_state(state, workspace)
+    if blocking:
+        # NOOD_0200 — a blocked author used to go silent at exactly the
+        # moment the operator most needs a written explanation ("it didn't
+        # even generate the report"): no run means no artifacts. Write the
+        # RCA pair anyway (verdict: authoring-blocked — milliseconds, no
+        # browser) and, on the run_after_author path, host it so the
+        # operator gets the same two links every time. Advisory throughout:
+        # reporting must never fail the authoring payload.
+        try:
+            from noodle.reporting import rca_report as _rca_rep
+            reports_dir = app_dir / "report" / "reports"
+            _rca_rep.write_authoring_blocked(
+                reports_dir,
+                {"feature": rel(feat_dest), "blocking": blocking,
+                 "next_action": result.get("next_action"),
+                 "intent_trace": result.get("intent_trace")})
+            result["rca_html"] = str(reports_dir / "rca.html")
+            result["rca_md"] = str(reports_dir / "rca.md")
+            from noodle import cli as _cli  # lazy both ways: cli imports core
+            if run_after_author and _cli._serve_default():
+                served = serve_report(workspace=workspace,
+                                      report_dir=str(reports_dir),
+                                      ensure_fresh=False)
+                if served.get("ok"):
+                    result["served"] = {k: v for k, v in served.items()
+                                        if k != "ok"}
+        except OSError:
+            pass
     if not run_after_author:
         return result
     if not result["ready"]:

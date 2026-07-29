@@ -102,7 +102,7 @@ _BUDGET_HINTS = {
                  "section=/query=.",
     "probe_page": "Re-probe with compact=False for the full dump.",
     "probe_app": "Re-probe with compact=False for the full snapshot.",
-    "get_rca": "Use compact=True, or open rca.html in the served report.",
+    "get_rca": "Use compact=True, or the served report's rca.html URL.",
 }
 
 

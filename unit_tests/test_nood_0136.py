@@ -266,7 +266,7 @@ class _DiscoverPage:
         loc = MagicMock()
         loc.first.click.side_effect = lambda **k: self.clicked.append(sel)
         loc.first.dispatch_event.side_effect = \
-            lambda *a: self.clicked.append(sel)
+            lambda *a, **k: self.clicked.append(sel)
         loc.count.return_value = 1
         return loc
 

@@ -352,6 +352,58 @@ def collect_healing(results_dir: str = None) -> list[dict]:
     return out
 
 
+def write_authoring_blocked(reports_dir, info: dict) -> None:
+    """NOOD_0200 — a blocked author produces the report pair anyway.
+
+    A blocked author never launches a browser, so there is no run and there
+    were no Allure/RCA artifacts — the engine went silent at the exact moment
+    the operator most needed a written explanation. Renders rca.md + rca.html
+    (verdict: authoring-blocked) from the blocking list, the typed
+    next_action and any failed intent-trace rows. Milliseconds, no browser;
+    overwritten by the next real run's reports."""
+    d = Path(reports_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    feature = info.get("feature") or ""
+    blocking = [str(b) for b in info.get("blocking") or []]
+    nxt = info.get("next_action")
+    failed_trace = [t for t in info.get("intent_trace") or []
+                    if isinstance(t, dict) and not t.get("ok")]
+    md = ["# RCA — authoring blocked", ""]
+    if feature:
+        md += [f"Feature: `{feature}`", ""]
+    md += ["No run happened: authoring did not reach ready, so no browser "
+           "was launched and no Allure results exist for it (an Allure "
+           "report next to this file is from an earlier run). The blockers "
+           "below are the whole story — fix them and re-author.",
+           "", "## Blocking"]
+    md += [f"- {b}" for b in blocking] or ["- (none recorded)"]
+    if nxt:
+        md += ["", f"**next_action:** `{nxt}`"]
+    if failed_trace:
+        md += ["", "## Failed intent-trace rows"]
+        md += [f"- {json.dumps(t, default=str)}" for t in failed_trace]
+    (d / "rca.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    items = "".join(f"<li>{html.escape(b)}</li>" for b in blocking) \
+        or "<li>(none recorded)</li>"
+    trace_html = "".join(
+        f"<li><code>{html.escape(json.dumps(t, default=str))}</code></li>"
+        for t in failed_trace)
+    (d / "rca.html").write_text(f"""<!doctype html><meta charset="utf-8">
+<title>RCA — authoring blocked</title>
+<style>body{{font:15px/1.5 system-ui;margin:2rem auto;max-width:64rem;padding:0 1rem}}
+.v{{color:#fff;background:#cf222e;display:inline-block;padding:.2rem .8rem;border-radius:.4rem}}</style>
+<h1>RCA — <span class="v">authoring blocked</span></h1>
+{f"<p>Feature: <code>{html.escape(feature)}</code></p>" if feature else ""}
+<p>No run happened: authoring did not reach ready, so no browser was launched
+and no Allure results exist for it (an Allure report next to this file is
+from an earlier run). The blockers below are the whole story — fix them and
+re-author.</p>
+<h2>Blocking</h2><ul>{items}</ul>
+{f"<p><b>next_action:</b> <code>{html.escape(str(nxt))}</code></p>" if nxt else ""}
+{f"<h2>Failed intent-trace rows</h2><ul>{trace_html}</ul>" if trace_html else ""}
+""", encoding="utf-8")
+
+
 def collect_evidence(results_dir: str = None) -> list[dict]:
     """NOOD_0153 — every image attached to a step across the latest results:
     evidence shots on passed steps, explicit "takes a screenshot" shots, and

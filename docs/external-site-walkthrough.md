@@ -46,24 +46,22 @@ mkdir -p noodle_tests/academybugs/resources/payloads
 ## 2. Recon before writing a single step
 
 A `.feature` file is only as good as the selectors and page behavior behind
-it — for a real site, that means looking at the actual HTML before guessing.
-`curl` with a real browser `User-Agent` header beats an AI web-summarization
-tool here: a summarizer paraphrases button text ("Add to Cart") when the
-actual DOM says something else entirely ("ADD TO CART", all-caps) — exactly
-what happened in this session, costing a full debug cycle before the mismatch
-was caught by grepping the raw HTML directly.
+it — for a real site, that means looking at the actual rendered DOM before
+guessing. The tool for that is the probe — one bounded call, no shell
+plumbing, and it sees the page a browser sees (a `curl` of the raw HTML
+misses everything a SPA renders client-side):
 
 ```bash
-curl -sL "https://academybugs.com/find-bugs/" \
-  -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
-  -o /tmp/site.html
-grep -oE '<a[^>]*ec_product_addtocart[^>]*>[^<]*' /tmp/site.html   # real button text, real classes
+noodle probe "https://academybugs.com/find-bugs/" --compact
 ```
 
-What this surfaced before writing anything: the product grid's real CSS
-classes, that "Add to Cart" is actually rendered `ADD TO CART`, and — caught
-only by re-fetching later in the session — that the site's internal product
-ID (`model_number`) is **not stable between requests** (see §4, bug 3).
+What the probe surfaces before writing anything: the product grid's real
+controls with exact captions ("Add to Cart" actually rendered `ADD TO
+CART`, all-caps — the kind of mismatch that otherwise costs a full debug
+cycle), the real CSS classes, and copy-ready steps + POM YAML. This
+session also caught — only by re-probing later — that the site's internal
+product ID (`model_number`) is **not stable between requests** (see §4,
+bug 3).
 
 ## 3. Write the feature package
 

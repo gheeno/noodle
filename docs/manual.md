@@ -428,7 +428,10 @@ live outside it, as above.
 
 Every run already writes both reports (Allure HTML + `rca.md`/`rca.html`)
 into `<run root>/reports/` — the app's own `report/reports/` for a
-single-app run, `artifacts/reports/` for a workspace-wide one. Follow-up
+single-app run, `artifacts/reports/` for a workspace-wide one — and since
+NOOD_0200 `noodle run` also **hosts them by default**, printing the
+clickable URLs at the end of every run (`--no-serve` opts out; CI is
+auto-off; `NOODLE_SERVE_REPORTS=0/1` overrides). Follow-up
 commands find the last run automatically (via `.noodle/last_run_root`);
 these re-generate and re-host it:
 

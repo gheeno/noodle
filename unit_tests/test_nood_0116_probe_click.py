@@ -120,7 +120,9 @@ def test_probe_hidden_trigger_falls_back_to_dispatch_event():
     page.url, page.title = "u", MagicMock(return_value="t")
     pg = _initial_pg()
     probe_mod._reveal(page, pg, ["trigger settings panel"], timeout_ms=1000)
-    loc.first.dispatch_event.assert_called_once_with("click")
+    # NOOD_0200 — bounded: an unbounded dispatch waited Playwright's full 30s
+    # for an element that never attaches, eating the discovery budget.
+    loc.first.dispatch_event.assert_called_once_with("click", timeout=3000)
     assert "click_warnings" not in pg
 
 

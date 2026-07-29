@@ -22,8 +22,8 @@ project; wok = capability work area, tag-routed
 | # | Operation | MCP tool | CLI |
 |---|---|---|---|
 | 1 | Probe (unfamiliar page/SPA only) | `probe_page(url, click=[…], do=[…], search="…", suggest="…", follow="…", expect=[…])` | `noodle probe <url> --compact [--click/--do/--search/--suggest/…]` |
-| 2 | Author | `author_test(…)` | `noodle author --spec spec.yaml -w <ws> --json` |
-| 3 | Execute+report+serve | `run_and_report(headless=True, retries=0, serve_reports=True)` | `noodle run <path> -w <ws> --headless --retries 0 --json --serve` |
+| 2 | Author | `author_test(…)` | `noodle author --prompt "<ask>" --run -w <ws> --json` |
+| 3 | Execute+report+serve | `run_and_report(headless=True, retries=0, serve_reports=True)` | `noodle run <path> -w <ws> --headless --retries 0 --json` |
 
 - Bundle every reveal click, dropdown enum (`--open-native`), search
   term, typeahead (`--suggest`+`--follow`), `--expect` verdicts and the
@@ -129,7 +129,7 @@ in the URL — give shared files `match: {}` or their keys never resolve. Wrong 
 1. `rca_compact` in the run payload (`noodle rca-report --compact`)
    — verdict + failing step + fix; `mutation-failed` = the mutation
    request aborted/refused → fix the action, not the assertion.
-2. The failing line in the run summary; grep `run.log`.
+2. The failing line in the run summary (in the payload).
 3. Still unexplained? screenshot (vision ≈10× text) or network
    capture — never for a timing/locator failure.
 4. Locator/state failure? Reproduce the state ONCE (`probe --do

@@ -35,6 +35,15 @@ def _guard_repo_not_polluted():
 
 
 @pytest.fixture(autouse=True)
+def _no_report_servers(monkeypatch):
+    """NOOD_0200 — `noodle run` serves the reports by default now; a unit test
+    that drives the CLI must never spawn a detached report server on the
+    developer's machine. The env kill-switch beats the default; a test that
+    asserts serving behaviour monkeypatches _spawn_report_server anyway."""
+    monkeypatch.setenv("NOODLE_SERVE_REPORTS", "0")
+
+
+@pytest.fixture(autouse=True)
 def _reset_workspace_docs_override():
     """NOOD_0027 — step_resolver.set_docs_dir()/patterns.set_agent_patterns_dir()
     are process-global overrides (mirrors pom.py's existing set_context()

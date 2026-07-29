@@ -441,8 +441,13 @@ def test_composite_search_cannot_gain_a_manual_trigger():
 
 
 def test_compiled_pom_always_opens_with_match_block():
-    (_, pom), _ = _compiled()
-    assert pom.splitlines()[1].startswith("match: {}")
+    # NOOD_0200 — the scope header is a pages: block pinned by the feature's
+    # @page tag now, never folder-global match: {} (which made every second
+    # compiled feature in an app shadow the first's keys).
+    (feat, pom), _ = _compiled()
+    assert pom.splitlines()[1] == "pages:"
+    assert "match: {}" not in pom
+    assert "@page:" in feat.splitlines()[0]
 
 
 def test_alternatives_both_survive_in_one_disjunctive_step():
