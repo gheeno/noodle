@@ -622,6 +622,70 @@ def scan_repo(path: str | None = None) -> dict:
 
 
 @_tool()
+def probe_api(base_url: str | None = None,
+              ports: list[int] | None = None,
+              workspace: str | None = None) -> dict:
+    """NOOD_0201 — live API discovery, the api wok's probe_page.
+
+    With base_url: interrogate ONE server — liveness, its OpenAPI document
+    from the well-known routes (/openapi.json, /v3/api-docs, ...), the REAL
+    endpoint list (the fix for authoring POST /greeting when the app serves
+    /greeting/new), request-body hints from the schema, and copy-ready steps.
+
+    Without base_url: sweep the well-known localhost ports (plus any the
+    workspace repo's own config names — server.port, compose mappings, PORT=)
+    and report every live HTTP server with an api-shaped verdict. Exactly one
+    api candidate is an answer author_test adopts automatically; anything
+    else comes back in `questions`. Loopback only; nothing is guessed.
+
+    Call it when an API test request arrives with little or no context: the
+    endpoints and base URL it returns ARE the missing context."""
+    from noodle import api_probe
+    if base_url:
+        return api_probe.probe(base_url)
+    return api_probe.discover(ports=ports, repo_root=_ws(workspace))
+
+
+@_tool()
+def plan_from_ticket(payload: str, base_url: str | None = None,
+                     workspace: str | None = None) -> dict:
+    """NOOD_0201 — a JIRA issue payload → one authorable goal per criterion.
+
+    For the AI-SDLC handoff where the only context is the ticket. `payload` is
+    the issue JSON (as text). Deterministic, no LLM: Atlassian Document Format
+    is walked, spec-link boilerplate stripped, ACs split into Given/When/Then,
+    and each criterion's endpoint resolved against the routes the app REALLY
+    serves — discovered from a running localhost app when `base_url` is
+    omitted. A ticket that says POST /greeting authors against the served
+    POST /greeting/new, with the correction recorded as an assumption.
+
+    Criteria the API cannot show (repo scaffolding, a stored DB row, coding
+    standards) come back in `not_automatable` WITH the reason — never as a
+    test that pretends to cover them. Replace every <value> placeholder and
+    settle `questions` before authoring; then author_test(goal=...) each goal."""
+    from noodle import api_probe
+    from noodle import ticket as ticket_mod
+    parsed = ticket_mod.parse(payload)
+    if not parsed.get("ok"):
+        return parsed
+    endpoints: list[str] = []
+    if base_url is None:
+        found = api_probe.discover(repo_root=_ws(workspace))
+        cands = found.get("api_candidates") or []
+        if len(cands) == 1:
+            base_url = cands[0]
+        else:
+            parsed["questions"].extend(found.get("questions") or [])
+    if base_url:
+        probed = api_probe.probe(base_url)
+        endpoints = probed.get("endpoints") or []
+        parsed["questions"].extend(probed.get("questions") or [])
+    plan = ticket_mod.plan(parsed, endpoints=endpoints, base_url=base_url)
+    return {**plan, "ticket": parsed, "base_url": base_url,
+            "endpoints_served": endpoints[:20]}
+
+
+@_tool()
 def cost_estimate(target: str, model: str | None = None,
                   workspace: str | None = None) -> dict:
     """Pre-flight LLM token/dollar estimate for a file (NOOD_0084): the

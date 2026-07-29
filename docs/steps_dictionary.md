@@ -1215,6 +1215,74 @@ they run in `@api`, `@web`, `@appium` and desktop scenarios alike), to
 `calls GET '<url>'`, and to the `@perf` load generator's per-request timeout.
 Exceeding it fails the step with the budget and both ways to raise it named.
 
+### Batch requests (NOOD_0201)
+
+Seeding N records is **one step, N calls** — never N pasted call lines.
+`expecting status` asserts EVERY call in the batch and fails with the row
+named; a trailing `Then the response status should be ...` after pasted calls
+only ever checked the last one.
+
+```gherkin
+# {i} = 1-based call number, substituted into the path and body
+When performs a POST call at '/api/greeting' with body '{"name":"Row {i}"}' repeated 20 times expecting status 201
+
+# heterogeneous data: table headings name the {placeholder} tokens
+When performs a POST call at '/api/greeting' with body '{"name":"{name}"}' for each row expecting status 201:
+  | name  |
+  | Ada   |
+  | Grace |
+
+# placeholders work in the path too (bulk delete)
+When performs DELETE calls at '/objects/{id}' for each row expecting status 200:
+  | id |
+  | 7  |
+  | 8  |
+```
+
+The table needs a header row (it names the placeholders); cells resolve
+`{env:}`/`{var:}` first. After the batch, `REST_STATUS`/`REST_BODY` hold the
+last response. Batches cap at 1000 calls — volume belongs to the `@perf`
+load generator. For assertion-per-row variation (different expected statuses,
+different asserts), use a `Scenario Outline` with `Examples:` instead — each
+row becomes its own scenario in the report.
+
+### Docstring bodies (NOOD_0201)
+
+A payload that doesn't fit on one line reads as a docstring; `{env:}`/`{var:}`
+resolve inside it:
+
+```gherkin
+When performs a POST call at '/api/greeting' with this body:
+  """
+  {
+    "name": "{var:WHO}",
+    "channel": "regression"
+  }
+  """
+```
+
+### Waiting for an endpoint (NOOD_0201)
+
+A service that answers `202` and finishes the write asynchronously makes the
+next assertion a race. Poll instead of sleeping — this returns the instant the
+condition holds, and the budget is a ceiling:
+
+```gherkin
+When waits until '/api/reviews/{var:REVIEW_ID}' returns status 200
+When waits until a GET call at '/jobs/1' returns status 200 and the body contains 'done' within 60 seconds
+```
+
+Without `within N seconds` the run-wide `NOODLE_REST_TIMEOUT` applies. Failure
+names the budget, the attempt count and the last status. Session headers/auth
+apply to every attempt, and the final response lands in
+`REST_STATUS`/`REST_BODY` like any other call — so the assertions that follow
+work on it normally. Doubling as a readiness gate in a `Background` is the
+common use:
+
+```gherkin
+Given waits until '/api/health' returns status 200 within 20 seconds
+```
+
 ### Response Assertions
 
 ```gherkin
@@ -1232,6 +1300,37 @@ Then the response body should contain:
 ```
 
 Empty `Value` = key-exists check only. Non-empty `Value` = key and value both checked.
+
+**Typed JSON assertions (NOOD_0201).** Substring checks can't tell
+`"count": 20` from `"count": 200`, or the string `"true"` from the boolean.
+The `response json` family parses the body and walks the same dotted/indexed
+path as extraction (`'$'` = the root); `equal` compares numbers as numbers,
+booleans/null by name:
+
+```gherkin
+Then the response json 'data.items[0].id' should equal '42'
+Then the response json 'active' should equal 'true'
+Then the response json 'name' should contain 'Ada'
+Then the response json 'data.items' should have 3 items
+Then the response json '$' should have 20 items
+```
+
+**The whole shape in one step (NOOD_0201).** A field that silently changed type
+or disappeared passes every substring check ever written. Point at a JSON
+Schema file in the app's `resources/`:
+
+```gherkin
+Then the response should match the schema 'schemas/review.json'
+Then the response body should match schema 'schemas/review_page.json'
+```
+
+Supported keywords: `type` (incl. lists like `["integer","null"]`), `required`,
+`properties`, `items`, `enum`, `minItems`/`maxItems`, `minimum`/`maximum`.
+Deliberately NOT supported: `$ref`, `oneOf`/`allOf`, `format` — a response
+contract rarely needs them, and this keeps the base install dependency-free.
+Every violation is reported with its own path (`$.items[0].rating: expected
+type integer, got str`). Worked example:
+`sample_feature_tests/api/resources/schemas/review.json`.
 
 ```gherkin
 Then the response header 'Content-Type' should contain 'application/json'

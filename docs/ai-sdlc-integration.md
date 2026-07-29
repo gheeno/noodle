@@ -207,7 +207,38 @@ NOOD_0192, and both can live in one scenario
 noodle task "review this repo" -w . --json
 noodle task "write a test: 1. GET http://localhost:8000/orders
 2. Verify the response status is 200" -w tests/noodle --json
-``` That works over plain `subprocess`, in a
+```
+
+**Starting from the ticket itself (NOOD_0201).** The commonest handoff in an AI
+SDLC isn't prose at all — it's the issue payload the workflow agent already
+holds, and it usually names no base URL. Send it as-is:
+
+```bash
+noodle ticket ./BB-42.json --json          # MCP: plan_from_ticket(payload=...)
+```
+
+Deterministically, with no model call: Atlassian Document Format is walked,
+`SPEC_LINK`/sha256 boilerplate is discarded rather than read as intent,
+acceptance criteria are split into Given/When/Then, localhost is swept for the
+service the dev loop is already hosting, its `/openapi.json` supplies the real
+routes, and **each criterion's endpoint is resolved against them** — a ticket
+saying `POST /greeting` authors against the served `POST /greeting/new` instead
+of a 404 that reads like a product bug. What the API cannot show comes back in
+`not_automatable` with the reason (a coding-standards criterion is code review;
+"exactly one row is stored" needs a DB step family), and what the ticket never
+said comes back in `questions` (the request body, an ambiguous route) with a
+visible `<value>` placeholder — never an invented payload.
+
+Then author each returned goal, filling the placeholders:
+
+```bash
+noodle author --spec ./ac2_goal.json -w tests/noodle --json
+```
+
+Worked end to end, ticket → green run, in
+[`sample_feature_tests/api/features/busterblock_from_ticket.feature`](../sample_feature_tests/api/features/busterblock_from_ticket.feature).
+
+That works over plain `subprocess`, in a
 pipeline step, or inside a container, with no protocol and no server. Details:
 [cli-reference.md § noodle task](cli-reference.md#noodle-task).
 

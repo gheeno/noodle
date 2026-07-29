@@ -1,0 +1,24 @@
+{
+  "_comment": "NOOD_0201 — the paginated list contract: envelope fields typed, and every item validated against the same review shape (nested `items`).",
+  "type": "object",
+  "required": ["page", "size", "total", "totalPages", "items"],
+  "properties": {
+    "page": { "type": "integer", "minimum": 1 },
+    "size": { "type": "integer", "minimum": 1 },
+    "total": { "type": "integer", "minimum": 0 },
+    "totalPages": { "type": "integer", "minimum": 1 },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "date", "response"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "date": { "type": "string" },
+          "response": { "type": "string" }
+        }
+      }
+    }
+  }
+}

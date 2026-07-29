@@ -292,7 +292,7 @@ see them with per-machine install status.
 | Wok | Put these tags on the feature/scenario | What the engine starts |
 |-----|---|---|
 | **Web** *(default)* | `@web` (or no tag at all) · `@terminal` (canvas/xterm UIs via OCR) | A Playwright browser |
-| **API** | `@api` (REST — the subject *is* the service) | Nothing: browserless, so a REST-only suite needs no Playwright install. REST steps themselves work in **any** scenario untagged; `@api` only skips the browser |
+| **API** | `@api` (REST — the subject *is* the service) | Nothing: browserless, so a REST-only suite needs no Playwright install. REST steps themselves work in **any** scenario untagged; `@api` only skips the browser. `noodle api-scan` discovers the dev-loop app on localhost and its real endpoints from the live OpenAPI document, `noodle ticket` turns a JIRA payload into authorable goals, and batch steps seed N records in one line ([docs/woks.md → API](docs/woks.md#api)) |
 | **Mobile** | `@appium`, or `@android` / `@ios` (imply `@appium` + default capabilities) | An Appium session on your device/emulator |
 | **Desktop** | `@visual` (pixel agent: OpenCV + OCR — any UI that renders) · `@windows` / `@mac` (native apps via Appium) | The visual agent, or Appium's WinAppDriver/Mac2 |
 | **Performance** | `@perf` | No browser — the built-in load generator |

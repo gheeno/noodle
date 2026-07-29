@@ -1,0 +1,74 @@
+{
+  "_comment": "NOOD_0201 — a real-shaped JIRA issue payload (Atlassian Document Format, spec-link boilerplate, ACs as loose Given/When/Then paragraphs). This is the 'ambiguous payload, little to no context' input: it names no base URL, and its ACs say POST /api/review — while the app actually serves POST /api/reviews/new. `noodle ticket` reads it, `noodle api-scan` supplies the missing URL, and the endpoint matcher corrects the route instead of authoring a 404.",
+  "key": "BB-42",
+  "id": "10450",
+  "fields": {
+    "summary": "Customer reviews: submit a review and list them newest-first",
+    "description": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "As a renter, I want to leave a review for BusterBlock and see the reviews other customers left, so the storefront shows real feedback."
+            }
+          ]
+        },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "<!-- SPEC_LINK:START -->" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Spec Anchor: 294913#reviews" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Anchor Heading: Reviews" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Generated Sha256: 05690471147f179a1c68d585cc5e7b36b1a6cb0fb810c547ae95f69785bb3b12" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "<!-- SPEC_LINK:END -->" }] }
+      ]
+    },
+    "status": { "name": "In Progress" },
+    "parent": {
+      "key": "BB-11",
+      "id": "10349",
+      "fields": {
+        "summary": "Project Properties Values Project Name BusterBlock Project Description A VHS rental sample application Project Key BB",
+        "description": null,
+        "status": { "name": "In Review" },
+        "parent": null,
+        "issuetype": { "name": "Epic" },
+        "project": null,
+        "acceptanceCriteria": null
+      }
+    },
+    "issuetype": { "name": "Story" },
+    "project": { "id": "10034", "key": "BB", "name": "BusterBlock API" },
+    "acceptanceCriteria": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        { "type": "paragraph", "content": [{ "type": "text", "text": "AC-1" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Given the reviews module is scaffolded in the target repository" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "When the service is implemented" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Then it follows the provided Node and Express standards and includes baseline backend testing/tooling" }] },
+
+        { "type": "paragraph", "content": [{ "type": "text", "text": "AC-2" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Given a client submits POST /api/review with a valid JSON body containing a name value" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "When the request is processed" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Then the API validates the input, persists the review, and returns a JSON response containing id, name, date, and response" }] },
+
+        { "type": "paragraph", "content": [{ "type": "text", "text": "AC-3" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Given a client submits POST /api/review with missing, empty, or malformed JSON input" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "When the request reaches the API boundary" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Then the API rejects the request with a client error response and does not persist a review record" }] },
+
+        { "type": "paragraph", "content": [{ "type": "text", "text": "AC-4" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Given a review is successfully submitted" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "When the review is persisted" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Then exactly one record is stored with a generated UUID id, the submitted name, a timestamp, and the generated response text" }] },
+
+        { "type": "paragraph", "content": [{ "type": "text", "text": "AC-5" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Given persisted reviews exist" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "When a client calls GET /api/reviews with pagination parameters" }] },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Then the API returns a paginated JSON list of reviews ordered by date descending" }] }
+      ]
+    }
+  }
+}

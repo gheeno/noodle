@@ -4,7 +4,108 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
-## [1.0.0a16] — 2026-07-29
+## [1.0.0a17] — 2026-07-29
+
+**NOOD_0201** — feature: the API wok grows up — localhost discovery, live
+OpenAPI probing, batch steps, typed JSON assertions.
+
+An AI-SDLC session authored a seeding test against a Spring Boot service and
+produced two defects the web wok would never ship: 21 pasted
+`performs a POST call` lines with a single trailing status assertion (which
+only ever checked the last call), and a test aimed at `POST /greeting` when
+the app served `POST /greeting/new` — the real path was one spec fetch away
+the whole time. Root causes: neither deterministic authoring path could emit
+a data table or a loop, and nothing in the engine could discover a base URL
+or an endpoint list. Five changes:
+
+1. **Batch REST steps.** `performs a POST call at '<path>' with body
+   '<template>' repeated N times expecting status 201` (`{i}` = call number)
+   and the `for each row` data-table twin (headings name the `{placeholder}`
+   tokens, substituted into path and body per row). `expecting status`
+   asserts EVERY call and fails naming the row; batches cap at 1000 (volume
+   belongs to the perf wok). Docstring bodies
+   (`with this body:` + `"""…"""`) for payloads that don't fit on a line.
+2. **Typed JSON assertions.** `the response json '<path>' should equal '42'`
+   walks the extraction path family and compares numbers as numbers,
+   booleans/null by name — a substring check can't tell `"count": 20` from
+   `"count": 200`. Plus `should contain` and `should have N items`
+   (`'$'` = root).
+3. **Goal + prompt grammar reach all of it.** The `api` action gains
+   `rows`/`repeat`/`expect_status` (compiled to ONE step; a batch with
+   `expect_status` satisfies the assertion-required rule), checks gain the
+   `json` kind, and the planner reads `create 20 rows using POST <url> with
+   body '<template>' expecting status 201`, `repeated N times` tails, and
+   rooted api paths (`POST /api/greeting`). A missing url/body template is
+   refused with the exact one-shot phrasing; an unrecognized tail
+   (`with headers …`) is refused, never silently dropped.
+4. **Live discovery (`noodle api-scan` / MCP `probe_api`).** With no URL:
+   sweep the well-known localhost dev ports — plus ports the repo's own
+   config names (`server.port`, compose mappings, `PORT=`) — and report every
+   live HTTP server, api-shaped or not (macOS AirPlay filtered). With a URL:
+   fetch the OpenAPI document from the well-known routes (`/openapi.json`,
+   `/v3/api-docs`, …) and return the REAL endpoint list, request-body hints
+   derived through `$ref`, and copy-ready steps. `author_test` adopts the
+   single unambiguous candidate automatically (payload carries
+   `discovered_base_url`; app named from the spec's own `info.title`);
+   ambiguity returns candidates + questions — Noodle still never guesses a
+   URL. Compiled features with relative api urls now get the
+   `REST_BASE_URL` Given bound to the app's stored `{env:}` key (previously
+   the join was silently `"" + path`), and an IP-hosted base URL no longer
+   derives an illegal `{env:}` key.
+5. **Playbook decision rules.** Repetition (one step, N executions — table
+   vs `repeat` vs Scenario Outline), custom scripts
+   (`resources/functions/*.py` + `calls the function` when the vocabulary
+   can't say it), and the no-context API flow (scan repo → api-scan →
+   probe → author with relative paths).
+
+Also: the last Canadian Tire reference is gone (a comment in `hooks.py` keeps
+its false-pass lesson without the name).
+
+Second pass — the deferred gaps closed, and all of it validated against a live
+service instead of only in unit tests:
+
+6. **Polling and response contracts.** `waits until '<path>' returns status
+   200 [and the body contains '<x>'] [within N seconds]` retries until the
+   condition holds (the REST twin of the web wok's smart wait — an endpoint
+   that answers 202 and finishes the write later used to be a race), and
+   `the response should match the schema '<file>'` validates the whole body
+   against a JSON Schema file in the app's `resources/`
+   (type/required/properties/items/enum/bounds; no `$ref`/`oneOf`, so the base
+   install stays dependency-free).
+7. **Auth and chaining reachable from a goal.** The `api` action takes
+   `headers`, `auth: {scheme: bearer|basic, ...}` and
+   `store: {VAR: '<json path>'}` — one goal action compiling to several steps,
+   which is why login-then-chain previously forced hand-written
+   `feature_content`.
+8. **`noodle ticket` / MCP `plan_from_ticket`.** A raw JIRA issue payload
+   becomes one authorable goal per acceptance criterion, deterministically:
+   Atlassian Document Format walked, `SPEC_LINK`/sha256 boilerplate discarded
+   instead of read as intent, criteria split into Given/When/Then, and each
+   criterion's endpoint **resolved against the routes the service really
+   serves** (singular/plural folded, so `POST /api/review` finds
+   `POST /api/reviews/new`) with the correction recorded as an assumption. What
+   the API cannot show lands in `not_automatable` with the reason; what the
+   ticket never said lands in `questions` behind a visible `<value>`
+   placeholder.
+9. **BusterBlock became the api wok's local target.** A reviews resource
+   (`POST /api/reviews/new` validate→persist→return, paginated newest-first
+   `GET /api/reviews`, bearer-protected delete), a published
+   `/openapi.json`, and a `/reviews.html` page that renders the list so
+   cross-wok scenarios are real. The create route is deliberately
+   `/api/reviews/new` while tickets say `/api/review` — the correction has to
+   come from discovery.
+10. **Four new sample features, 19 scenarios, all run green live:**
+    `api/features/busterblock_api.feature` (polling, typed JSON, schema,
+    docstring body, payload file, bearer auth + id chaining, negative paths),
+    `busterblock_batch.feature` (20-in-one-step vs data table vs Scenario
+    Outline — the replacement for the 21 pasted calls),
+    `busterblock_from_ticket.feature` (authored from the JIRA payload alone),
+    and `web/busterblock/features/api_seeds_ui_verifies.feature` (API seeds →
+    UI verifies, and UI submits → API confirms).
+
+Fixed while testing it for real: the localhost sweep missed port 3333 and did
+not read the ubiquitous Node `PORT || 3333` / `.listen(3333)` idiom, so the
+bundled test app — the exact case discovery exists for — was invisible to it.
 
 **NOOD_0200** — feature: sequential authoring serves every run's reports, the
 probe survives promo-heavy pages, and the screenshot claim stops costing a

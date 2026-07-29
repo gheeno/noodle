@@ -117,10 +117,98 @@ the same prompt and you get a cross-wok test instead
 ([below](#cross-wok-composition)).
 
 Grammar: `GET|POST|PUT|PATCH|DELETE <url>` · `call the api at <url>` ·
-`go to <url> via rest` · `verify the response status is <code>` ·
-`verify the response body contains <text>`. Headers, auth, `{var:}` chaining
-and payload files stay `feature_content` territory — the full step table is
-one `read_docs('steps_dictionary', query='REST')` away.
+`go to <url> via rest` · `create <N> <things> using POST <url> with body
+'<template>'` (NOOD_0201 — `{i}` = call number) · `verify the response status
+is <code>` · `verify the response body contains <text>`. Headers, auth,
+`{var:}` chaining and payload files stay `feature_content` territory — the
+full step table is one `read_docs('steps_dictionary', query='REST')` away.
+
+### Discovery: base URL and endpoints without being told (NOOD_0201)
+
+The two facts an API request most often arrives without are the base URL and
+the real endpoint paths — and both are discoverable when the dev loop already
+hosts the app locally:
+
+- **`noodle api-scan`** (CLI) / **`probe_api`** (MCP) with no URL sweeps the
+  well-known localhost ports (plus any the repo's own config names —
+  `server.port`, compose port mappings, `PORT=`) and reports every live HTTP
+  server with an api-shaped verdict. **Exactly one api candidate is an
+  answer**: `author_test` adopts it automatically when a pure-API goal or
+  api-only prompt arrives without `base_url`. Anything else comes back as
+  `questions` — Noodle still never guesses a URL.
+- **`noodle api-scan <base_url>`** / **`probe_api(base_url=...)`** fetches the
+  app's OpenAPI document from the well-known routes (`/openapi.json`,
+  `/v3/api-docs`, `/swagger.json`, ...) and returns the REAL endpoint list
+  with request-body hints and copy-ready steps. This is the fix for authoring
+  `POST /greeting` when the app actually serves `POST /greeting/new` — one
+  spec fetch settles the path before the test is written.
+- **`scan_repo`** stays the static half: OpenAPI files on disk, serve
+  commands, stacks. Repo scan says what the app *is*; api-scan says where it
+  *answers* and what it *serves* right now.
+
+With a discovered (or given) base URL, api steps may use **relative paths**
+(`POST /api/greeting`): the compiler emits the `REST_BASE_URL` Given bound to
+the app's stored `{env:}` key.
+
+### Batches and typed JSON checks (NOOD_0201)
+
+Seeding N records is ONE step, never N pasted calls — and `expecting status`
+asserts **every** call (a trailing status assertion after N pasted calls only
+ever checked the last one):
+
+```gherkin
+When performs a POST call at '/api/greeting' with body '{"name":"Row {i}"}' repeated 20 times expecting status 201
+```
+
+Heterogeneous data rides a Gherkin table — headings name the `{placeholder}`
+tokens substituted into the path and body per row:
+
+```gherkin
+When performs a POST call at '/api/greeting' with body '{"name":"{name}"}' for each row expecting status 201:
+  | name   |
+  | Ada    |
+  | Grace  |
+```
+
+Big payloads read as a docstring (`performs a POST call at '/g' with this
+body:` + `"""..."""`), and JSON assertions are typed — `the response json
+'data.items[0].id' should equal '42'` compares numbers as numbers, booleans
+as booleans (`should contain`, `should have N items` too). Goal grammar:
+`{do: api, url, body, rows|repeat, expect_status}` and
+`{json: <path>, equals|contains|items: ...}` checks.
+
+### Waiting, contracts, auth and chaining (NOOD_0201)
+
+- **Polling, not sleeping.** `waits until '/jobs/1' returns status 200 and the
+  body contains 'done' within 60 seconds` retries the call until the condition
+  holds — the REST twin of the web wok's smart wait. It returns on the first
+  satisfying response, and fails naming the budget and the last status. This is
+  the answer to an endpoint that answers `202` and finishes the write later.
+- **Shape, not substrings.** `the response should match the schema
+  'schemas/review.json'` validates the whole body against a JSON Schema file in
+  the app's `resources/` (type/required/properties/items/enum/bounds — no
+  `$ref`/`oneOf`, deliberately). A field that changed type or vanished passes
+  every substring check ever written.
+- **Auth and chaining from a goal.** The `api` action takes
+  `headers: {...}`, `auth: {scheme: bearer, token: '{env:KEY}'}` and
+  `store: {REVIEW_ID: 'id'}` — so a goal can log in, chain the created id into
+  the next call's URL, and never drop to hand-written `feature_content`. One
+  goal action can compile to several steps; that is why these were previously
+  out of reach.
+
+### Authoring from a ticket payload (NOOD_0201)
+
+`noodle ticket <issue.json>` / MCP `plan_from_ticket` turns the JIRA payload an
+SDLC agent already holds into one authorable goal per acceptance criterion —
+deterministically, no LLM. Atlassian Document Format is walked, `SPEC_LINK` and
+sha256 boilerplate discarded rather than read as intent, criteria split into
+Given/When/Then, and **each criterion's endpoint resolved against the routes
+the service really serves** (discovery supplies them), so a ticket saying
+`POST /greeting` authors against `POST /greeting/new`. Criteria the API cannot
+show land in `not_automatable` with the reason; what the ticket never said
+(the request body) comes back in `questions` behind a visible `<value>`
+placeholder. Worked end to end in
+[`busterblock_from_ticket.feature`](../sample_feature_tests/api/features/busterblock_from_ticket.feature).
 
 ### The API wok is a lifecycle, not a gate
 
@@ -145,8 +233,15 @@ skipped, and only then.
 > `run_command`/`run_script` (both browserless, so they compose the same
 > way). A first-class DB step family is a candidate wok, not a shipped one.
 
-- Samples: `sample_feature_tests/api/` (5 worked feature files)
-- Unit tests: `unit_tests/woks/api/`
+- Samples: `sample_feature_tests/api/` — 5 against a public API, plus 3 against
+  the local BusterBlock service (NOOD_0201): `busterblock_api.feature`
+  (polling, typed JSON, schema, docstring, payload file, bearer auth, negative
+  paths), `busterblock_batch.feature` (batch vs table vs Scenario Outline), and
+  `busterblock_from_ticket.feature` (authored from a JIRA payload alone). The
+  cross-wok pair lives with the web package:
+  `web/busterblock/features/api_seeds_ui_verifies.feature`. All of them need
+  BusterBlock running (`cd test-apps/busterblock && npm start`).
+- Unit tests: `unit_tests/woks/api/`, `unit_tests/test_nood_0201*.py`
 
 ### Mobile
 

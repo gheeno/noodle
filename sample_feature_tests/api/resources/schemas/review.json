@@ -1,0 +1,13 @@
+{
+  "_comment": "NOOD_0201 — the response CONTRACT for one review, asserted in one step: `the response should match the schema 'schemas/review.json'`. A field that changes type or disappears passes every substring check ever written; this catches it. Supported keywords: type, required, properties, items, enum, minItems/maxItems, minimum/maximum.",
+  "type": "object",
+  "required": ["id", "name", "date", "response"],
+  "properties": {
+    "id": { "type": "string" },
+    "name": { "type": "string" },
+    "date": { "type": "string" },
+    "rating": { "type": ["integer", "null"], "minimum": 1, "maximum": 5 },
+    "comment": { "type": ["string", "null"] },
+    "response": { "type": "string" }
+  }
+}

@@ -1872,6 +1872,73 @@ def scan(
     raise typer.Exit(0)
 
 
+@app.command("api-scan")
+def api_scan(
+    base_url: str = typer.Argument(None, help="Probe ONE server: liveness, OpenAPI document, real endpoint list, copy-ready steps. Omit to sweep localhost."),
+    port: list[int] = typer.Option(None, "--port", "-p", help="Extra port(s) for the localhost sweep"),
+    repo: str = typer.Option(".", "--repo", help="Repo whose config hints extra ports (server.port, compose mappings, PORT=)"),
+):
+    """NOOD_0201 — live API discovery, the api wok's `noodle probe`.
+
+    With a URL: fetch the app's OpenAPI document from the well-known routes
+    (/openapi.json, /v3/api-docs, ...) and print the REAL endpoints — the fix
+    for authoring POST /greeting when the app serves /greeting/new. Without
+    one: sweep the well-known localhost ports for live HTTP servers (the dev
+    loop already hosts the app under test). Loopback only; nothing guessed —
+    ambiguity comes back as questions."""
+    from noodle import api_probe
+    rep = api_probe.probe(base_url) if base_url \
+        else api_probe.discover(ports=list(port) if port else None,
+                                repo_root=repo)
+    _json_out(rep)
+    raise typer.Exit(0 if rep.get("ok") else 1)
+
+
+@app.command("ticket")
+def ticket_cmd(
+    source: str = typer.Argument(..., help="JIRA issue JSON — a file path, '-' for stdin, or the JSON inline"),
+    base_url: str = typer.Option(None, "--base-url", help="Base URL of the service under test. Omitted: discovered from a running localhost app"),
+    discover: bool = typer.Option(True, "--discover/--no-discover", help="Sweep localhost and read the app's OpenAPI document to resolve the ticket's endpoints against what it really serves"),
+):
+    """NOOD_0201 — read a ticket payload; get one authorable goal per criterion.
+
+    A workflow agent's raw JIRA issue (Atlassian Document Format, spec-link
+    boilerplate, ACs as loose Given/When/Then prose) is the test plan — this
+    reads it deterministically: no LLM, no network beyond the discovery probe,
+    nothing written. Spec-link noise is stripped, criteria that cannot be shown
+    through the API land in `not_automatable` with the reason, and each
+    remaining criterion's endpoint is resolved against the routes the app
+    REALLY serves — so a ticket saying POST /greeting authors against
+    POST /greeting/new instead of a 404. Whatever is still missing (a payload,
+    a base URL, an ambiguous route) comes back in `questions`."""
+    from noodle import api_probe
+    from noodle import ticket as ticket_mod
+    text, _ = _arg_text(source)
+    parsed = ticket_mod.parse(text)
+    if not parsed.get("ok"):
+        _json_out(parsed)
+        raise typer.Exit(1)
+    endpoints: list[str] = []
+    if discover:
+        if base_url is None:
+            found = api_probe.discover(repo_root=".")
+            cands = found.get("api_candidates") or []
+            if len(cands) == 1:
+                base_url = cands[0]
+            else:
+                parsed.setdefault("questions", []).extend(
+                    found.get("questions") or [])
+        if base_url:
+            probed = api_probe.probe(base_url)
+            endpoints = probed.get("endpoints") or []
+            if probed.get("questions"):
+                parsed["questions"].extend(probed["questions"])
+    plan = ticket_mod.plan(parsed, endpoints=endpoints, base_url=base_url)
+    _json_out({**plan, "ticket": parsed, "base_url": base_url,
+               "endpoints_served": endpoints[:20]})
+    raise typer.Exit(0 if plan.get("ok") else 1)
+
+
 @app.command()
 def task(
     text: str = typer.Argument(None, help="What you want, in plain English — 'write a test that ...', 'run the tests', 'did it pass'. Noodle picks the command. NOOD_0198 — a file path or '-' reads the text from there instead."),

@@ -127,18 +127,10 @@ def _node_serve(p: Path) -> list[str]:
     return [f"npm run {s}" for s in _SERVE_SCRIPTS if s in scripts]
 
 
-def _spec_endpoints(p: Path) -> list[str]:
-    """`METHOD /path` for every operation in an OpenAPI document — the API
-    test plan the developer already wrote down."""
-    text = _read(p)
-    try:
-        if p.suffix.casefold() == ".json":
-            doc = json.loads(text)
-        else:
-            import yaml
-            doc = yaml.safe_load(text)
-    except Exception:
-        return []
+def endpoints_from_doc(doc) -> list[str]:
+    """`METHOD /path` for every operation in a parsed OpenAPI document — the
+    API test plan the developer already wrote down. Shared with the live
+    probe (api_probe, NOOD_0201)."""
     paths = (doc or {}).get("paths")
     if not isinstance(paths, dict):
         return []
@@ -151,6 +143,19 @@ def _spec_endpoints(p: Path) -> list[str]:
                                        "DELETE"):
                 out.append(f"{str(method).upper()} {route}")
     return out
+
+
+def _spec_endpoints(p: Path) -> list[str]:
+    text = _read(p)
+    try:
+        if p.suffix.casefold() == ".json":
+            doc = json.loads(text)
+        else:
+            import yaml
+            doc = yaml.safe_load(text)
+    except Exception:
+        return []
+    return endpoints_from_doc(doc)
 
 
 def scan(root: str = ".") -> dict:
