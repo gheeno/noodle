@@ -664,6 +664,23 @@ def _planner_verdict(result: dict, model_calls: int) -> dict:
     return out
 
 
+def _discover_api_base(workspace: str) -> tuple[str | None, dict]:
+    """NOOD_0201 — localhost discovery for an api-shaped request that arrived
+    without a base_url: the dev-loop app is already listening somewhere on
+    loopback. Adopt ONLY the unambiguous answer (exactly one api-shaped
+    server); anything else comes back as evidence + questions, never a
+    guess."""
+    from noodle import api_probe
+    found = api_probe.discover(repo_root=workspace)
+    cands = found.get("api_candidates") or []
+    return (cands[0] if len(cands) == 1 else None), found
+
+
+def _slug(text: str, fallback: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(text).casefold()).strip("_") \
+        or fallback
+
+
 def author_test(*, prompt: str | None = None,
                 app_name: str | None = None, base_url: str | None = None,
                 feature_path: str | None = None,
@@ -682,7 +699,7 @@ def author_test(*, prompt: str | None = None,
     the whole call can be just {prompt, run_after_author}. Everything else
     defers unchanged to the documented transaction below
     (_author_test_impl)."""
-    expansion, model_calls = None, 0
+    expansion, model_calls, discovery = None, 0, None
     if prompt is not None:
         if goal is not None or feature_content is not None:
             return {"ok": False, "error":
@@ -690,6 +707,19 @@ def author_test(*, prompt: str | None = None,
         from noodle.repl import goal as goal_mod
         from noodle.repl import prompt_expander
         ws = kw.get("workspace", ".")
+        # NOOD_0201 — an api prompt with only relative paths and no base_url:
+        # discover the running localhost app BEFORE expanding, so the whole
+        # call can be just {prompt} while the dev loop hosts the app.
+        if base_url is None and "http" not in prompt.casefold() \
+                and re.search(r"\b(GET|POST|PUT|PATCH|DELETE|rest|api|"
+                              r"endpoint)\b", prompt, re.I):
+            base_url, discovery = _discover_api_base(ws)
+            if base_url and app_name is None:
+                # the spec's own title names the package better than an
+                # IP-and-port slug ever could
+                from noodle import api_probe
+                probed = api_probe.probe(base_url)
+                app_name = _slug(probed.get("title", ""), "") or None
         exp = prompt_expander.expand(prompt, base_url=base_url)
         if not exp["ok"] and exp.get("unresolved") \
                 and not exp.get("conflicts") and _model_configured(ws):
@@ -716,6 +746,7 @@ def author_test(*, prompt: str | None = None,
                         "interpretation call)")
             return {"ok": False, "error": err,
                     "needs_interpretation": needs,
+                    **({"discovery": discovery} if discovery else {}),
                     "unrecognized_steps": exp.get("unrecognized") or [],
                     "unresolved": exp.get("unresolved") or [],
                     "conflicts": exp.get("conflicts") or [],
@@ -740,13 +771,46 @@ def author_test(*, prompt: str | None = None,
                      "coverage": exp.get("coverage") or [],
                      "inferences": exp.get("inferences") or [],
                      "unresolved": []}
+        if discovery is not None and base_url:
+            expansion["discovered_base_url"] = base_url
+    # NOOD_0201 — goal mode with no base_url: a pure-API goal has a
+    # discoverable host (the dev-loop app on loopback). One unambiguous
+    # candidate fills base_url — and, when absent, app_name from the spec's
+    # own title and a scenario-slug feature_path — so the whole call can be
+    # just {goal}. Ambiguity is returned as evidence, never guessed past.
+    if base_url is None and isinstance(goal, dict) and goal:
+        from noodle.repl import goal as goal_mod2
+        if not goal_mod2.needs_browser(goal):
+            base_url, discovery = _discover_api_base(kw.get("workspace", "."))
+            if base_url:
+                if app_name is None:
+                    from urllib.parse import urlsplit
+
+                    from noodle import api_probe
+                    probed = api_probe.probe(base_url)
+                    app_name = _slug(probed.get("title", ""), "") \
+                        or _slug(urlsplit(base_url).netloc, "api_app")
+                if feature_path is None:
+                    slug = _slug(goal.get("scenario", ""), "api_flow")[:40]
+                    feature_path = (f"noodle_tests/{app_name}/features/"
+                                    f"{slug}.feature")
     if not (app_name and base_url and feature_path):
-        return {"ok": False, "error":
-                "app_name, base_url and feature_path are required "
-                "(a prompt with a 'go to <url>' step derives all three)"}
+        err = ("app_name, base_url and feature_path are required "
+               "(a prompt with a 'go to <url>' step derives all three)")
+        if discovery is not None:
+            cands = discovery.get("api_candidates") or []
+            err += (" — localhost discovery found no api-shaped server"
+                    if not cands else
+                    " — localhost discovery was ambiguous; pass base_url "
+                    "from discovery.api_candidates")
+        return {"ok": False, "error": err,
+                **({"discovery": discovery} if discovery else {})}
     result = _author_test_impl(app_name=app_name, base_url=base_url,
                                feature_path=feature_path, goal=goal,
                                feature_content=feature_content, **kw)
+    if discovery is not None and isinstance(result, dict) and base_url:
+        # provenance: this URL was discovered, not user-supplied
+        result["discovered_base_url"] = base_url
     if expansion and isinstance(result, dict):
         result["prompt_expansion"] = expansion
         if result.get("author") or result.get("blocking") is not None:

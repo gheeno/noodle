@@ -217,6 +217,11 @@ VALID_TYPES = frozenset({
     'rest_set_header', 'rest_call', 'rest_assert_status', 'rest_assert_body',
     'rest_assert_body_table', 'rest_assert_header', 'rest_assert_header_table',
     'rest_extract_json',
+    # NOOD_0201 — batch calls (table / repeated N times), docstring bodies,
+    # typed JSON assertions, polling, response-shape contract
+    'rest_call_each', 'rest_call_repeat', 'rest_call_doc',
+    'rest_assert_json', 'rest_assert_json_count',
+    'rest_wait_until', 'rest_assert_schema',
     # NOOD_0007 — REST auth sugar + OAuth2 client-credentials
     'rest_set_auth', 'rest_oauth2',
     # NOOD_0008 — JS dialogs, upload/download, multi-value select

@@ -76,7 +76,18 @@ _ACTION_KEYS = {"search": {"do", "id", "term"},
                 # authoring path was web-only, so every API test — the whole
                 # api wok — dropped to hand-written Gherkin, which is never
                 # intent-verified and never measured for size.
-                "api": {"do", "id", "method", "url", "body"}}
+                # NOOD_0201 — batch shapes: `rows` (list of uniform objects →
+                # one data-table step, {key} placeholders in url/body) or
+                # `repeat` (int → `repeated N times`, {i} = 1-based counter).
+                # `expect_status` asserts EVERY call in the batch — a trailing
+                # status check after N calls only ever saw the last one.
+                # `headers`/`auth`/`store` close the three reasons an API goal
+                # used to drop to hand-written feature_content: a protected
+                # endpoint, a content type, and chaining an id from one
+                # response into the next call's URL.
+                "api": {"do", "id", "method", "url", "body",
+                        "rows", "repeat", "expect_status",
+                        "headers", "auth", "store"}}
 _ACTION_REQUIRED = {"search": {"term"}, "suggest": {"term", "option"},
                     "pick": set(), "click": {"target"},
                     "add_to": {"item_from", "destination"},
@@ -86,6 +97,9 @@ _ACTION_REQUIRED = {"search": {"term"}, "suggest": {"term", "option"},
                     "press_key": {"key"}, "pick_date": {"target", "date"},
                     "go_back": set(), "api": {"url"}}
 _PICK_STRATEGIES = {"first_actionable"}
+# NOOD_0201 — a {var:NAME} the engine will write: same shape the runner
+# uppercases into its captured store.
+_VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # NOOD_0192 — what the REST client's rest_call step accepts. GET is the
 # default so `{do: api, url: ...}` is the whole minimal call.
 _HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
@@ -113,13 +127,17 @@ _TARGETED_ACTIONS = ("click", "enter", "select", "check", "uncheck",
 # without a browser ever launching.
 _CHECK_KEYS = {"see", "count", "any_of", "field", "value", "min", "name",
                "after", "item_in_destination", "expected_from", "evidence",
-               "not_see", "url_contains", "status", "response_contains"}
+               "not_see", "url_contains", "status", "response_contains",
+               "json", "equals", "contains", "items"}
 # The check KINDS — exactly one per check. Single source (NOOD_0188): this
 # tuple was hand-repeated in validate(), its error string and intent_trace(),
 # so a new kind silently fell through to the any_of branch in three places.
+# NOOD_0201 — "json": a typed assertion on the response body ({json: <dotted
+# path>} plus exactly one of equals/contains/items) — substring checks can't
+# tell "count": 20 from "count": 200.
 _CHECK_KINDS = ("see", "not_see", "count", "any_of", "field",
                 "item_in_destination", "url_contains", "status",
-                "response_contains")
+                "response_contains", "json")
 # NOOD_0163 — the landing-page anchor. NOOD_0158 made an unanchored check
 # observe the END state, which is right for the outcome but left a check on
 # text the LANDING page shows with nowhere to go: it compiled after the
@@ -275,7 +293,7 @@ def normalize(goal) -> tuple[dict, list[str]]:
                 continue
             c = dict(c)
             # NOOD_0192 — bind the api assertion to the sole api call.
-            if ("status" in c or "response_contains" in c) \
+            if ("status" in c or "response_contains" in c or "json" in c) \
                     and c.get("after") is None and api_id:
                 c["after"] = api_id
                 notes.append(f"api check anchored after {api_id!r} (the "
@@ -391,6 +409,90 @@ def validate(goal) -> list[str]:
             if "'" in str(a.get("url", "")):
                 errs.append(f"actions[{i}] (api): url must not contain a "
                             "single quote (it delimits the compiled step)")
+            # NOOD_0201 — batch validation. Cells become Gherkin table text,
+            # so they must be scalar and pipe/newline-free; the repeat ceiling
+            # mirrors the runner's batch cap.
+            rows, repeat = a.get("rows"), a.get("repeat")
+            if rows is not None and repeat is not None:
+                errs.append(f"actions[{i}] (api): rows and repeat are two "
+                            "batch shapes — use one")
+            if repeat is not None and (not isinstance(repeat, int)
+                                       or isinstance(repeat, bool)
+                                       or not 1 <= repeat <= 1000):
+                errs.append(f"actions[{i}] (api): repeat must be an integer "
+                            "1..1000 (volume belongs to the perf wok)")
+            if rows is not None:
+                if not (isinstance(rows, list) and rows
+                        and all(isinstance(r, dict) and r for r in rows)):
+                    errs.append(f"actions[{i}] (api): rows must be a "
+                                "non-empty list of objects")
+                else:
+                    keys = set(rows[0])
+                    if any(set(r) != keys for r in rows):
+                        errs.append(f"actions[{i}] (api): every row must "
+                                    "carry the same keys")
+                    cells = [x for r in rows for x in [*r, *r.values()]]
+                    if any(not isinstance(x, (str, int, float))
+                           or isinstance(x, bool)
+                           or "|" in str(x) or "\n" in str(x) for x in cells):
+                        errs.append(f"actions[{i}] (api): row keys/values "
+                                    "must be scalars free of '|' and "
+                                    "newlines (they become a Gherkin table)")
+            # NOOD_0201 — headers/auth/store. Values ride single-quoted step
+            # text, so a single quote or newline in one would break out of the
+            # compiled step; {env:}/{var:} refs are the point (a token never
+            # belongs in a goal literal) and pass through untouched.
+            def _clean_val(v) -> bool:
+                return isinstance(v, str) and "'" not in v and "\n" not in v
+
+            hdrs = a.get("headers")
+            if hdrs is not None:
+                if not isinstance(hdrs, dict) or not hdrs:
+                    errs.append(f"actions[{i}] (api): headers must be a "
+                                "non-empty object of name → value")
+                elif not all(_clean_val(k) and _clean_val(v)
+                             for k, v in hdrs.items()):
+                    errs.append(f"actions[{i}] (api): header names/values must "
+                                "be strings free of single quotes and newlines "
+                                "(use {env:KEY} for secrets)")
+            auth = a.get("auth")
+            if auth is not None:
+                scheme = auth.get("scheme") if isinstance(auth, dict) else None
+                if scheme not in ("bearer", "basic"):
+                    errs.append(f"actions[{i}] (api): auth must be "
+                                "{scheme: 'bearer', token: '{env:KEY}'} or "
+                                "{scheme: 'basic', user: ..., password: ...}")
+                elif set(auth) - {"scheme", "token", "user", "password"}:
+                    errs.append(f"actions[{i}] (api): auth has unknown "
+                                f"field(s) {sorted(set(auth) - {'scheme', 'token', 'user', 'password'})}")
+                elif scheme == "bearer" and not _clean_val(auth.get("token")):
+                    errs.append(f"actions[{i}] (api): bearer auth needs a "
+                                "token string (use {env:KEY} — never a "
+                                "literal secret in a goal)")
+                elif scheme == "basic" and not (_clean_val(auth.get("user"))
+                                                and _clean_val(auth.get("password"))):
+                    errs.append(f"actions[{i}] (api): basic auth needs user "
+                                "and password strings (use {env:KEY})")
+            store = a.get("store")
+            if store is not None:
+                if not isinstance(store, dict) or not store:
+                    errs.append(f"actions[{i}] (api): store must be a "
+                                "non-empty object of VAR → json path")
+                elif not all(_VAR_NAME.match(str(k)) and _clean_val(v)
+                             for k, v in store.items()):
+                    errs.append(f"actions[{i}] (api): store keys must be "
+                                "variable names ([A-Za-z_][A-Za-z0-9_]*) and "
+                                "values json paths free of quotes")
+            es = a.get("expect_status")
+            if es is not None:
+                if rows is None and repeat is None:
+                    errs.append(f"actions[{i}] (api): expect_status only "
+                                "rides a batch (rows/repeat) — a single call "
+                                "asserts with a status check")
+                elif not isinstance(es, int) or isinstance(es, bool) \
+                        or not 100 <= es <= 599:
+                    errs.append(f"actions[{i}] (api): expect_status must be "
+                                "an HTTP status code (an integer, 100-599)")
         aid = a.get("id")
         if aid is not None:
             if aid in ids:
@@ -472,13 +574,31 @@ def validate(goal) -> list[str]:
             errs.append(f"checks[{i}]: expected_from only applies to "
                         "item_in_destination checks — a count/see check "
                         "cannot claim item identity")
-        if kind in ("status", "response_contains") and \
+        if kind in ("status", "response_contains", "json") and \
                 not any(isinstance(a, dict) and a.get("do") == "api"
                         for a in actions):
             # NOOD_0192 — an api assertion with no api action asserts against
             # whatever response happened to be last, which is nothing.
             errs.append(f"checks[{i}]: {kind} needs an api action in the "
                         "goal — there is no response to assert against")
+        if kind == "json":
+            # NOOD_0201 — exactly one comparator per json check.
+            ops = [k for k in ("equals", "contains", "items") if k in c]
+            if len(ops) != 1:
+                errs.append(f"checks[{i}]: json checks need exactly one of "
+                            "equals | contains | items")
+            elif ops[0] == "items":
+                n = c["items"]
+                if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+                    errs.append(f"checks[{i}]: items must be a non-negative "
+                                "integer (the expected element count)")
+            elif not isinstance(c[ops[0]], str):
+                errs.append(f"checks[{i}]: {ops[0]} must be a string (the "
+                            "runner compares numbers/booleans/null by JSON "
+                            "meaning)")
+        elif any(k in c for k in ("equals", "contains", "items")):
+            errs.append(f"checks[{i}]: equals/contains/items only apply to "
+                        "json checks")
         if kind == "any_of":
             alts = c["any_of"]
             if not isinstance(alts, list) or not alts or \
@@ -550,7 +670,7 @@ def needs_browser(goal: dict) -> bool:
     return (not actions
             or bool(goal.get("navigation"))
             or any(a.get("do") != "api" for a in actions)
-            or any(not ({"status", "response_contains"} & set(c))
+            or any(not ({"status", "response_contains", "json"} & set(c))
                    for c in checks))
 
 
@@ -1362,9 +1482,9 @@ def evidence(goal: dict, probe_result: dict) -> dict:
     beyond_reach = _beyond_probe_reach(actions)
     captions = {k: v["caption"] for k, v in bound.items()}
     for i, c in enumerate(goal.get("checks") or []):
-        if "status" in c or "response_contains" in c:
+        if "status" in c or "response_contains" in c or "json" in c:
             # NOOD_0192 — same reason as the api action: runtime-proven by
-            # the REST client, never by the page probe.
+            # the REST client, never by the page probe (json: NOOD_0201).
             runtime.append(_check_step(c)[0])
             continue
         if "item_in_destination" in c:
@@ -1664,12 +1784,18 @@ def infer_postcondition(goal: dict, ev: dict) -> dict:
         return out
 
     if do == "api":
+        # NOOD_0201 — a batch with expect_status asserts EVERY call already;
+        # nothing to generate, nothing to block.
+        if (last.get("rows") or last.get("repeat")) and last.get("expect_status"):
+            return out
         # NOOD_0192 — an unasserted API call proves nothing: a 500 with a
         # body is still "a call that happened". The postcondition is the
         # author's to state, and it is one word.
         out["blocking"].append(
             "the api call has no assertion — add a check saying what the "
-            "response must be (status: 200, or response_contains: '<text>')")
+            "response must be (status: 200, response_contains: '<text>', or "
+            "a typed json: '<path>' check); a rows/repeat batch asserts "
+            "per-call with expect_status")
         return out
 
     if do in ("check", "uncheck", "upload", "hover", "press_key", "go_back"):
@@ -1852,9 +1978,10 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
         elif kind == "item_in_destination":
             cap = bound.get(c.get("expected_from", ""), {}).get("caption", "")
             ok = bool(cap) and any(cap in s for s in runtime)
-        elif kind in ("status", "response_contains"):
+        elif kind in ("status", "response_contains", "json"):
             # NOOD_0192 — proven by the REST client at run time; it must
-            # appear verbatim in the runtime-asserted list.
+            # appear verbatim in the runtime-asserted list (json: NOOD_0201,
+            # keyed on its path).
             ok = any(str(c[kind]) in s for s in runtime)
         else:
             ok = f"any_of[{i}]" in proven or bool(runtime)
@@ -1866,7 +1993,8 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
         entry = {"requirement": f"check {kind}", "node": f"checks[{i}]",
                  "terms": terms,
                  "evidence": (("runtime:rest-client"
-                               if kind in ("status", "response_contains")
+                               if kind in ("status", "response_contains",
+                                           "json")
                                else "probe+runtime") if ok else "missing"),
                  "ok": bool(ok)}
         if c.get("evidence") == "screenshot":
@@ -1934,6 +2062,18 @@ def _check_step(c: dict, captions: dict | None = None) -> tuple[str, str | None]
     elif "response_contains" in c:
         body, pom = (f"the response body should contain "
                      f"'{c['response_contains']}'", None)
+    elif "json" in c:
+        # NOOD_0201 — typed JSON assertion (rest_assert_json[_count]).
+        if "items" in c:
+            body = (f"the response json '{c['json']}' should have "
+                    f"{c['items']} items")
+        elif "contains" in c:
+            body = (f"the response json '{c['json']}' should contain "
+                    f"'{c['contains']}'")
+        else:
+            body = (f"the response json '{c['json']}' should equal "
+                    f"'{c['equals']}'")
+        pom = None
     elif "url_contains" in c:
         # NOOD_0188 — "the flow landed where it should". Navigation was
         # driveable from a goal but never assertable from one.
@@ -2010,9 +2150,19 @@ def _action_step(a: dict, target: str) -> str:
     if do == "api":
         # NOOD_0192 — rest_call. The url may be absolute or a path relative to
         # {var:REST_BASE_URL}; both are the same step.
-        return (f"performs a {str(a.get('method', 'GET')).upper()} call at "
+        step = (f"performs a {str(a.get('method', 'GET')).upper()} call at "
                 f"'{a['url']}'"
                 + (f" with body '{a['body']}'" if a.get("body") else ""))
+        # NOOD_0201 — batch shapes compile to ONE step (rest_call_each /
+        # rest_call_repeat), never N pasted lines; `expecting status` makes
+        # the runner check every call in the batch.
+        expect = (f" expecting status {a['expect_status']}"
+                  if a.get("expect_status") else "")
+        if a.get("rows"):
+            return step + " for each row" + expect + ":"
+        if a.get("repeat"):
+            return step + f" repeated {a['repeat']} times" + expect
+        return step
     raise ValueError(
         f"_action_step has no branch for do={do!r} — add one (a silent "
         "fallthrough would compile a wrong-but-matching step)")
@@ -2029,6 +2179,40 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
     Given per requested URL; without a navigation contract the single
     base-URL Given is unchanged."""
     steps: list[tuple[str, str]] = []
+    # NOOD_0201 — Gherkin data tables for api `rows` actions, keyed by the
+    # index of the step they ride under. A separate channel on purpose: step
+    # bodies stay one line each (the NOOD_0177 injection gate below), and
+    # every cell was validated scalar and pipe/newline-free.
+    tables: dict[int, list[str]] = {}
+
+    def _table_lines(a: dict) -> list[str]:
+        keys = list(a["rows"][0])
+        return ["| " + " | ".join(str(x) for x in keys) + " |",
+                *("| " + " | ".join(str(r[k]) for k in keys) + " |"
+                  for r in a["rows"])]
+
+    def _append_api(a: dict):
+        # NOOD_0201 — session setup rides its own steps ahead of the call
+        # (rest_set_header / rest_set_auth are session-scoped in the runner),
+        # and `store` extractions follow it. One goal action, up to N steps —
+        # which is exactly why these were unreachable from a goal before.
+        for name, value in (a.get("headers") or {}).items():
+            steps.append(("Given", f"sets a request header '{name}' to "
+                                   f"'{value}'"))
+        auth = a.get("auth") or {}
+        if auth.get("scheme") == "bearer":
+            steps.append(("Given", "sets the bearer token to "
+                                   f"'{auth['token']}'"))
+        elif auth.get("scheme") == "basic":
+            steps.append(("Given", f"uses basic auth with '{auth['user']}' "
+                                   f"and '{auth['password']}'"))
+        steps.append(("When", _action_step(a, "")))
+        if a.get("rows"):
+            tables[len(steps) - 1] = _table_lines(a)
+        for var, path in (a.get("store") or {}).items():
+            steps.append(("When", f"extracts '{path}' from the response "
+                                  f"storing in {{var:{var}}}"))
+
     dismissals = goal.get("dismissals") or []
     pom_entries: dict[str, list[str]] = {}
     checks = goal.get("checks") or []
@@ -2085,9 +2269,19 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
             if aid is not None and c.get("after") == aid:
                 _emit_check(c)
 
+    # NOOD_0201 — a relative api url joins {var:REST_BASE_URL} at run time;
+    # without this Given the join is "" + path and the call never leaves the
+    # machine. The env key is the same one the app's environments.yaml stores
+    # the (possibly discovered) base URL under.
+    if any(a.get("do") == "api"
+           and not str(a.get("url", "")).startswith("http")
+           for a in actions):
+        steps.append(("Given", "sets {var:REST_BASE_URL} to "
+                               f"'{{env:{base_url_key}}}'"))
+
     # NOOD_0192 — the REST preamble, ahead of any navigation.
     for a in actions[:pre]:
-        steps.append(("When", _action_step(a, "")))
+        _append_api(a)
         _anchored(a.get("id"))
 
     if web:
@@ -2110,7 +2304,7 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
 
     for a in actions[pre:]:
         if a["do"] == "api":
-            steps.append(("When", _action_step(a, "")))
+            _append_api(a)
             _anchored(a.get("id"))
             continue
         if a["do"] == "add_to":
@@ -2237,18 +2431,20 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
     lines = [tag, f"Feature: {goal['scenario']}", "",
              f"  Scenario: {goal['scenario']}"]
     prev = None
-    for kw, body in steps:
+    for idx, (kw, body) in enumerate(steps):
         # NOOD_0177 — second gate on the same channel probe._clean_name closes.
         # A step body is ONE Gherkin line; a body carrying \n or \r would append
         # extra lines to the compiled .feature when the join below runs, and the
         # pattern table would happily resolve an injected `runs the command …`
         # line into subprocess.run(shell=True). Fail loudly rather than emit a
-        # feature nobody authored.
+        # feature nobody authored. (api `rows` tables ride the separate
+        # `tables` channel below, cells already validated pipe/newline-free.)
         if "\n" in body or "\r" in body:
             raise ValueError(
                 "refusing to compile a step body containing a line break — "
                 f"page-derived text leaked a newline into: {body!r}")
         lines.append(f"    {kw if kw != prev else 'And'} {body}")
+        lines.extend(f"      {tl}" for tl in tables.get(idx, ()))
         prev = kw
     feature = "\n".join(lines) + "\n"
 

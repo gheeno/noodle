@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Noodle Engine API",
-    "version": "1.0.0a10",
+    "version": "unknown (not installed)",
     "description": "Drive the Noodle test engine from another system: every MCP tool as a plain JSON endpoint (NOOD_0193), for callers that can't speak MCP.\n\nThis is the ENGINE API \u2014 the caller side. It is not the 'api wok', which is Noodle testing someone else's REST service with @api feature files; nothing here is a test target.\n\nCalls are SYNCHRONOUS: a run returns when it finishes, so set client read timeouts in minutes, not seconds. One call runs at a time per server. Green means `failed == 0` AND `verified == true`."
   },
   "servers": [
@@ -1908,6 +1908,170 @@
                   }
                 },
                 "title": "scan_repoArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/probe_api": {
+      "post": {
+        "summary": "NOOD_0201 \u2014 live API discovery, the api wok's probe_page.",
+        "description": "NOOD_0201 \u2014 live API discovery, the api wok's probe_page.\n\nWith base_url: interrogate ONE server \u2014 liveness, its OpenAPI document\nfrom the well-known routes (/openapi.json, /v3/api-docs, ...), the REAL\nendpoint list (the fix for authoring POST /greeting when the app serves\n/greeting/new), request-body hints from the schema, and copy-ready steps.\n\nWithout base_url: sweep the well-known localhost ports (plus any the\nworkspace repo's own config names \u2014 server.port, compose mappings, PORT=)\nand report every live HTTP server with an api-shaped verdict. Exactly one\napi candidate is an answer author_test adopts automatically; anything\nelse comes back in `questions`. Loopback only; nothing is guessed.\n\nCall it when an API test request arrives with little or no context: the\nendpoints and base URL it returns ARE the missing context.",
+        "operationId": "probe_api",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "base_url": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Base Url"
+                  },
+                  "ports": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "integer"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Ports"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "title": "probe_apiArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/plan_from_ticket": {
+      "post": {
+        "summary": "NOOD_0201 \u2014 a JIRA issue payload \u2192 one authorable goal per criterion.",
+        "description": "NOOD_0201 \u2014 a JIRA issue payload \u2192 one authorable goal per criterion.\n\nFor the AI-SDLC handoff where the only context is the ticket. `payload` is\nthe issue JSON (as text). Deterministic, no LLM: Atlassian Document Format\nis walked, spec-link boilerplate stripped, ACs split into Given/When/Then,\nand each criterion's endpoint resolved against the routes the app REALLY\nserves \u2014 discovered from a running localhost app when `base_url` is\nomitted. A ticket that says POST /greeting authors against the served\nPOST /greeting/new, with the correction recorded as an assumption.\n\nCriteria the API cannot show (repo scaffolding, a stored DB row, coding\nstandards) come back in `not_automatable` WITH the reason \u2014 never as a\ntest that pretends to cover them. Replace every <value> placeholder and\nsettle `questions` before authoring; then author_test(goal=...) each goal.",
+        "operationId": "plan_from_ticket",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "payload": {
+                    "title": "Payload",
+                    "type": "string"
+                  },
+                  "base_url": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Base Url"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "required": [
+                  "payload"
+                ],
+                "title": "plan_from_ticketArguments",
                 "type": "object"
               }
             }

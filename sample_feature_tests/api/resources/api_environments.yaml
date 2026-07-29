@@ -1,0 +1,11 @@
+# Base URLs for the api package only. Safe to commit — no secrets here.
+# See ../../../docs/feature-packages.md for the resolution order.
+#
+# NOOD_0201 — the api wok's LOCAL target. The public sample API below is fine
+# for read-only demos but rate-limits and cannot show a 201-create, a
+# 400-rejection, a paginated list or a bearer-protected delete; BusterBlock can
+# (start it with `npm start` in test-apps/busterblock).
+busterblock_api: http://localhost:3333
+
+# Public sample API used by the rest_*.feature samples (no key required).
+restfulapi: https://api.restful-api.dev

@@ -461,6 +461,69 @@ Conventions actually enforced/expected by this codebase:
   uppercase automatically — `myapp:` → `{env:MYAPP}`, no separate declaration
   needed.
 
+### Repetition: one step, N executions — never N pasted steps (NOOD_0201)
+
+A feature file with 20 near-identical lines was written by a loop, not a test
+developer, and it asserts almost nothing (a trailing status check only sees
+the last call). The decision rule:
+
+- **Same call, generated data** → `repeated N times` (`{i}` = call number):
+  `performs a POST call at '/g' with body '{"n":"Row {i}"}' repeated 20 times
+  expecting status 201`
+- **Same call, heterogeneous data** → the `for each row` data table (headings
+  name the `{placeholder}` tokens; `expecting status` asserts every row).
+- **Different assertions per row** → `Scenario Outline` + `Examples:` — each
+  row is its own scenario in the report.
+- **Data that must be computed** (hashes, dated payloads, bulk JSON) → a
+  custom function, next rule.
+
+### Custom scripts: when the vocabulary can't say it (workspace-guide §4)
+
+If a step needs logic no vocabulary entry expresses — computed payloads,
+crypto/signatures, a DB seed, business math — do NOT contort steps around it.
+Drop a Python file in the app package's `resources/functions/` and call it
+in-process, real return value into `{var:}`:
+
+```gherkin
+When calls the function 'resources/functions/payloads.py:make_greetings' storing result in {var:BATCH}
+```
+
+`runs the script '...'` / `runs the command '...'` are the out-of-process
+variants (any language). Write the helper when authoring the test — it lives
+in the workspace, never in the engine. Never name a custom steps file with a
+`z_` prefix (load-order contract).
+
+### Handed a ticket payload instead of steps (NOOD_0201)
+
+A JIRA issue JSON (or any payload with `fields.summary`) is not an ambiguous
+prompt — it's a test plan in a format the engine reads:
+`noodle ticket <file.json>` / `plan_from_ticket`. Do NOT hand-summarize the
+ADF trees or guess at the routes it names; the tool strips the spec-link
+boilerplate, splits the criteria, discovers the base URL, and corrects each
+criterion's endpoint against what the app really serves. Then: fill every
+`<value>` placeholder, relay `questions`, drop the `not_automatable` criteria
+(they are honest refusals, not gaps to paper over), and author the goals.
+
+### API test with little or no context (NOOD_0201)
+
+When an API request arrives without a base URL or endpoint paths, discover
+them — don't ask first, don't guess ever:
+
+1. `scan_repo` (or `noodle scan`) on the workspace **and, when the workspace
+   sits inside the app's repo, the parent folder** — OpenAPI files on disk,
+   serve commands, port hints.
+2. `probe_api` / `noodle api-scan` with no URL — sweeps localhost for the
+   dev-loop app. Exactly one api-shaped server → `author_test` adopts it
+   automatically (payload carries `discovered_base_url`).
+3. `probe_api(base_url=...)` — the live OpenAPI document: the REAL endpoint
+   list (`/greeting` vs `/greeting/new` is settled here, before authoring),
+   request-body hints, copy-ready steps.
+4. Author with relative paths (`POST /api/greeting`) — the compiler emits the
+   `REST_BASE_URL` Given bound to the stored `{env:}` key.
+
+Still ambiguous after all three (several live servers, no spec)? THEN relay
+the tool's `questions` to the developer.
+
 ### Parameter syntax (NOOD_0033 — unified, current)
 
 | Form | Source | Example |

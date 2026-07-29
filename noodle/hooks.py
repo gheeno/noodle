@@ -997,8 +997,8 @@ def after_step(context, step):
     log.clear_warnings()
     # NOOD_0156 — this step's healing events (snapshot taken by
     # runner.execute_step): recorded on the step result whether it passed or
-    # failed, so the run payload surfaces every substitution — the Canadian
-    # Tire false pass hid two of them behind a green exit code.
+    # failed, so the run payload surfaces every substitution — a reviewed
+    # session's false pass hid two of them behind a green exit code.
     from noodle.orchestrator.runner import ctx_get as _ctx_get
     _heal0 = _ctx_get(context, "_healing_at_step_start", None)
     step_healing = healing.events_since(_heal0) if isinstance(_heal0, int) else []

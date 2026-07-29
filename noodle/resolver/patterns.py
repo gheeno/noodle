@@ -1423,9 +1423,46 @@ PATTERNS = [
      r"(?: (?:and )?stor(?:e|es|ing) (?:the )?(?:response )?(?:as|in) [\[`]([^\]`]+)[\]`])?"
      + _WITHIN + r"$",
                                                    'rest_call',              lambda m: {'method': m.group(1).upper(), 'path': m.group(2), 'body': m.group(3), 'var': m.group(4), 'timeout': _secs(m.group(5))}),
+    # NOOD_0201 — batch calls: one step, N requests. Seeding 20 rows is one
+    # table step (or one `repeated N times` line), never 20 pasted calls —
+    # and `expecting status` asserts EVERY call, where a trailing status
+    # assertion only ever saw the last one. Table headings name the {placeholder}
+    # tokens substituted into the path and body per row.
+    (r"^performs? (?:a |an )?(GET|POST|PUT|PATCH|DELETE) (?:call|request)s? "
+     r"(?:at|to|on) '([^']+)'"
+     r"(?: with (?:request )?body '([^']+)')?"
+     r" for each row(?: expecting status (\d+))?"
+     + _WITHIN + r":?$",
+                                                   'rest_call_each',         lambda m: {'method': m.group(1).upper(), 'path': m.group(2), 'body': m.group(3), 'expect': int(m.group(4)) if m.group(4) else None, 'timeout': _secs(m.group(5))}),
+    (r"^performs? (?:a |an )?(GET|POST|PUT|PATCH|DELETE) (?:call|request)s? "
+     r"(?:at|to|on) '([^']+)'"
+     r"(?: with (?:request )?body '([^']+)')?"
+     r" repeated (\d+) times(?: expecting status (\d+))?"
+     + _WITHIN + r"$",
+                                                   'rest_call_repeat',       lambda m: {'method': m.group(1).upper(), 'path': m.group(2), 'body': m.group(3), 'count': int(m.group(4)), 'expect': int(m.group(5)) if m.group(5) else None, 'timeout': _secs(m.group(6))}),
+    # NOOD_0201 — a payload that doesn't fit on one line reads as a docstring.
+    (r"^performs? (?:a |an )?(GET|POST|PUT|PATCH|DELETE) (?:call|request) "
+     r"(?:at|to|on) '([^']+)' with this (?:request )?body"
+     + _WITHIN + r":?$",
+                                                   'rest_call_doc',          lambda m: {'method': m.group(1).upper(), 'path': m.group(2), 'timeout': _secs(m.group(3))}),
+    # NOOD_0201 — polling. An async backend answers 202 and finishes the write
+    # later, so the very next assertion raced it and the suite went flaky. This
+    # is the REST twin of the web wok's smart wait: retry the call until the
+    # condition holds or the budget expires (the budget is a ceiling, not a
+    # sleep — it returns the instant the condition is met).
+    (r"^waits? until (?:a |an )?(?:(GET|POST|PUT|PATCH|DELETE) )?"
+     r"(?:(?:call|request)s? )?(?:(?:at|to|on) )?'([^']+)' returns? status (\d+)"
+     r"(?: and (?:the )?(?:response )?body contains '([^']+)')?"
+     + _WITHIN + r"$",
+                                                   'rest_wait_until',        lambda m: {'method': (m.group(1) or 'GET').upper(), 'path': m.group(2), 'expected': int(m.group(3)), 'needle': m.group(4), 'timeout': _secs(m.group(5))}),
     # Status code assertion.
     (r'^the response status(?: code)? should (?:be|equal) (\d+)$',
                                                    'rest_assert_status',     lambda m: {'expected': int(m.group(1))}),
+    # NOOD_0201 — contract assertion: the response SHAPE, not one value. A
+    # field that silently changed type or vanished passes every substring
+    # check ever written; a schema file catches it in one step.
+    (r"^the response (?:body )?should match (?:the )?schema '([^']+)'$",
+                                                   'rest_assert_schema',     lambda m: {'file': m.group(1)}),
     # Extract a JSON key from the latest response body into a named variable.
     (r"^extracts? (?:json )?(?:key )?'([^']+)' from (?:the )?(?:response|REST_BODY)(?: body)? "
      r"(?:and )?stor(?:e|es|ing) (?:it )?(?:as|in) [\[`]([^\]`]+)[\]`]$",
@@ -1433,6 +1470,15 @@ PATTERNS = [
     # Body contains a single string (key or value).
     (r"^the response body should contain '([^']+)'$",
                                                    'rest_assert_body',       lambda m: {'needle': m.group(1)}),
+    # NOOD_0201 — typed JSON assertions: substring checks can't tell
+    # "count": 20 from "count": 200, or the string "true" from the boolean.
+    # Path is the rest_extract_json dotted/indexed walk; '$' means the root.
+    (r"^the response json '([^']*)' should (?:be|equal) '([^']*)'$",
+                                                   'rest_assert_json',       lambda m: {'path': m.group(1), 'op': 'equal', 'expected': m.group(2)}),
+    (r"^the response json '([^']*)' should contain '([^']+)'$",
+                                                   'rest_assert_json',       lambda m: {'path': m.group(1), 'op': 'contain', 'expected': m.group(2)}),
+    (r"^the response json '([^']*)' should have (\d+) items?$",
+                                                   'rest_assert_json_count', lambda m: {'path': m.group(1), 'count': int(m.group(2))}),
     # Body contains — table driven (Key / Value rows; empty Value = key-exists check).
     (r'^the response body should contain:?$',
                                                    'rest_assert_body_table', lambda m: {}),

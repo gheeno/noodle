@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shlex
+import time
 
 from noodle import app_lifecycle, mfa
 from noodle.agents.web import actions
@@ -534,6 +535,182 @@ def _oauth2_fetch(context, url: str, client_id: str, client_secret: str):
     context._vars['_REST_HEADERS'] = json.dumps(hdrs)
     context._vars['_REST_OAUTH'] = json.dumps(
         {'url': url, 'client_id': client_id, 'client_secret': client_secret})
+
+
+def _rest_one(context, method: str, path: str, body, timeout):
+    """One HTTP call with the session's headers, REST_BASE_URL join and the
+    single oauth2 401-refresh; records REST_STATUS/BODY/HEADERS. Shared by
+    rest_call and the NOOD_0201 batch steps so every call in a batch gets the
+    same auth semantics as a lone one. Returns (status, url, body)."""
+    from noodle.agents.web import rest_client
+    base = context._vars.get('REST_BASE_URL', '')
+    url = path if path.startswith('http') else base.rstrip('/') + '/' + path.lstrip('/')
+    hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
+    status, rbody, headers = rest_client.rest_call(method, url, body, hdrs, timeout)
+    if status == 401 and '_REST_OAUTH' in context._vars:
+        # Token likely expired — refresh once and retry once, never loop.
+        o = json.loads(context._vars['_REST_OAUTH'])
+        _oauth2_fetch(context, o['url'], o['client_id'], o['client_secret'])
+        hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
+        status, rbody, headers = rest_client.rest_call(method, url, body, hdrs, timeout)
+    context._vars['REST_STATUS'] = str(status)
+    context._vars['REST_BODY'] = rbody
+    context._vars['REST_HEADERS'] = json.dumps(dict(headers))
+    return status, url, rbody
+
+
+# NOOD_0201 — a batch step is still a functional test, not a load test; the
+# perf wok's loadgen owns volume. The cap catches a generated "repeated
+# 100000 times" before it hammers someone's laptop app.
+_REST_BATCH_CAP = 1000
+
+
+def _rest_batch(context, action, rows: list[dict]):
+    """N calls from one step (NOOD_0201): each row's {placeholder} tokens are
+    substituted into the path/body, and `expecting status` asserts EVERY call —
+    a trailing status assertion after N pasted calls only ever saw the last."""
+    total = len(rows)
+    assert total <= _REST_BATCH_CAP, (
+        f"{total} calls in one step exceeds the batch cap ({_REST_BATCH_CAP}). "
+        "Volume belongs to the perf wok: \"runs a load test on '<url>' with "
+        "N requests\".")
+    for n, subs in enumerate(rows, 1):
+        path, body = action['path'], action.get('body')
+        for k, v in subs.items():
+            path = path.replace('{%s}' % k, v)
+            if body:
+                body = body.replace('{%s}' % k, v)
+        status, url, rbody = _rest_one(
+            context, action['method'], path, body, action.get('timeout'))
+        if action.get('expect') is not None and status != action['expect']:
+            detail = ', '.join(f'{k}={v}' for k, v in subs.items())
+            raise AssertionError(
+                f"Call {n} of {total} ({detail}): {action['method']} {url} → "
+                f"expected status {action['expect']}, got {status}. "
+                f"Body: {rbody[:200]}")
+    logger.info(f"\n  🌐 {action['method']} ×{total} → "
+                + (f"all {action['expect']}" if action.get('expect') is not None
+                   else "done"))
+
+
+def _json_typed_eq(actual, expected: str) -> bool:
+    """NOOD_0201 — compare a parsed-JSON value against the step's quoted
+    string the way the JSON meant it: booleans and null by name, numbers by
+    value (so '20' ≠ 200 and '1.0' == 1), everything else as text."""
+    if isinstance(actual, bool):
+        return expected.strip().lower() == str(actual).lower()
+    if actual is None:
+        return expected.strip().lower() in ('null', 'none')
+    if isinstance(actual, (int, float)):
+        try:
+            return float(expected) == actual
+        except ValueError:
+            return False
+    return str(actual) == expected
+
+
+def _rest_poll(context, action):
+    """NOOD_0201 — call until the condition holds or the budget runs out.
+
+    The REST twin of the web wok's smart wait: an endpoint that answers 202 and
+    finishes the write asynchronously made the next assertion a race. Returns
+    on the first satisfying response (the budget is a ceiling, not a sleep),
+    and the last response stays in REST_STATUS/REST_BODY either way."""
+    from noodle.config import rest_timeout
+    budget = rest_timeout(action.get('timeout'))
+    deadline = time.monotonic() + budget
+    attempts, status, body = 0, None, ''
+    while True:
+        attempts += 1
+        # Each attempt gets what's left of the window, so one hung call can't
+        # outlive the budget the step was given.
+        left = max(0.5, deadline - time.monotonic())
+        status, url, body = _rest_one(context, action['method'], action['path'],
+                                     None, left)
+        ok = status == action['expected'] and \
+            (not action.get('needle') or action['needle'] in body)
+        if ok:
+            logger.info(f"\n  ⏳ {action['method']} {url} → {status} after "
+                        f"{attempts} attempt(s)")
+            return
+        if time.monotonic() >= deadline:
+            want = f"status {action['expected']}"
+            if action.get('needle'):
+                want += f" and body containing '{action['needle']}'"
+            raise AssertionError(
+                f"{action['method']} {url} never returned {want} within "
+                f"{budget:g}s ({attempts} attempts). Last: {status} "
+                f"{body[:200]}\n"
+                f"  → Endpoint slower than the budget? Append \"within "
+                f"{int(budget * 2)} seconds\" to this step, or raise "
+                f"NOODLE_REST_TIMEOUT.")
+        time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
+
+# NOOD_0201 — the JSON Schema subset an API response contract actually uses.
+# ponytail: type/required/properties/items/enum/bounds, hand-walked in ~40
+# lines instead of declaring the `jsonschema` package for the base install
+# (it is only ever present transitively today). Ceiling: no $ref, no
+# oneOf/allOf/not, no format. If a workspace needs those, declare jsonschema
+# and swap _schema_errors for its validator — the step contract stays.
+_JSON_TYPES = {'string': str, 'number': (int, float), 'integer': int,
+               'boolean': bool, 'object': dict, 'array': list,
+               'null': type(None)}
+
+
+def _type_ok(value, name: str) -> bool:
+    py = _JSON_TYPES.get(name)
+    if py is None:
+        return True                      # unknown keyword: not ours to police
+    if name in ('number', 'integer') and isinstance(value, bool):
+        return False                     # JSON booleans are not numbers
+    return isinstance(value, py)
+
+
+def _schema_errors(data, schema: dict, where: str = '$') -> list[str]:
+    """Every way `data` violates `schema`, each naming its own path."""
+    errs: list[str] = []
+    if not isinstance(schema, dict):
+        return errs
+    types = schema.get('type')
+    if types is not None:
+        names = types if isinstance(types, list) else [types]
+        if not any(_type_ok(data, n) for n in names):
+            got = 'null' if data is None else type(data).__name__
+            return [f"{where}: expected type {'|'.join(names)}, got {got}"]
+    if (enum := schema.get('enum')) is not None and data not in enum:
+        errs.append(f"{where}: {data!r} is not one of {enum}")
+    if isinstance(data, dict):
+        for key in schema.get('required') or []:
+            if key not in data:
+                errs.append(f"{where}: missing required property {key!r}")
+        for key, sub in (schema.get('properties') or {}).items():
+            if key in data:
+                errs += _schema_errors(data[key], sub, f"{where}.{key}")
+    if isinstance(data, list):
+        if (lo := schema.get('minItems')) is not None and len(data) < lo:
+            errs.append(f"{where}: {len(data)} items, minimum {lo}")
+        if (hi := schema.get('maxItems')) is not None and len(data) > hi:
+            errs.append(f"{where}: {len(data)} items, maximum {hi}")
+        if isinstance(schema.get('items'), dict):
+            for i, item in enumerate(data):
+                errs += _schema_errors(item, schema['items'], f"{where}[{i}]")
+    if isinstance(data, (int, float)) and not isinstance(data, bool):
+        if (lo := schema.get('minimum')) is not None and data < lo:
+            errs.append(f"{where}: {data} is below minimum {lo}")
+        if (hi := schema.get('maximum')) is not None and data > hi:
+            errs.append(f"{where}: {data} is above maximum {hi}")
+    return errs
+
+
+def _rest_json(context, path: str):
+    """The latest response body parsed as JSON, walked to `path` ('$'/'' = root)."""
+    body = context._vars.get('REST_BODY', '')
+    try:
+        data = json.loads(body)
+    except ValueError as exc:
+        raise AssertionError(f"REST_BODY is not valid JSON: {body[:100]}") from exc
+    return data if path in ('', '$', '.') else _json_path(data, path)
 
 
 def execute_step(step_text: str, context):
@@ -1103,29 +1280,55 @@ def execute_step(step_text: str, context):
     elif t == 'rest_oauth2':
         _oauth2_fetch(context, action['url'], action['client_id'], action['client_secret'])
     elif t == 'rest_call':
-        from noodle.agents.web import rest_client
-        base = context._vars.get('REST_BASE_URL', '')
-        hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
-        path = action['path']
-        url = path if path.startswith('http') else base.rstrip('/') + '/' + path.lstrip('/')
-        status, body, headers = rest_client.rest_call(action['method'], url, action.get('body'), hdrs,
-                                                      action.get('timeout'))
-        if status == 401 and '_REST_OAUTH' in context._vars:
-            # Token likely expired — refresh once and retry once, never loop.
-            o = json.loads(context._vars['_REST_OAUTH'])
-            _oauth2_fetch(context, o['url'], o['client_id'], o['client_secret'])
-            hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
-            status, body, headers = rest_client.rest_call(action['method'], url, action.get('body'), hdrs,
-                                                          action.get('timeout'))
-        context._vars['REST_STATUS'] = str(status)
-        context._vars['REST_BODY'] = body
-        context._vars['REST_HEADERS'] = json.dumps(dict(headers))
+        status, url, body = _rest_one(context, action['method'], action['path'],
+                                      action.get('body'), action.get('timeout'))
         if action.get('var'):
             context._vars[action['var'].upper().replace(' ', '_')] = body
         logger.info(f"\n  🌐 {action['method']} {url} → {status}")
+    elif t == 'rest_call_doc':
+        # NOOD_0201 — body from the step's docstring; {env:}/{var:} resolve
+        # inside it the same as in a quoted body.
+        doc = getattr(context, 'text', None)
+        if not doc:
+            raise AssertionError(
+                f"This step needs a docstring body under it: \"{step_text}\"\n"
+                '  → Indent a """ … """ block below the step')
+        status, url, _ = _rest_one(context, action['method'], action['path'],
+                                   substitute(doc, context._vars), action.get('timeout'))
+        logger.info(f"\n  🌐 {action['method']} {url} → {status}")
+    elif t == 'rest_call_each':
+        if getattr(context, 'table', None) is None:
+            raise AssertionError(
+                f"This step needs a Gherkin data table under it: \"{step_text}\"\n"
+                "  → Header row names the {placeholder} tokens, one call per data row")
+        rows = [{h.strip(): substitute(c, context._vars)
+                 for h, c in zip(context.table.headings, row.cells)}
+                for row in context.table]
+        _rest_batch(context, action, rows)
+    elif t == 'rest_call_repeat':
+        _rest_batch(context, action,
+                    [{'i': str(n)} for n in range(1, action['count'] + 1)])
+    elif t == 'rest_wait_until':
+        _rest_poll(context, action)
     elif t == 'rest_assert_status':
         actual = int(context._vars.get('REST_STATUS', 0))
         assert actual == action['expected'], f"Expected status {action['expected']}, got {actual}"
+    elif t == 'rest_assert_schema':
+        full = _resources_path(context, action['file'])
+        try:
+            with open(full, encoding="utf-8") as fh:
+                schema = json.load(fh)
+        except OSError as exc:
+            raise AssertionError(
+                f"schema file not found: {action['file']} (looked in the app's "
+                f"resources/ → {full})") from exc
+        except ValueError as exc:
+            raise AssertionError(
+                f"schema file {action['file']} is not valid JSON: {exc}") from exc
+        errs = _schema_errors(_rest_json(context, ''), schema)
+        assert not errs, ("response does not match schema "
+                          f"'{action['file']}':\n    - "
+                          + "\n    - ".join(errs[:10]))
     elif t == 'rest_extract_json':
         body = context._vars.get('REST_BODY', '{}')
         try:
@@ -1147,6 +1350,25 @@ def execute_step(step_text: str, context):
     elif t == 'rest_assert_body':
         body = context._vars.get('REST_BODY', '')
         assert action['needle'] in body, f"Response body does not contain '{action['needle']}'"
+    elif t == 'rest_assert_json':
+        value = _rest_json(context, action['path'])
+        if action['op'] == 'contain':
+            assert action['expected'] in str(value), (
+                f"response json '{action['path']}' = {value!r} does not "
+                f"contain '{action['expected']}'")
+        else:
+            assert _json_typed_eq(value, action['expected']), (
+                f"response json '{action['path']}' = {value!r}, "
+                f"expected '{action['expected']}'")
+    elif t == 'rest_assert_json_count':
+        value = _rest_json(context, action['path'])
+        if not isinstance(value, (list, dict)):
+            raise AssertionError(
+                f"response json '{action['path']}' is {type(value).__name__}, "
+                f"not a list/object — nothing to count")
+        assert len(value) == action['count'], (
+            f"response json '{action['path']}' has {len(value)} items, "
+            f"expected {action['count']}")
     elif t == 'rest_assert_body_table':
         body = context._vars.get('REST_BODY', '')
         for row in context.table:

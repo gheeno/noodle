@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Customer Reviews — BusterBlock.ca</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<!-- NOOD_0201 — the UI half of a cross-wok test: this page renders whatever
+     GET /api/reviews returns, so a scenario can seed over REST and then prove
+     the customer actually sees it. Deliberately plain: the combo test is about
+     the API→UI round trip, not about widgets. -->
+<body data-page="reviews">
+
+<div class="page-wrap">
+
+  <nav class="site-nav" role="navigation" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/catalog.html" class="nav-brand" aria-label="BusterBlock home">
+        BusterBlock<span class="brand-tag">.ca</span>
+      </a>
+      <ul class="nav-links" role="list">
+        <li><a href="/catalog.html">Catalog</a></li>
+        <li><a href="/reviews.html" class="active" aria-current="page">Reviews</a></li>
+        <li><a href="/cart.html">Cart</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main class="content">
+    <h1>Customer Reviews</h1>
+    <p id="review-summary" class="muted">Loading reviews…</p>
+
+    <table id="reviews-table" class="data-table">
+      <thead>
+        <tr><th>Reviewer</th><th>Rating</th><th>Comment</th><th>Our reply</th></tr>
+      </thead>
+      <tbody id="reviews-body"></tbody>
+    </table>
+
+    <p id="reviews-empty" class="muted" hidden>No reviews yet.</p>
+
+    <section class="form-card">
+      <h2>Leave a review</h2>
+      <label for="review-name">Your name</label>
+      <input id="review-name" name="name" type="text" placeholder="Your name">
+
+      <label for="review-rating">Rating</label>
+      <select id="review-rating" name="rating">
+        <option value="">No rating</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+      </select>
+
+      <label for="review-comment">Comment</label>
+      <input id="review-comment" name="comment" type="text" placeholder="Comment">
+
+      <button id="submit-review" type="button">Submit review</button>
+      <p id="review-status" role="status"></p>
+    </section>
+  </main>
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+
+  async function loadReviews() {
+    const res = await fetch('/api/reviews?page=1&size=50');
+    const page = await res.json();
+    const body = $('reviews-body');
+    body.innerHTML = '';
+    for (const r of page.items) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.name}</td><td>${r.rating ?? '—'}</td>` +
+                     `<td>${r.comment ?? ''}</td><td>${r.response}</td>`;
+      body.appendChild(tr);
+    }
+    $('review-summary').textContent =
+      `Showing ${page.items.length} of ${page.total} reviews`;
+    $('reviews-empty').hidden = page.total !== 0;
+  }
+
+  $('submit-review').addEventListener('click', async () => {
+    const rating = $('review-rating').value;
+    const res = await fetch('/api/reviews/new', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: $('review-name').value,
+        ...(rating ? { rating: parseInt(rating) } : {}),
+        comment: $('review-comment').value || undefined
+      })
+    });
+    const data = await res.json();
+    $('review-status').textContent = res.ok
+      ? `Thanks! ${data.response}`
+      : `Could not save your review: ${data.error}`;
+    if (res.ok) {
+      $('review-name').value = '';
+      $('review-comment').value = '';
+      await loadReviews();
+    }
+  });
+
+  loadReviews();
+</script>
+</body>
+</html>

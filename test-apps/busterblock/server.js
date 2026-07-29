@@ -2,8 +2,10 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const { parse } = require('csv-parse/sync');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const openapi = require('./openapi.json');
 
 const app = express();
 const PORT = process.env.PORT || 3333;
@@ -16,6 +18,7 @@ const movies = JSON.parse(fs.readFileSync(path.join(__dirname, 'data/movies.json
 // In-memory stores — keyed by userId, parallel-safe because each user has their own key
 const carts = new Map();
 const orders = new Map();
+const reviews = new Map();   // NOOD_0201 — id → review, the api wok's local target
 
 // Startup snapshot of stock so the test-reset endpoint can restore it.
 const ORIGINAL_STOCK = new Map(movies.map(m => [m.id, m.stock]));
@@ -162,6 +165,68 @@ app.get('/api/orders', auth, (req, res) => {
   res.json(userOrders);
 });
 
+// ─── Reviews (NOOD_0201) ──────────────────────────────────────────────────────
+// A create-validate-persist-paginate resource, so the api wok has a LOCAL
+// target for the shapes public sample APIs can't exercise: 201-on-create,
+// 400-with-no-persist, a paginated newest-first list, a bearer-protected
+// delete, and a published OpenAPI document for discovery to find.
+//
+// Note the path: reviews are created at POST /api/reviews/new, not
+// POST /api/reviews. That is deliberate — a ticket almost always names the
+// resource, not the route, and a test authored from the ticket's own wording
+// must be corrected by DISCOVERY (GET /openapi.json), never by a guess.
+
+app.get('/api/reviews', (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const size = Math.min(100, Math.max(1, parseInt(req.query.size) || 10));
+  const all = [...reviews.values()].sort((a, b) => b.date.localeCompare(a.date));
+  const start = (page - 1) * size;
+  res.json({
+    page, size, total: all.length,
+    totalPages: Math.max(1, Math.ceil(all.length / size)),
+    items: all.slice(start, start + size)
+  });
+});
+
+app.get('/api/reviews/:id', (req, res) => {
+  const review = reviews.get(req.params.id);
+  review ? res.json(review) : res.status(404).json({ error: 'Review not found' });
+});
+
+app.post('/api/reviews/new', (req, res) => {
+  const { name, rating, comment } = req.body || {};
+  // Validation rejects at the boundary and persists NOTHING — the negative
+  // path a test asserts by checking the count did not move.
+  if (typeof name !== 'string' || !name.trim())
+    return res.status(400).json({ error: 'name is required' });
+  if (name.trim().length > 80)
+    return res.status(400).json({ error: 'name must be 80 characters or fewer' });
+  if (rating !== undefined && (!Number.isInteger(rating) || rating < 1 || rating > 5))
+    return res.status(400).json({ error: 'rating must be an integer 1-5' });
+
+  const review = {
+    id: crypto.randomUUID(),
+    name: name.trim(),
+    date: new Date().toISOString(),
+    rating: rating === undefined ? null : rating,
+    comment: typeof comment === 'string' ? comment : null,
+    response: `Thanks for the review, ${name.trim()}!`
+  };
+  reviews.set(review.id, review);
+  res.status(201).json(review);
+});
+
+app.delete('/api/reviews/:id', auth, (req, res) => {
+  if (!reviews.has(req.params.id)) return res.status(404).json({ error: 'Review not found' });
+  reviews.delete(req.params.id);
+  res.json({ message: 'deleted', id: req.params.id });
+});
+
+// The API's own contract, at the route springdoc/FastAPI would publish it on —
+// this is what `noodle api-scan http://localhost:3333` reads to learn the REAL
+// endpoints (and their request bodies) without being told any of them.
+app.get('/openapi.json', (req, res) => res.json(openapi));
+
 // ─── Test seam ─────────────────────────────────────────────────────────────────
 // Test-only data-manipulation endpoints — the BDD precondition/teardown surface.
 // The in-memory Maps above ARE the "database"; these let a test seed/reset it
@@ -172,6 +237,7 @@ if (process.env.BB_TEST_API !== '0') {
   app.post('/api/test/reset', (req, res) => {
     carts.clear();
     orders.clear();
+    reviews.clear();
     movies.forEach(m => { m.stock = ORIGINAL_STOCK.get(m.id) ?? m.stock; });
     res.json({ message: 'reset', movies: movies.length });
   });

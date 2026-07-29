@@ -50,6 +50,10 @@ _INLINE_NUM = re.compile(r"\s+\d+\s*[.)]\s+")
 _URLISH = re.compile(
     r"^(?:https?://[\w-]+(?:\.[\w-]+)*(?::\d+)?(?:/\S*)?"
     r"|[\w-]+(?:\.[\w-]+)+(?::\d+)?(?:/\S*)?)$", re.I)
+# NOOD_0201 — a rooted URL path (/api/greeting), valid ONLY where an api verb
+# already said "this is an HTTP call": it joins {var:REST_BASE_URL} at run
+# time. Never accepted as a navigation target.
+_PATHISH = re.compile(r"^/[\w\-./{}%?=&]*$")
 _ARTICLE = re.compile(r"^(?:a|an|the|any|some)\s+", re.I)
 _ANAPHORA = {"it", "that", "this", "them", "one", "item", "product",
              "the item", "the product", "the result"}
@@ -184,7 +188,24 @@ _VERBS = [
         r"^(?:(?:sends?|makes?|performs?|issues?|submits?|runs?|does)\s+)?"
         r"(?:a\s+|an\s+)?(?P<method>GET|POST|PUT|PATCH|DELETE)\b"
         r"(?:\s+(?:api|rest|http)?\s*(?:call|request))?"
-        r"(?:\s+(?:to|at|on|against|for))?\s+(?P<url>\S+)$", re.I)),
+        r"(?:\s+(?:to|at|on|against|for))?\s+(?P<url>\S+)"
+        # NOOD_0201 — optional batch tail: body template, repeat count,
+        # per-call status. Restricted to these three openers so a stray
+        # sentence never rides along.
+        r"(?P<tail>\s+(?:with|repeated|expecting)\s.*)?$", re.I)),
+    # NOOD_0201 — the batch shape by name: "create 20 rows using POST <url>
+    # with body '{...}'". Count + one call spec = ONE repeat step, never N
+    # pasted calls (the screenshot failure this ticket opened with).
+    ("api_batch", re.compile(
+        r"^(?:generates?|creates?|seeds?|inserts?|adds?|submits?)\s+"
+        r"(?P<count>\d+)\s+[\w\s-]*?"
+        r"(?:using|via|over|through)\s+(?:a\s+|the\s+)?"
+        r"(?:(?P<method>GET|POST|PUT|PATCH|DELETE)\s+)?"
+        # each filler word must stand alone ("rest api call to") — a bare
+        # `(?:http)?` here would eat the "http" of "https://…"
+        r"(?:(?:rest|api|http)\s+)?(?:(?:call|request)s?\s+)?"
+        r"(?:(?:to|at|on|against)\s+)?(?P<url>\S+)?"
+        r"(?P<tail>\s+(?:with|expecting)\s.*)?$", re.I)),
     ("api", re.compile(
         r"^(?:calls?|hits?|queries|requests?|fetch(?:es)?|gets?)\s+"
         r"(?:the\s+)?(?:rest\s+)?(?:api|endpoint|service|url|resource)?\s*"
@@ -291,6 +312,30 @@ _IS_IN = re.compile(
 # dismissals and run-mode notes are setup metadata, never flow context.
 _FLOW_KINDS = ("search", "click", "enter", "select", "add_to", "verify")
 _WINDOW = 2
+
+# NOOD_0201 — the optional tail of an api clause: a quoted body template
+# ({i} = 1-based call number in a batch), a repeat count, a per-call status.
+_API_BODY = re.compile(
+    r"with\s+(?:request\s+)?body\s+(?P<q>['\"])(?P<body>.+?)(?P=q)", re.I)
+_API_REPEAT = re.compile(r"(?:repeated\s+)?(\d+)\s+times", re.I)
+_API_EXPECT = re.compile(r"expect(?:ing)?\s+(?:status\s+)?(\d{3})", re.I)
+
+
+def _api_tail(node: dict, tail: str) -> bool:
+    """True when the tail is empty or contributed at least one field. A tail
+    nothing here recognized means the clause says more than the grammar reads
+    ("with headers ..."), and the caller must refuse it by name — silently
+    dropping half a sentence is how a test stops testing what was asked."""
+    if not tail.strip():
+        return True
+    hit = False
+    if m := _API_BODY.search(tail):
+        node["body"], hit = m.group("body"), True
+    if m := _API_REPEAT.search(tail):
+        node["repeat"], hit = int(m.group(1)), True
+    if m := _API_EXPECT.search(tail):
+        node["expect_status"], hit = int(m.group(1)), True
+    return hit
 
 
 def _clean(term: str) -> str:
@@ -609,12 +654,31 @@ def _parse_clause(c: dict) -> dict:
         if kind == "api":
             # NOOD_0192 — url-shaped or it isn't an API call; anything else
             # keeps walking the table (so "gets the coffee" stays a click).
+            # NOOD_0201 — a rooted path (/api/greeting) is also url-shaped
+            # HERE: it joins {var:REST_BASE_URL} at run time, which authoring
+            # fills from the caller or localhost discovery.
             url = _clean(m.group("url")).rstrip(".")
-            if not _URLISH.match(url):
+            if not (_URLISH.match(url) or _PATHISH.match(url)):
                 node["kind"] = "unknown"
                 continue
-            node["url"] = _normalize_url(url)
+            node["url"] = _normalize_url(url) if _URLISH.match(url) else url
             node["method"] = (m.groupdict().get("method") or "GET").upper()
+            if not _api_tail(node, m.groupdict().get("tail") or ""):
+                node["kind"] = "unknown"
+                continue
+        elif kind == "api_batch":
+            # NOOD_0201 — count + call spec. A missing url/body is refused BY
+            # NAME in assembly (with the one-shot phrasing), never guessed —
+            # except the method, where the verb IS the answer: create → POST.
+            node["repeat"] = int(m.group("count"))
+            url = _clean(m.group("url") or "").rstrip(".")
+            node["url"] = (_normalize_url(url) if _URLISH.match(url)
+                           else url if _PATHISH.match(url) else None) \
+                if url else None
+            node["method"] = (m.groupdict().get("method") or "POST").upper()
+            if not _api_tail(node, m.groupdict().get("tail") or ""):
+                node["kind"] = "unknown"
+                continue
         elif kind == "api_status":
             node["status"] = int(m.group("code"))
         elif kind == "nav_url":
@@ -823,9 +887,26 @@ def expand(text: str, base_url: str | None = None) -> dict:
             continue
         # NOOD_0192 — the api wok, straight through: the call is an action,
         # the status claim is its check. No probe, no page, no inference.
-        if n["kind"] == "api":
+        if n["kind"] in ("api", "api_batch"):
+            # NOOD_0201 — a batch missing its URL or (for a write verb) its
+            # body template is refused with the one-shot phrasing, so the
+            # repair costs zero docs hunts.
+            if n["kind"] == "api_batch" and not n.get("url"):
+                _refuse(n, "a batch call needs a URL — phrase it: \"create "
+                        "20 rows using POST http://<host>/<path> with body "
+                        "'{\"name\":\"Row {i}\"}' expecting status 201\"")
+                continue
+            if n["kind"] == "api_batch" and n["method"] in \
+                    ("POST", "PUT", "PATCH") and not n.get("body"):
+                _refuse(n, f"a {n['method']} batch needs a body template — "
+                        "append: with body '{\"name\":\"Row {i}\"}' "
+                        "({i} = call number)")
+                continue
             act = {"do": "api", "id": _mint("api"), "method": n["method"],
                    "url": n["url"]}
+            for k in ("body", "repeat", "expect_status"):
+                if n.get(k) is not None:
+                    act[k] = n[k]
             api_calls.append(act)
             actions.append(act)
             _cover(n, "action", [act["id"]])
@@ -1213,11 +1294,18 @@ def expand(text: str, base_url: str | None = None) -> dict:
     api_only = bool(api_calls) and not urls and not any(
         a["do"] != "api" for a in actions)
     if not first_url and not base_url and api_only:
-        base_url = api_calls[0]["url"]
+        # NOOD_0201 — only an ABSOLUTE call can name the package; a relative
+        # path (/api/greeting) has no host and needs base_url (given, or
+        # filled by author_test's localhost discovery before this runs).
+        base_url = next((a["url"] for a in api_calls
+                         if str(a["url"]).startswith("http")), None)
     if not first_url and not base_url:
         return {"ok": False,
                 "error": "no URL in the prompt and no base_url given — "
-                         "add a 'go to <url>' step or pass base_url",
+                         "add a 'go to <url>' step or pass base_url "
+                         "(api steps may use relative paths once base_url "
+                         "is known; a running localhost app is discovered "
+                         "automatically)",
                 "unrecognized": [], "unresolved": [], "conflicts": [],
                 "assumptions": assumptions, "clauses": clauses,
                 "coverage": coverage, "goal": None}
@@ -1294,6 +1382,10 @@ def expand(text: str, base_url: str | None = None) -> dict:
     host = urlsplit(first_url or base_url).netloc
     app = re.sub(r"[^a-z0-9]+", "_",
                  host.casefold().removeprefix("www.")).strip("_") or "app"
+    if app[0].isdigit():
+        # NOOD_0201 — an IP host (127.0.0.1:8080) slugs to a leading digit,
+        # which is not a legal {env:} key.
+        app = "app_" + app
     slug = re.sub(r"[^a-z0-9]+", "_", scenario.casefold()).strip("_")[:40] \
         or "prompt_flow"
     return {"ok": True, "goal": goal, "base_url": first_url or base_url,

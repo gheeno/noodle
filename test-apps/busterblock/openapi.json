@@ -1,0 +1,157 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "BusterBlock API",
+    "version": "1.0.0",
+    "description": "The VHS rental test app's HTTP surface. Published at /openapi.json so `noodle api-scan http://localhost:3333` learns the real endpoints — including that a review is created at POST /api/reviews/new, not POST /api/reviews."
+  },
+  "servers": [{ "url": "http://localhost:3333" }],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Liveness and data counts",
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "summary": "Exchange credentials for a JWT",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LoginRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "token issued" },
+          "401": { "description": "invalid credentials" }
+        }
+      }
+    },
+    "/api/movies": {
+      "get": {
+        "summary": "List VHS titles (optional genre / q filters)",
+        "responses": { "200": { "description": "titles" } }
+      }
+    },
+    "/api/movies/{id}": {
+      "get": {
+        "summary": "One VHS title",
+        "responses": {
+          "200": { "description": "title" },
+          "404": { "description": "not found" }
+        }
+      }
+    },
+    "/api/reviews": {
+      "get": {
+        "summary": "Paginated reviews, newest first",
+        "responses": {
+          "200": {
+            "description": "a page of reviews",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReviewPage" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reviews/new": {
+      "post": {
+        "summary": "Create a review (validates, persists, returns the stored record)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ReviewRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Review" }
+              }
+            }
+          },
+          "400": { "description": "invalid input — nothing persisted" }
+        }
+      }
+    },
+    "/api/reviews/{id}": {
+      "get": {
+        "summary": "One review",
+        "responses": {
+          "200": { "description": "review" },
+          "404": { "description": "not found" }
+        }
+      },
+      "delete": {
+        "summary": "Delete a review (bearer token required)",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "deleted" },
+          "401": { "description": "unauthorized" },
+          "404": { "description": "not found" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    },
+    "schemas": {
+      "LoginRequest": {
+        "type": "object",
+        "required": ["username", "password"],
+        "properties": {
+          "username": { "type": "string" },
+          "password": { "type": "string" }
+        }
+      },
+      "ReviewRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "maxLength": 80 },
+          "rating": { "type": "integer", "minimum": 1, "maximum": 5 },
+          "comment": { "type": "string" }
+        },
+        "example": { "name": "Reel Ryan", "rating": 5, "comment": "Rewound and ready." }
+      },
+      "Review": {
+        "type": "object",
+        "required": ["id", "name", "date", "response"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "date": { "type": "string" },
+          "rating": { "type": "integer" },
+          "comment": { "type": "string" },
+          "response": { "type": "string" }
+        }
+      },
+      "ReviewPage": {
+        "type": "object",
+        "required": ["page", "size", "total", "totalPages", "items"],
+        "properties": {
+          "page": { "type": "integer" },
+          "size": { "type": "integer" },
+          "total": { "type": "integer" },
+          "totalPages": { "type": "integer" },
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Review" }
+          }
+        }
+      }
+    }
+  }
+}

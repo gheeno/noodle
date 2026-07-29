@@ -579,6 +579,61 @@ Gitignored directories are skipped, so generated output never dominates the
 report. Available over MCP as `scan_repo`, and as the `scan` intent of
 `noodle task`.
 
+## noodle api-scan
+
+Live API discovery (NOOD_0201) — the api wok's counterpart to the page probe.
+`noodle scan` reads what the app *is*; this answers where it *answers* and
+what it *serves* right now.
+
+```
+noodle api-scan [base_url] [--port N ...] [--repo PATH]
+```
+
+- **No URL** — sweep the well-known localhost dev ports (plus any the repo's
+  config names: `server.port`, docker-compose mappings, `PORT=`) and report
+  every live HTTP server with an api-shaped verdict. Exactly one api-shaped
+  candidate is adopted automatically when authoring arrives without a
+  `base_url`; anything else comes back as `questions`. Loopback only.
+- **With a URL** — fetch the app's OpenAPI document from the well-known
+  routes (`/openapi.json`, `/v3/api-docs`, `/swagger.json`, …) and print the
+  REAL endpoint list with request-body hints and copy-ready steps. One fetch
+  settles `/greeting` vs `/greeting/new` before the test is written.
+
+Available over MCP as `probe_api`. Every request goes through the same
+target policy as any other Noodle call; nothing is guessed.
+
+## noodle ticket
+
+Read a ticket payload; get one authorable goal per acceptance criterion
+(NOOD_0201). Deterministic — no LLM, nothing written.
+
+```
+noodle ticket <issue.json | - | inline JSON> [--base-url URL] [--discover | --no-discover]
+```
+
+The AI-SDLC handoff where the only context is the ticket. Atlassian Document
+Format is walked, `SPEC_LINK`/sha256 boilerplate discarded rather than read as
+intent, and criteria split into Given/When/Then. With `--discover` (default),
+localhost is swept and the app's OpenAPI document read, so **each criterion's
+endpoint is resolved against the routes the service really serves** — a ticket
+saying `POST /greeting` plans against the served `POST /greeting/new` and
+records the correction as an assumption, instead of authoring a 404 that reads
+like a product bug.
+
+Three keys carry the honesty:
+
+- `goals` — one per testable criterion, ready for `author_test`/`noodle author
+  --spec`, each with its `assumptions` (corrected route, assumed status code).
+- `not_automatable` — criteria the API cannot show, **with the reason**: a
+  coding-standards criterion belongs to code review; "exactly one record is
+  stored" needs a DB step family Noodle doesn't have.
+- `questions` — what the ticket never said (the request body, an ambiguous
+  route). Request bodies come back as a visible `<value>` placeholder, never an
+  invented payload.
+
+Available over MCP as `plan_from_ticket`. Worked end to end in
+[`sample_feature_tests/api/features/busterblock_from_ticket.feature`](../sample_feature_tests/api/features/busterblock_from_ticket.feature).
+
 ## noodle summary
 
 Plain-English summary of the last run.

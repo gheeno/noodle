@@ -304,6 +304,17 @@ a browser to confirm — login is `reel_ryan` / `Popcorn1!`. (The Noodle-side
 credentials file for testing it — `busterblock_secrets.env` — gets copied in
 Part 6 below, once your test workspace exists.)
 
+It is also the **api wok's** local target (NOOD_0201), not just a web one: it
+publishes its own contract at `http://localhost:3333/openapi.json` — which is
+what `noodle api-scan` reads — and serves a reviews resource that exercises the
+shapes a public sample API can't: `POST /api/reviews/new` (validate → persist →
+return the stored record), `GET /api/reviews?page=&size=` (paginated, newest
+first), and a bearer-protected `DELETE /api/reviews/{id}`. `/reviews.html`
+renders that list in the browser, so one scenario can seed over REST and prove
+the customer sees it. Note the create route: **`/api/reviews/new`**, not
+`/api/reviews` — deliberately, so ticket-authored tests have to be corrected by
+discovery rather than by a guess.
+
 **To stop it:** `Ctrl+C` in Terminal A, or from another terminal:
 
 ```bash
