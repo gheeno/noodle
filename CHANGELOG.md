@@ -4,6 +4,127 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a16] — 2026-07-29
+
+**NOOD_0200** — feature: sequential authoring serves every run's reports, the
+probe survives promo-heavy pages, and the screenshot claim stops costing a
+shell approval.
+
+A three-test authoring session on a non-frontier host (MCP blocked, CLI
+path) measured ~15–20 AIC and 5–10 minutes per test against a popup-heavy
+retail site, burned one human approval, and delivered no served report for
+the second and third test. Three root causes, none of them the prompt
+grammar — all three of the session's prompt shapes already one-shot through
+the compiler (now pinned offline in `unit_tests/test_nood_0200.py`):
+
+1. **The CLI's serve default.** Report *generation* is engine-automatic, but
+   *serving* was automatic only on MCP `run_and_report`; plain `noodle run`
+   defaulted `--serve` off, and the CLI is the primary door when MCP is
+   blocked (NOOD_0199). Runs two and three built reports nobody hosted.
+2. **The probe swept popups once, at initial load only.** The overlays a
+   promo-heavy site drops on the results page, the picked product page, or a
+   prerequisite trial's restore reload polluted the landed-page control set,
+   so the mutation proof (add-to-cart) failed, the goal blocked, and the
+   repair lap re-launched a browser and re-probed — the minutes and the AIC.
+3. **"Open the image" with no path in hand.** The run payload never named
+   the evidence screenshot paths, so a shell-driven agent hunted through
+   `rca.md` and reached for `open`/`cat` — the human-approval prompt.
+
+### Added
+- `noodle run` hosts both reports after every run by default and prints the
+  URLs; `--serve/--no-serve` is now a tristate override. Auto-off when
+  `CI`/`TF_BUILD` is set (a runner has no human to click a link and would
+  leak a detached server per job); `NOODLE_SERVE_REPORTS=0/1` overrides in
+  either direction. Unit-test suites are guarded by a conftest fixture
+  setting the kill-switch.
+- Run payloads (`core.run_and_report`, `noodle run --json`, and the MCP tool
+  via core) carry `evidence: [{step, status, path}]` — every image attached
+  to a step — so an agent reads the screenshot with its harness file reader
+  instead of shelling out to find it. Always-on surfaces now say exactly
+  that ("read the image at `evidence[].path`").
+- The probe's search-results block, the picked landed page, and every
+  mutation-trial restore re-run the popup sweep (same sweep + short
+  re-settle a probe-followed tab already got), counted into the existing
+  `popups_closed` disclosure.
+
+### Fixed
+- HIL-bait instructions scrubbed from agent-facing surfaces: the workspace
+  README and both skill cards authored via a spec *file* (a file-write
+  approval) — now `noodle author --prompt "<ask>" --run`; the playbook
+  recommended a heredoc for `--spec -` (now: inline `--spec '<yaml>'`,
+  never a heredoc) and an end-of-session `ps aux`/`kill` sweep (now: stop
+  what you started through the harness's own controls); the skill cards'
+  "grep `run.log`", the encyclopedia's `python -m http.server` row, and the
+  external-site walkthrough's `curl | grep` recon recipe (now the probe)
+  are gone. `docs/agent-playbook.md` leads reuse discovery with
+  `noodle list --query` instead of `grep`/`rg`.
+- `docs/llm-performance.md` §7 now carries the real AIC ladder — target
+  < 12 (the NOOD_0195/0199 postmortem bar), ≤ 17 acceptable with a
+  cost-delta explanation, 25 hard ceiling — instead of contradicting the
+  CHANGELOG's < 12 target.
+- Instruction-budget ledger: no cap raised. AGENTS.md 5125 → 5103 bytes
+  (headroom 529), claude card 7149 → 7129, copilot card 7294 → 7292;
+  `noodle run --help` grew ~26 bytes for the tristate flag (headroom 98).
+
+---
+
+**NOOD_0200** — fix: end-state evidence — stop validating the last page
+against the first one.
+
+The evidence pass validated an unanchored check against the page the probe
+*started* on while the compiler (NOOD_0158) ran it against the page the flow
+*ends* on. On a goal whose actions carry the page past the probe's reach
+(fill → save → fill → submit, or search → pick → add-to), that was wrong in
+both directions: it hard-blocked assertions that are genuinely true on the
+post-submit page, and it "proved" assertions that merely matched landing-page
+footer/nav wording — shipping a green, `verified: true` test that verified a
+different page than the one it asserted. A three-attempt authoring session
+(every attempt either blocked on true assertions or passed on false ones)
+traced to this one defect.
+
+### Fixed
+- `goal.evidence()` routes an unanchored check to `runtime_asserted` whenever
+  the goal's actions go beyond the probe's reach (`_beyond_probe_reach` —
+  reads the action grammar only, no domain knowledge): the run, the only
+  honest witness for that page, proves it. `after: start` still pins a check
+  to the landing page with full pre-run proof; search/suggest/pick-only goals
+  keep their probe proof untouched. The probe still never crosses a data gate
+  (probing commits mutates state) — by design; the evidence pass now knows it.
+- Blocking messages carry their own repair: the missed-check block names the
+  three legal moves (fix the text / anchor with `after:` / leave unanchored on
+  a gated flow), and the ambiguity block names the candidate it refuses to
+  guess. Rule adopted: no `blocking` entry may describe a state without
+  naming a legal next input.
+- A blocked author writes and (on the `--run` path) serves the RCA pair
+  anyway — verdict `authoring-blocked`, the blocking list, `next_action`,
+  failed intent-trace rows. No browser, milliseconds; the engine no longer
+  goes silent at the exact moment the operator needs a written explanation.
+- Compiled POMs are a `pages:` block resolved through the feature's own
+  `@page:<slug>` tag instead of folder-global `match: {}` — a second compiled
+  feature in the same app no longer shadows the first's same-named keys
+  (warning noise today, silently wrong element tomorrow). Same reach within
+  the feature (the pin spans every page the scenario visits), invisible to
+  siblings.
+- Probe `dispatch_event` fallbacks are time-bounded (3 s, matching the click
+  budget beside them) — a hidden trigger that never attaches no longer eats
+  30 s of the discovery budget per attempt. The fuller SPA settle-heuristic
+  from the field report is deliberately deferred behind a wall-clock
+  measurement (it is the only piece that can cost time on every probe).
+
+### Added
+- `evidence.proven_phase` — which probe phase's page each proven check
+  matched on (`initial`/`search`), riding the author payload next to
+  `proven`; `probe_summary` now also counts run-proven checks. Probe-proven
+  vs run-proven is readable per fact without diffing JSON.
+- `unit_tests/test_nood_0200_end_state.py` — synthetic gated-flow fixture
+  (generic control names only) pinning: end-state checks route to the run and
+  never block; landing-page wording can never prove an end-state check;
+  `after: start` keeps landing proof; search/suggest/pick goals keep pre-run
+  verification; the pinned-POM resolver isolation; the blocked-author report;
+  the bounded dispatch.
+
+---
+
 ## [1.0.0a15] — 2026-07-29
 
 **NOOD_0199** — feature: the DOM-attribute heal tier survives a page too large

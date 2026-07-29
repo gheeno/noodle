@@ -954,13 +954,13 @@ def _reveal(page, pg: dict, clicks: list[str], timeout_ms: int):
             # trigger zone) has no click box: dispatch straight away instead
             # of burning the 3 s actionability wait discovering that.
             if ctrl is not None and ctrl.get("visible") is False:
-                loc.dispatch_event("click")
+                loc.dispatch_event("click", timeout=3000)
             else:
                 try:
                     loc.click(timeout=3000)
                 except Exception:
                     # hidden hitboxes (0-size trigger zones) have no click box
-                    loc.dispatch_event("click")
+                    loc.dispatch_event("click", timeout=3000)
             settled = _settle(page, timeout_ms, armed=armed, url_before=u)
             tab = _new_tab(page, before, pg.setdefault("warnings", []))
             raw = page.evaluate(_COLLECT_JS)
@@ -1150,12 +1150,12 @@ def _do(page, pg: dict, actions: list[tuple], timeout_ms: int):
                 from noodle.agents.web.actions import select_on
                 select_on(page, loc, value)
             elif ctrl is not None and ctrl.get("visible") is False:
-                loc.dispatch_event("click")
+                loc.dispatch_event("click", timeout=3000)
             else:
                 try:
                     loc.click(timeout=3000)
                 except Exception:
-                    loc.dispatch_event("click")
+                    loc.dispatch_event("click", timeout=3000)
             settled = _settle(page, timeout_ms, armed=armed, url_before=u,
                               mutating=(verb == "click" and (
                                   _is_mutating_control(ctrl) if ctrl
@@ -1300,12 +1300,12 @@ def _open_search_box(page, timeout_ms: int, controls: list[dict] | None = None):
             loc = page.locator(c["selector"]).first
             armed, u = _arm(page), page.url
             if c.get("visible") is False:
-                loc.dispatch_event("click")
+                loc.dispatch_event("click", timeout=3000)
             else:
                 try:
                     loc.click(timeout=3000)
                 except Exception:
-                    loc.dispatch_event("click")
+                    loc.dispatch_event("click", timeout=3000)
             _settle(page, timeout_ms, armed=armed, url_before=u)
         except Exception:
             continue
@@ -1549,6 +1549,13 @@ def _search(page, pg: dict, term: str, timeout_ms: int) -> None:
         box.fill(term)
         box.press("Enter")
         _settle(page, timeout_ms)
+        # NOOD_0200 — the initial-load sweep never sees the overlays a
+        # promo-heavy site drops on the RESULTS page; an occluded results
+        # block costs a whole re-author lap (and a second browser launch).
+        # Same sweep + short re-settle _tab_block already does.
+        if closed := _dismiss_popups(page):
+            pg["popups_closed"] = pg.get("popups_closed", 0) + closed
+            _settle(page, min(timeout_ms, 3000))
         # NOOD_0169 — result readiness: a lazy SPA renders the "NN results"
         # summary before any card exists, and a single post-settle snapshot
         # then captured 1163 results with zero items. Poll (bounded by the
@@ -1624,6 +1631,13 @@ def _pick(page, pg: dict, term: str, target: str, timeout_ms: int,
             blk = _tab_block(tab, f'result "{cand["name"]}"', timeout_ms)
             page = tab
         else:
+            # NOOD_0200 — the landed page (product detail on a retail site)
+            # gets the same popup sweep as a probe-followed tab: a late
+            # overlay here hides the mutation control, and a blocked
+            # mutation proof costs a full re-author lap.
+            if closed := _dismiss_popups(page):
+                pg["popups_closed"] = pg.get("popups_closed", 0) + closed
+                _settle(page, min(timeout_ms, 3000))
             seen = {c["selector"] for c in pg["controls"]} \
                 | {c["selector"] for c in sr["controls"]}
             seen_head = set(pg["headings"]) | set(sr["headings"])
@@ -1707,6 +1721,7 @@ def _prove_mutation(page, blk: dict, destination: str,
                 page.goto(url_before, timeout=timeout_ms,
                           wait_until="domcontentloaded")
                 _settle(page, timeout_ms)
+                _dismiss_popups(page)  # NOOD_0200 — a reload re-triggers overlays
                 continue
             seen = {c["selector"] for c in blk.get("controls") or []}
             rev = _diff_snapshot(page, seen, set(blk.get("headings") or []))
@@ -1727,6 +1742,7 @@ def _prove_mutation(page, blk: dict, destination: str,
             page.goto(url_before, timeout=timeout_ms,
                       wait_until="domcontentloaded")
             _settle(page, timeout_ms)
+            _dismiss_popups(page)  # NOOD_0200 — a reload re-triggers overlays
         except Exception:
             continue
 
@@ -2269,7 +2285,7 @@ def _activate_flutter_semantics(page, raw: dict, timeout_ms: int) -> dict:
         try:
             ph.click(timeout=2000)
         except Exception:
-            ph.dispatch_event("click")
+            ph.dispatch_event("click", timeout=3000)
         _settle(page, timeout_ms, armed=armed, url_before=u)
         fresh = page.evaluate(_COLLECT_JS)
         fresh["flutter"] = True
@@ -2378,12 +2394,12 @@ def _discover(page, pg: dict, timeout_ms: int) -> None:
             armed, u = _arm(page), page.url
             loc = page.locator(c["selector"]).first
             if not c["visible"]:
-                loc.dispatch_event("click")
+                loc.dispatch_event("click", timeout=3000)
             else:
                 try:
                     loc.click(timeout=2000)
                 except Exception:
-                    loc.dispatch_event("click")
+                    loc.dispatch_event("click", timeout=3000)
             settled = _settle(page, timeout_ms, armed=armed, url_before=u)
             rev = _diff_snapshot(page, seen, seen_head)
             trace["clicked"].append({"name": c["name"], "signal": signal,

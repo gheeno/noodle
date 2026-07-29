@@ -86,12 +86,15 @@ def test_revealed_needs_pom_false_field_still_gets_a_pom_entry():
     # than the raw text, which is the property that actually matters.
     import yaml
     loaded = yaml.safe_load(pom)
+    # NOOD_0200 — compiled POMs are a pages: block pinned by the feature's
+    # @page tag; the keys live inside the (single) page block.
+    block = next(iter(loaded["pages"].values()))
     for key, sel in [("open settings", "button#gear"),
                      ("delivery postal code", "input#zip"),
                      ("store location", "select#store"),
                      ("save preferences", "button#save")]:
-        assert key in loaded, f"{key} missing from {sorted(loaded)}"
-        assert sel in str(loaded[key]), key
+        assert key in block, f"{key} missing from {sorted(block)}"
+        assert sel in str(block[key]), key
 
 
 def test_reveal_click_compiles_before_the_controls_it_exposes():

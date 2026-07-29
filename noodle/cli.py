@@ -225,6 +225,19 @@ def _write_full_payload(payload) -> str | None:
         return None
 
 
+def _serve_default() -> bool:
+    """NOOD_0200 — the reports are the deliverable of EVERY run, and the CLI
+    is the primary door when MCP is blocked: serve them by default so the
+    second and third test of a sequential authoring session still hand the
+    user a clickable URL. CI has no human to click one (and would leak a
+    detached server per job) — auto-off there; NOODLE_SERVE_REPORTS is the
+    explicit switch either way."""
+    env = os.getenv("NOODLE_SERVE_REPORTS", "").strip().lower()
+    if env:
+        return env not in ("0", "false", "no")
+    return not (os.getenv("CI") or os.getenv("TF_BUILD"))
+
+
 @app.command()
 def run(
     path: str = typer.Argument(None, help="Path to .feature files or directory (default: workspace tests_dir)"),
@@ -245,7 +258,7 @@ def run(
     fail_fast: bool = typer.Option(False, "--fail-fast", help="Stop at the first failure"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Live behave stream to <artifacts>/run.log, stdout gets the summary (automatic off a TTY)"),
     preflight: bool = typer.Option(None, "--preflight/--no-preflight", help="Resolve every {env:KEY} before the browser; missing aborts (exit 2). Default on"),
-    serve: bool = typer.Option(False, "--serve", help="Host the Allure + RCA reports after the run, print URLs"),
+    serve: bool = typer.Option(None, "--serve/--no-serve", help="Host the Allure + RCA reports after the run, print URLs. Default on (off in CI)"),
     json_out: bool = typer.Option(False, "--json", help="One bounded JSON payload instead of the human summary; implies --quiet"),
 ):
     """Run .feature files.
@@ -258,6 +271,8 @@ def run(
     # NOOD_0131 — --json promises ONE parseable object on stdout, so it
     # implies quiet (the live behave stream would corrupt it).
     quiet = quiet or json_out or _agent_quiet()
+    if serve is None:
+        serve = _serve_default()
     # NOOD_0133 — every run names the build it executes: a user should never be
     # unable to tell whether the CLI is the dev tree or a stale installed copy.
     from noodle import install_check
@@ -575,6 +590,12 @@ def run(
         rca_file = reports / "rca.html"
         payload["report"] = str(report_idx) if report_idx.is_file() else None
         payload["rca_html"] = str(rca_file) if rca_file.is_file() else None
+        # NOOD_0200 — evidence images by PATH: the agent reads the file via
+        # its harness file-read, never an `open`/`cat` hunt through rca.md.
+        from noodle.reporting import rca_report as _rca_rep
+        if ev := _rca_rep.collect_evidence(results_root):
+            payload["evidence"] = [{"step": e["step"], "status": e["status"],
+                                    "path": e["path"]} for e in ev]
         # NOOD_0156 — the compact RCA also rides a green-but-unverified run:
         # its passed-with-healing lines explain why verified is false.
         if rc != 0 or data.get("verified") is False:
@@ -1096,10 +1117,10 @@ that app alone.
 
 ## Next steps
 
-1. Author your first test in one call: `noodle author --spec <spec.yaml> --run`
+1. Author your first test in one call: `noodle author --prompt "<the ask>" --run`
    (the `author_test` MCP tool with `run_after_author=true`) — it creates the
    whole app package under `noodle_tests/web/<your-app>/`, runs it, and serves
-   the reports. `sample_app/` is a step-vocabulary reference to read, not a
+   the reports. No spec file needed — the prompt goes in as typed. `sample_app/` is a step-vocabulary reference to read, not a
    starting workflow — vocabulary: `docs/steps_dictionary.md` in the noodle repo.
 2. Credentials → your app's `resources/<app>_secrets.env` (gitignore it).
    Base URL → your app's `resources/environments.yaml` (`<app>: https://…`).
@@ -1167,12 +1188,12 @@ can't": read the wok.
    `evidence: screenshot`: playbook.
 3. Execute + report — one call: `run_and_report` with `headless=True,
    retries=0, serve_reports=True` (`noodle run noodle_tests/<app>
-   --headless --retries 0 --json --serve`): preflights secrets, runs,
+   --headless --retries 0 --json`): preflights secrets, runs,
    serves both reports, folds compact RCA in on red — never separate
    validate/RCA/serve calls. Green = `failed == 0` AND
    `verified: true`; `verified: false` (fuzzy healing behind a pass)
-   is NOT a pass — read `unverified_reasons`/`healing_events`. A
-   screenshot filename is not evidence — open the image.
+   is NOT a pass — read `unverified_reasons`/`healing_events`.
+   Screenshot proof: read the image at `evidence[].path`.
 
 Red? Budget: one probe, one run — more needs a named cause. Cheapest
 evidence first: `rca_compact` names the cause and fix;

@@ -170,6 +170,10 @@ NOODLE_DOM_SCAN_MAX=3000       # NOOD_0199: how many elements the DOM-attribute 
                                # walks. `class` counts, so this is really a DOM-NODE cap —
                                # raise it on an ERP/CRM SPA whose one screen exceeds it
 NOODLE_RETRIES=1               # re-run a failed scenario N extra times (flaky guard)
+NOODLE_SERVE_REPORTS=1         # NOOD_0200: `noodle run` hosts both reports after every run
+                               # by default (the URLs are the deliverable); auto-off when
+                               # CI/TF_BUILD is set. This switch overrides both directions —
+                               # 0 = never auto-serve, 1 = serve even in CI.
 NOODLE_PIXEL_THRESHOLD=0.01    # max fraction of changed pixels for "match the baseline"
 NOODLE_PROBE_CACHE_TTL=0       # NOOD_0188: seconds an authoring probe may be REUSED on a
                                # repair lap of the same feature. 0 (default) = always
@@ -830,7 +834,7 @@ noodle report open               # 3. build + open in a browser
 | Build static HTML only (CI artifact) | `noodle report generate` → `artifacts/reports/allure-report/` |
 | Build + open on a local server | `noodle report open` |
 | One-shot from results (no saved dir) | `allure generate artifacts/allure-results --open` |
-| Host an already-built report (no Allure CLI) | `python -m http.server 8000 --directory artifacts/reports/allure-report` |
+| Host an already-built report (no Allure CLI) | `noodle report serve --background` — never a raw `http.server` (it drops the RCA co-hosting and the no-store headers) |
 
 Trends across runs are automatic: `noodle report generate` appends each run to
 `artifacts/reports/allure-history/history.jsonl` (Allure 3 `historyPath`) and
