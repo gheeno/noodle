@@ -4,6 +4,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a19] — 2026-07-30
+
+**NOOD_0203** — fix: a tag that changes the browser no longer kills every
+scenario after it.
+
+Playwright's sync API allows exactly ONE live `sync_playwright().start()` per
+thread. The NOOD_0183 browser cache is keyed on everything that changes what
+the browser is — engine, channel, headless, slow_mo, args, remote endpoint —
+and called `.start()` on every key miss. So the cache was built to hold N
+entries and could only ever hold one: the first scenario whose tags minted a
+second key raised `It looks like you are using Playwright Sync API inside the
+asyncio loop` in `before_scenario`, and behave marked it failed with every step
+unexecuted, along with everything after it. `@slow`, `@firefox`, `@webkit`,
+`@safari`, `@edge`, `@headed` in a headless run and a mid-run
+`NOODLE_BROWSER_ARGS` change all trip it; it hides in the sharded CI template
+(one .feature per agent) and appears the moment a suite runs in one process.
+The engine's own `sample_feature_tests/web/saucedemo/features/products.feature`
+reproduced it: 1 passed, 1 failed, 1 never run.
+
+- one driver per process (`hooks._driver()`), N browsers off it — `.start()` is
+  the singleton, `browser_type.launch()` is not
+- `_close_pair()` closes only the browser; stopping the shared driver there
+  would kill it out from under every other cached entry
+- `close_cached_browsers()` closes each browser, then stops the driver once
+- `NOODLE_REUSE_BROWSER=0` teardown likewise closes the browser and leaves the
+  driver alone
+- unit test: two `_browser_for()` calls with different `slow_mo` in one process
+  start one driver and return two connected browsers
+
 ## [1.0.0a18] — 2026-07-30
 
 **NOOD_0202** — feature: a CI job can see what the run is doing, and an LLM

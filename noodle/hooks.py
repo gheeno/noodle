@@ -697,13 +697,28 @@ def attach_capture_listeners(context, page):
 # never gets served the wrong one. NOODLE_REUSE_BROWSER=0 restores relaunching.
 _browsers: dict[tuple, tuple] = {}
 
+# NOOD_0203 — ONE driver per process, N browsers off it. Playwright's sync API
+# allows exactly one live `sync_playwright().start()` per thread; a second one
+# raises "using Playwright Sync API inside the asyncio loop". So the first
+# scenario whose tags change the launch key (@slow's slow_mo, @firefox,
+# @headed in a headless run, NOODLE_BROWSER_ARGS) used to blow up in
+# before_scenario and take every scenario after it with it.
+_pw = None
+
+
+def _driver():
+    global _pw
+    if _pw is None:
+        _pw = sync_playwright().start()
+    return _pw
+
 
 def _reuse_browsers() -> bool:
     return os.getenv("NOODLE_REUSE_BROWSER", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 def _launch(engine, launch_opts, remote_url):
-    pw = sync_playwright().start()
+    pw = _driver()
     browser_type = getattr(pw, engine)
     if remote_url:
         browser = browser_type.connect(remote_url, slow_mo=launch_opts.get("slow_mo", 0))
@@ -735,18 +750,24 @@ def _browser_for(engine, launch_opts, remote_url):
 
 
 def _close_pair(pair) -> None:
-    pw, browser = pair
-    for closer in (browser.close, pw.stop):
-        try:
-            closer()
-        except Exception:
-            pass
+    # Only the browser: the driver is shared with every other cached entry.
+    try:
+        pair[1].close()
+    except Exception:
+        pass
 
 
 def close_cached_browsers() -> None:
+    global _pw
     for pair in list(_browsers.values()):
         _close_pair(pair)
     _browsers.clear()
+    if _pw is not None:
+        try:
+            _pw.stop()
+        except Exception:
+            pass
+        _pw = None
 
 
 def _record_skip(scenario, reason: str) -> None:
@@ -1441,7 +1462,9 @@ def after_scenario(context, scenario):
     # Playwright driver stay in the per-process cache and close in after_all.
     _teardown = [("_bctx", lambda r: r.close())]
     if not _reuse_browsers():
-        _teardown += [("_browser", lambda r: r.close()), ("_pw", lambda r: r.stop())]
+        # NOOD_0203 — the browser goes, the driver does not: it is the
+        # per-process singleton, stopped once in close_cached_browsers().
+        _teardown += [("_browser", lambda r: r.close())]
     for attr, method in _teardown:
         # NOOD_0025: none of these are set for @api/@appium scenarios — same
         # ctx_get requirement as above.

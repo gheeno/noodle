@@ -94,3 +94,15 @@ def _reset_noodle_console_stream():
     for h in log.logger.handlers:
         if isinstance(h, log._LiveStreamHandler):
             h._stream_name = stream
+
+
+@pytest.fixture(autouse=True)
+def _reset_playwright_driver():
+    """NOOD_0203 — hooks._pw is a per-PROCESS singleton (Playwright's sync API
+    allows one live driver per thread). Under pytest that process outlives the
+    test, so a MagicMock driver left behind would be handed to every later
+    test's _launch() instead of its own patched one."""
+    from noodle import hooks
+    hooks._pw = None
+    yield
+    hooks._pw = None

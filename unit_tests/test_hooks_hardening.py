@@ -179,10 +179,10 @@ class TestAfterScenarioCleanup:
 
         mock_bctx.close.assert_called_once()
         mock_browser.close.assert_called_once()
-        mock_pw.stop.assert_called_once()
+        mock_pw.stop.assert_not_called()   # NOOD_0203 — the driver is a per-process singleton, not the scenario's to stop
 
-    def test_pw_stop_called_even_when_bctx_close_raises(self):
-        """If _bctx.close() raises, _browser.close() and _pw.stop() still run."""
+    def test_browser_close_called_even_when_bctx_close_raises(self):
+        """If _bctx.close() raises, _browser.close() still runs."""
         from noodle import hooks
 
         context = MagicMock()
@@ -198,12 +198,12 @@ class TestAfterScenarioCleanup:
         hooks.after_scenario(context, scenario)  # must not propagate the error
 
         mock_browser.close.assert_called_once()
-        mock_pw.stop.assert_called_once()
+        mock_pw.stop.assert_not_called()   # NOOD_0203 — the driver is a per-process singleton, not the scenario's to stop
 
     def test_cleanup_skips_missing_bctx_attribute(self):
         """
         If before_scenario failed before _bctx was assigned,
-        after_scenario must still stop _pw without AttributeError.
+        after_scenario must still close _browser without AttributeError.
         """
         from noodle import hooks
 
@@ -217,7 +217,7 @@ class TestAfterScenarioCleanup:
         hooks.after_scenario(context, scenario)
 
         mock_browser.close.assert_called_once()
-        mock_pw.stop.assert_called_once()
+        mock_pw.stop.assert_not_called()   # NOOD_0203 — the driver is a per-process singleton, not the scenario's to stop
 
     def test_cleanup_with_no_resources_at_all(self):
         """Context with no playwright attributes — must not raise."""
@@ -356,7 +356,7 @@ class TestCustomHookRegistry:
         assert order == ["second hook ran"]
         mock_bctx.close.assert_called_once()
         mock_browser.close.assert_called_once()
-        mock_pw.stop.assert_called_once()
+        mock_pw.stop.assert_not_called()   # NOOD_0203 — the driver is a per-process singleton, not the scenario's to stop
 
 
 # ---------------------------------------------------------------------------
