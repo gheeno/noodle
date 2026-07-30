@@ -246,7 +246,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$(workspaceDir)/artifacts/allure-results" | Out-Null
           noodle rca-report --workspace "$(workspaceDir)" --out "$(workspaceDir)/artifacts/reports/rca.md"
           python -c "from pathlib import Path; from noodle.reporting import rca_report as r; Path('$(workspaceDir)/artifacts/reports/rca.html').write_text(r.render_html('$(workspaceDir)/artifacts/allure-results'))"
-          Write-Host "##vso[task.uploadsummary]$(workspaceDir)/artifacts/reports/rca.md"
         displayName: 'Generate RCA report'
         condition: always()
         workingDirectory: $(Build.SourcesDirectory)
@@ -316,12 +315,13 @@ jobs:
           if (Test-Path $history) { Get-Content $history -Tail 30 | Set-Content "$history.tmp"; Move-Item "$history.tmp" $history -Force }
         workingDirectory: $(Pipeline.Workspace)
         displayName: 'Merge shard results + generate suite report'
-      # testResultsDir + reportDir both set on purpose — see the Linux
-      # pipeline's version-adaptive note on PublishAllureReport@2.
+      # NOOD_0204 — testResultsDir ONLY; see the Linux pipeline's note on
+      # PublishAllureReport@2 (reportDir is an undeclared, silently-dead input).
+      - powershell: New-Item -ItemType Directory -Force -Path "$(System.DefaultWorkingDirectory)" | Out-Null
+        displayName: 'Ensure working directory exists'
       - task: PublishAllureReport@2
         inputs:
           testResultsDir: $(Pipeline.Workspace)/merged
-          reportDir: $(Pipeline.Workspace)/allure-report
           reportName: 'Allure Report'
         displayName: 'Publish Allure Report tab'
       - task: PublishPipelineArtifact@1

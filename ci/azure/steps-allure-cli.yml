@@ -28,6 +28,14 @@ parameters:
     default: 'v20.18.1'
 
 steps:
+  # Cache@2's post-job save tars its path unconditionally and dies on a missing
+  # dir. A modern agent never creates this one — the portable Node below only
+  # downloads when the agent's Node is < 20 — so every job on hosted Linux went
+  # red at post-job with `tar: .node: Cannot open`. continueOnError covers the
+  # restore task, not the implicit save.
+  - bash: mkdir -p "$(Pipeline.Workspace)/.node"
+    displayName: 'Ensure Node cache dir exists'
+
   - task: Cache@2
     displayName: 'Cache portable Node'
     continueOnError: true

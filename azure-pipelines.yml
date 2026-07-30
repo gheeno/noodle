@@ -284,12 +284,11 @@ jobs:
       # never the HTML view, never on a clean run. Generate both explicitly
       # here so the published artifact always has one, in every mode.
       # condition: always() — this must still run when the step above failed.
-      # NOOD_0046 — uploadsummary renders rca.md as a section on the run
-      # summary (Extensions tab), the RCA counterpart to the Allure tab.
+      # NOOD_0204 — RCA is delivered as a download inside the published
+      # artifact (reports/rca.md + standalone rca.html), not uploadsummary.
       - script: |
           noodle rca-report --workspace "$(workspaceDir)" --out "$(workspaceDir)/artifacts/reports/rca.md"
           python -c "from pathlib import Path; from noodle.reporting import rca_report as r; Path('$(workspaceDir)/artifacts/reports/rca.html').write_text(r.render_html('$(workspaceDir)/artifacts/allure-results'))"
-          echo "##vso[task.uploadsummary]$(workspaceDir)/artifacts/reports/rca.md"
         displayName: 'Generate RCA report'
         condition: always()
         workingDirectory: $(Build.SourcesDirectory)
@@ -372,15 +371,19 @@ jobs:
           fi
         workingDirectory: $(Pipeline.Workspace)
         displayName: 'Merge shard results + generate suite report'
-      # testResultsDir + reportDir both set on purpose (version-adaptive):
-      # extension v2.1.3 has no reportDir input (silently dropped) and
-      # self-generates a single-file report from the raw results — tab works
-      # but without trend; on v2.1.4+ reportDir wins and the tab gets our
-      # pre-generated report with history baked in.
+      # NOOD_0204 — testResultsDir ONLY. The old "version-adaptive" dual-input
+      # theory is disproven by a real 2.1.3 run: with both inputs set the tab
+      # published nothing, silently. `reportDir` is not a declared task.json
+      # input (checked up to 2.1.5) and its code path logs nothing either way.
+      # The documented path is testResultsDir — the task self-generates a
+      # single-file report; trend history lives in the artifact report below.
+      # That path reads the job's working directory, which `checkout: none`
+      # never creates — hence the mkdir.
+      - bash: mkdir -p "$(System.DefaultWorkingDirectory)"
+        displayName: 'Ensure working directory exists'
       - task: PublishAllureReport@2
         inputs:
           testResultsDir: $(Pipeline.Workspace)/merged
-          reportDir: $(Pipeline.Workspace)/allure-report
           reportName: 'Allure Report'
         displayName: 'Publish Allure Report tab'
       - task: PublishPipelineArtifact@1
