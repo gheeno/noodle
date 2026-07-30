@@ -33,10 +33,18 @@ def _use_json():
 @pytest.fixture(autouse=True)
 def _isolate():
     """Clean scrub-set + context per test; always restore text mode after (other
-    tests read stdout and assume the plain console)."""
+    tests read stdout and assume the plain console).
+
+    NOOD_0202 — reconfigure on the way IN as well: a CLI invocation elsewhere in
+    the suite may have re-pointed and re-formatted the console handler for the
+    CI build log (`route_console_to_build_log`, process-global), and this file
+    asserts the *default* console shape. Teardown-only restoration made that
+    order-dependent — and the whole suite runs under CI=true on GitHub Actions.
+    """
     log._secret_values.clear()
     log.clear_warnings()
     log._context.set({})
+    _reconfigure_from_env()
     yield
     log._secret_values.clear()
     log.clear_warnings()

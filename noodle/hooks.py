@@ -1,9 +1,11 @@
+import functools
 import json
 import logging
 import os
 import re
 import shlex
 import time
+import traceback
 from collections import defaultdict
 from pathlib import Path
 
@@ -137,6 +139,49 @@ except ImportError:
 # Accumulated scenario results for JUnit XML, populated in after_scenario.
 _suite_results = []
 
+# NOOD_0202 — attempts per (feature file, scenario name), for the build log's
+# retry marker. behave's autoretry re-runs the scenario in place, so the hooks
+# fire again with no attempt number of their own.
+_attempts: dict = {}
+
+
+# NOOD_0202 — has the run-wide TLS warning been said once? See _ignore_https().
+_certs_warned = False
+
+
+def _report_engine_crash(fn):
+    """NOOD_0202 — log a hook crash before behave swallows it.
+
+    behave reports one line for an exception escaping a hook — `ABORTED:
+    HOOK-ERROR in hook=before_all` — and prints the traceback to *stdout*, which
+    `--quiet` has already diverted to run.log. In CI that means an engine
+    regression aborts the build with no class, no message and no traceback on
+    the console: you have to download an artifact to learn what broke.
+
+    These six hooks are the engine's boundaries with behave, which is why they
+    get this and ordinary engine functions don't — a blanket try/except over
+    every method would swallow failures rather than surface them. Re-raises
+    immediately: behave still decides what the crash means for the run.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            logger.error(f"ENGINE ERROR in {fn.__name__}: "
+                         f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+            raise
+    return wrapper
+
+
+def _retry_tag(attempt: int) -> str:
+    """' [retry 1/2]' on a re-run, empty on the first attempt. The denominator
+    is what a run was ALLOWED (NOODLE_RETRIES), so a CI reader can tell 'last
+    chance' from 'more to come'."""
+    if attempt <= 1:
+        return ""
+    return f" [retry {attempt - 1}/{os.getenv('NOODLE_RETRIES', '1')}]"
+
 
 def _load_environments():
     """Load base URLs from environments.yaml into os.environ (uppercased).
@@ -252,11 +297,19 @@ def _load_secrets(path: Path, override: bool = False):
             log.register_secret(value)
 
 
+@_report_engine_crash
 def before_all(context):
     # NOOD_0171 — correlation: adopt the run_id the CLI/MCP minted (it crosses
     # the subprocess boundary via env — contextvars don't), or mint one for a
     # bare `behave` invocation. workspace = the tenant dimension on a shared
     # multi-team server (the /data/<team> leaf = cwd basename).
+    # NOOD_0202 — FIRST, before anything that can throw: this is the child's only
+    # channel to the CI console, and a crash in the setup below (the engine
+    # regression case) has nothing to report itself on until it exists. The file
+    # handler attaches further down and is unconditional; this is the live
+    # stream, and only when something is watching one.
+    if log.progress_mode():
+        log.attach_progress_handler()
     rid = os.environ.setdefault("NOODLE_RUN_ID", log.new_run_id())
     log.bind(run_id=rid, workspace=os.path.basename(os.getcwd()) or ".")
     # NOOD_0062 — explicit ".env": bare load_dotenv() find_dotenv()-walks up
@@ -270,6 +323,8 @@ def before_all(context):
     _load_environments()
     _loaded_package_dirs.clear()
     _suite_results.clear()
+    _attempts.clear()          # NOOD_0202 — fresh retry counters per run
+    globals()["_certs_warned"] = False   # NOOD_0202 — say the TLS notice once per run
     if os.getenv("NOODLE_PARALLEL_WORKER") == "1":
         # Each behavex worker is its own process — give it a private results
         # subdir so workers don't wipe/overwrite each other's files. The CLI
@@ -283,7 +338,12 @@ def before_all(context):
         # NOOD_0171 — all workers share the run_id (inherited via env), so a
         # merged log needs a per-lane tag to disentangle interleaved features/
         # scenarios. pid matches this worker's noodle.p<pid>.log filename.
-        log.bind(worker=os.getpid())
+        # NOOD_0202 — `lane` is the same idea in a form a human can read on a
+        # build console: 10 workers streaming to one stderr interleave, and a
+        # 5-digit pid per line is not something anyone tracks by eye. The build
+        # log prefixes it as [w3], so `grep '\[w3\]'` replays that lane in order.
+        from noodle import runlock as _runlock
+        log.bind(worker=os.getpid(), lane=_runlock.worker_index())
     else:
         _clean_allure_results()
         _paths.clean_worker_leaves()   # NOOD_0187 — stale p<pid>/ leaves from a prior parallel run
@@ -350,8 +410,14 @@ def _clean_allure_results():
             shutil.rmtree(d, ignore_errors=True)
 
 
+@_report_engine_crash
 def before_feature(context, feature):
     log.bind(feature=Path(feature.filename).name)  # NOOD_0171 — correlation
+    # NOOD_0202 — the build log's grouping header (maven's "Running <class>").
+    # json mode already carries the feature on every record via bind(); a text
+    # console has nothing else to group the scenario lines under.
+    log.telemetry("feature.start", f"Feature: {feature.name}",
+                  file=Path(feature.filename).name)
     feature_dir = Path(feature.filename).parent
     # Tell POM loader which folder to look in for local pom.yaml
     pom_module.set_context(str(feature_dir))
@@ -473,8 +539,16 @@ def ignore_https_errors(tags) -> bool:
     if 'secure_certs' in tags:
         return False
     env = os.getenv("NOODLE_IGNORE_HTTPS_ERRORS", "").strip().lower()
-    ignore = ('insecure_certs' in tags) or env in ("1", "true", "yes", "on")
-    if ignore:
+    env_wide = env in ("1", "true", "yes", "on")
+    ignore = ('insecure_certs' in tags) or env_wide
+    # NOOD_0202 — the env-var form is a RUN-level fact (the message says so), and
+    # this runs per browser context: a 109-scenario suite printed the same
+    # warning 109 times, a quarter of the whole CI build log. Once per process
+    # for the run-wide switch; @insecure_certs still warns per scenario, because
+    # there it IS a per-scenario decision and the step's RCA should carry it.
+    global _certs_warned
+    if ignore and not (env_wide and _certs_warned):
+        _certs_warned = _certs_warned or env_wide
         logger.warning(
             "\n  ⚠️  TLS certificate validation is DISABLED for this run "
             "(NOODLE_IGNORE_HTTPS_ERRORS / @insecure_certs). Any credential this "
@@ -687,11 +761,21 @@ def _record_skip(scenario, reason: str) -> None:
             pass
 
 
+@_report_engine_crash
 def before_scenario(context, scenario):
     log.bind(scenario=scenario.name)  # NOOD_0171 — correlation
     context._noodle_scenario_t0 = time.monotonic()  # NOOD_0173 — scenario.end duration
-    log.telemetry("scenario.start", "▶️ scenario.start",
-                  tags=sorted(scenario.effective_tags))
+    # NOOD_0202 — which attempt is this? behave's autoretry re-enters this hook,
+    # so a retried scenario printed twice on the build log with nothing saying
+    # why — which reads as a duplicate, or as two scenarios sharing a name.
+    _key = (getattr(getattr(scenario, "feature", None), "filename", ""), scenario.name)
+    _attempt = _attempts[_key] = _attempts.get(_key, 0) + 1
+    context._noodle_attempt = _attempt
+    # NOOD_0202 — the body IS the console line in text mode, so it names the
+    # scenario. It read literally "▶️ scenario.start" before, which told a build
+    # log nothing.
+    log.telemetry("scenario.start", f"  Scenario: {scenario.name}{_retry_tag(_attempt)}",
+                  attempt=_attempt, tags=sorted(scenario.effective_tags))
     tags = set(scenario.effective_tags)
 
     # NOOD_0183 — @serial / @lock:<name>: hold a cross-worker mutex for the
@@ -989,8 +1073,17 @@ def _evidence_last_step(scenario):
     return None
 
 
+@_report_engine_crash
 def after_step(context, step):
     _run_hooks("after_step", context, step)
+    # NOOD_0202 — per-step build log, DEBUG only. At INFO a 1000-scenario suite
+    # would emit ~10k console lines; this is the tier you turn on
+    # (`--log-level DEBUG`) to find WHERE a wedged run actually stopped. The
+    # logger level gates it — no extra branch needed.
+    log.telemetry("step.end", f"    Step: {step.keyword} {step.name}",
+                  level=logging.DEBUG, step=step.name,
+                  status=str(getattr(step.status, "name", step.status)),
+                  duration_ms=int((getattr(step, "duration", 0) or 0) * 1000))
     # NOOD_0018 — drain this step's ⚠️ WARNING+ log lines regardless of
     # pass/fail, so they never bleed into the next step's capture.
     step_warnings = log.get_warnings()
@@ -1024,8 +1117,15 @@ def after_step(context, step):
         # NOOD_0173 — step.fail telemetry. error message is redacted by the log
         # filter; @api scenarios have no page, so no screenshot.
         _exc = getattr(step, "exception", None)
-        log.telemetry("step.fail", f"\n  ❌ step failed: {step.name}",
-                      level=logging.WARNING, step=step.name,
+        # NOOD_0202 — an AssertionError is the test doing its job. Anything else
+        # is the ENGINE (or a page object) throwing, and on a CI console the two
+        # looked identical: "Step failed: <name>", no class, no message. Name the
+        # exception so a reader can tell "my test found a bug" from "the
+        # framework broke" without downloading run.log.
+        _engine_error = _exc is not None and not isinstance(_exc, AssertionError)
+        _detail = f"\n      {type(_exc).__name__}: {_exc}" if _engine_error else ""
+        log.telemetry("step.fail", f"    Step failed: {step.name}{_detail}",
+                      level=logging.ERROR, step=step.name,
                       error_class=type(_exc).__name__ if _exc else "",
                       error=(getattr(step, "error_message", "") or "")[:500],
                       screenshot=raw_path if getattr(context, "page", None) is not None else None)
@@ -1172,6 +1272,7 @@ def after_step(context, step):
                         healing=step_healing, evidence_meta=evidence_meta)
 
 
+@_report_engine_crash
 def after_scenario(context, scenario):
     # User after_scenario hooks run first — context.page is still alive here.
     _run_hooks("after_scenario", context, scenario)
@@ -1369,10 +1470,25 @@ def after_scenario(context, scenario):
     # NOOD_0173 — scenario.end telemetry (feature/scenario ride the correlation
     # context; status is behave's final Status enum).
     _sc_t0 = ctx_get(context, "_noodle_scenario_t0", None)
-    log.telemetry("scenario.end", "⏹️ scenario.end",
-                  status=getattr(getattr(scenario, "status", None), "name", None)
-                  or str(getattr(scenario, "status", "")),
-                  duration_ms=int((time.monotonic() - _sc_t0) * 1000) if _sc_t0 else None,
+    _sc_status = (getattr(getattr(scenario, "status", None), "name", None)
+                  or str(getattr(scenario, "status", "")))
+    _sc_ms = int((time.monotonic() - _sc_t0) * 1000) if _sc_t0 else None
+    # NOOD_0202 — the maven-style result line: icon, name, elapsed.
+    _verdict = {"passed": "PASSED", "failed": "FAILED", "error": "FAILED",
+                "skipped": "SKIPPED", "untested": "SKIPPED"}.get(
+                    _sc_status, (_sc_status or "UNKNOWN").upper())
+    # isinstance, not `or 1`: a MagicMock context double returns a Mock here and
+    # Mock has no ordering, so the marker's `<= 1` would raise inside a hook.
+    _attempt = ctx_get(context, "_noodle_attempt", 1)
+    _attempt = _attempt if isinstance(_attempt, int) else 1
+    # A red scenario logs at ERROR so `grep '^\[ERROR\]'` over a CI build log
+    # yields exactly the failures — the first thing anyone does with one.
+    log.telemetry("scenario.end",
+                  f"  {_verdict}: {scenario.name}"
+                  + (f" ({_sc_ms / 1000:.1f}s)" if _sc_ms is not None else "")
+                  + _retry_tag(_attempt),
+                  level=logging.ERROR if _verdict == "FAILED" else logging.INFO,
+                  status=_sc_status, duration_ms=_sc_ms, attempt=_attempt,
                   tags=sorted(scenario.effective_tags))
 
 
@@ -1390,6 +1506,7 @@ def _worker_process_cleanup():
     runlock.release_worker_index()
 
 
+@_report_engine_crash
 def after_all(context):
     _run_hooks("after_all", context)
     global _worker_atexit_registered

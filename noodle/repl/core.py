@@ -79,9 +79,15 @@ def _engine(*args, workspace: str = ".") -> subprocess.CompletedProcess:
     if args and args[0] == "run":
         counters.bump("browser_launch")     # every engine run is one browser
     cmd = [sys.executable, "-m", "noodle.cli", *args]
+    # NOOD_0202 — this door captures stdout+stderr into the payload an LLM reads
+    # (see run()'s `output` tail below), so the CI progress stream must never
+    # reach it — including when the orchestrator itself runs inside a pipeline,
+    # where CI=true. The full log is on disk at <artifacts>/logs/noodle.log and
+    # rides the payload as `log`: the agent reads it only when a run goes red.
+    env = {**os.environ, "NOODLE_LOG_PROGRESS": "0"}
     try:
         return subprocess.run(cmd, cwd=workspace, capture_output=True,
-                              text=True, timeout=timeout)
+                              text=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired as e:
         out = e.stdout or ""
         err = e.stderr or ""
@@ -273,6 +279,13 @@ def run_test(target: str | None = None, *, tag: str | None = None,
     result.update(ok=proc.returncode == 0, target=ran,
                   exit_code=proc.returncode,
                   output=(proc.stdout + proc.stderr)[-4000:].strip())
+    # NOOD_0202 — the full run log by PATH, not by value: the agent's console
+    # stream is suppressed above to save tokens, so it needs to know where the
+    # log is to read it with its own file tools when a run goes red.
+    from noodle.reporting import paths as _p
+    _log = _p.last_run_root(workspace) / "logs" / "noodle.log"
+    if _log.is_file():
+        result["log"] = str(_log)
     # NOOD_0147 — engine-side failure-trigger detection: a fired trigger rides
     # the payload the driving agent already reads, so the session-end
     # diagnostic happens without any always-on instruction text.

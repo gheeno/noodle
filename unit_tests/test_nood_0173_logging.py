@@ -26,7 +26,11 @@ def _use_json():
 
 
 @pytest.fixture(autouse=True)
-def _isolate():
+def _isolate(monkeypatch):
+    # NOOD_0202 — telemetry now also fires in text mode when a build console is
+    # watching, and this suite runs under CI=true on GitHub Actions. Pin the
+    # gate off so each test states the mode it means to prove.
+    monkeypatch.setenv("NOODLE_LOG_PROGRESS", "0")
     log._secret_values.clear()
     log._context.set({})
     yield
@@ -41,7 +45,8 @@ def _events(err, name):
 
 
 def test_telemetry_is_silent_in_text_mode(capsys):
-    # default text mode: a lifecycle event must NOT touch the human console.
+    # default text mode, nobody watching a build console: a lifecycle event must
+    # NOT touch the human console (NOOD_0202 narrowed this from "always").
     log.telemetry("run.start", "🏁 run.start", target="login.feature")
     log.telemetry("scenario.end", "⏹️ scenario.end", status="passed")
     cap = capsys.readouterr()
@@ -78,4 +83,5 @@ def test_run_end_carries_counts_exit_code_and_provenance(monkeypatch, capsys, tm
 def test_run_end_is_silent_in_text_mode(capsys, tmp_path):
     from noodle import cli
     cli._log_run_end(str(tmp_path), rc=0, t0=0.0, data={"passed": 1, "failed": 0})
-    assert capsys.readouterr().err == ""   # text mode: no run.end noise on the console
+    cap = capsys.readouterr()   # text mode, no build console: no run.end noise
+    assert cap.err == "" and cap.out == ""
