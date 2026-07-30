@@ -214,7 +214,7 @@ def _fake_playwright():
 def test_same_launch_options_reuse_one_browser(monkeypatch):
     from noodle import hooks
     monkeypatch.delenv("NOODLE_REUSE_BROWSER", raising=False)
-    hooks._browsers.clear()
+    hooks.close_cached_browsers()   # NOOD_0203 — also resets the shared driver
     pw, browser = _fake_playwright()
     with patch("noodle.hooks.sync_playwright") as f:
         f.return_value.start.return_value = pw
@@ -222,7 +222,7 @@ def test_same_launch_options_reuse_one_browser(monkeypatch):
         b = hooks._browser_for("chromium", {"headless": True, "slow_mo": 0}, None)
     assert a is b
     pw.chromium.launch.assert_called_once()
-    hooks._browsers.clear()
+    hooks.close_cached_browsers()   # NOOD_0203 — also resets the shared driver
 
 
 def test_a_different_browser_is_never_served_from_the_cache(monkeypatch):
@@ -230,7 +230,7 @@ def test_a_different_browser_is_never_served_from_the_cache(monkeypatch):
     cache must key on them or a scenario silently runs in the wrong engine."""
     from noodle import hooks
     monkeypatch.delenv("NOODLE_REUSE_BROWSER", raising=False)
-    hooks._browsers.clear()
+    hooks.close_cached_browsers()   # NOOD_0203 — also resets the shared driver
     pw, _ = _fake_playwright()
     with patch("noodle.hooks.sync_playwright") as f:
         f.return_value.start.return_value = pw
@@ -242,13 +242,13 @@ def test_a_different_browser_is_never_served_from_the_cache(monkeypatch):
         hooks._browser_for("firefox", base, None)                           # @firefox
     assert pw.chromium.launch.call_count == 4 and pw.firefox.launch.call_count == 1
     assert len(hooks._browsers) == 5
-    hooks._browsers.clear()
+    hooks.close_cached_browsers()   # NOOD_0203 — also resets the shared driver
 
 
 def test_a_crashed_browser_is_evicted_not_handed_out(monkeypatch):
     from noodle import hooks
     monkeypatch.delenv("NOODLE_REUSE_BROWSER", raising=False)
-    hooks._browsers.clear()
+    hooks.close_cached_browsers()   # NOOD_0203 — also resets the shared driver
     pw, browser = _fake_playwright()
     with patch("noodle.hooks.sync_playwright") as f:
         f.return_value.start.return_value = pw
@@ -256,13 +256,13 @@ def test_a_crashed_browser_is_evicted_not_handed_out(monkeypatch):
         browser.is_connected.return_value = False        # died between scenarios
         hooks._browser_for("chromium", {"headless": True}, None)
     assert pw.chromium.launch.call_count == 2, "a dead browser was handed to the next scenario"
-    hooks._browsers.clear()
+    hooks.close_cached_browsers()   # NOOD_0203 — also resets the shared driver
 
 
 def test_reuse_can_be_switched_off(monkeypatch):
     from noodle import hooks
     monkeypatch.setenv("NOODLE_REUSE_BROWSER", "0")
-    hooks._browsers.clear()
+    hooks.close_cached_browsers()   # NOOD_0203 — also resets the shared driver
     pw, _ = _fake_playwright()
     with patch("noodle.hooks.sync_playwright") as f:
         f.return_value.start.return_value = pw
@@ -294,12 +294,39 @@ def test_after_scenario_keeps_the_browser_but_drops_the_context(monkeypatch):
 def test_after_all_closes_every_cached_browser(monkeypatch):
     from noodle import hooks
     pw, browser = MagicMock(), MagicMock()
-    hooks._browsers.clear()
+    hooks.close_cached_browsers()   # NOOD_0203 — also resets the shared driver
     hooks._browsers[("chromium", None, ())] = (pw, browser)
+    hooks._pw = pw
     hooks.close_cached_browsers()
     browser.close.assert_called_once()
     pw.stop.assert_called_once()
-    assert not hooks._browsers
+    assert not hooks._browsers and hooks._pw is None
+
+
+def test_a_second_launch_key_does_not_start_a_second_driver(monkeypatch):
+    """NOOD_0203 — Playwright's sync API allows ONE live driver per thread, so
+    the cache's whole point (N browsers) died on the first @slow/@firefox
+    scenario with 'using Playwright Sync API inside the asyncio loop', taking
+    every scenario after it down in before_scenario."""
+    from noodle import hooks
+    monkeypatch.delenv("NOODLE_REUSE_BROWSER", raising=False)
+    hooks.close_cached_browsers()
+    pw, _ = _fake_playwright()
+    starts = []
+
+    def _start():
+        starts.append(1)
+        assert len(starts) == 1, "second sync_playwright().start() — this is the bug"
+        return pw
+
+    with patch("noodle.hooks.sync_playwright") as f:
+        f.return_value.start.side_effect = _start
+        a = hooks._browser_for("chromium", {"headless": True, "slow_mo": 0}, None)
+        b = hooks._browser_for("chromium", {"headless": True, "slow_mo": 500}, None)   # @slow
+    assert len(starts) == 1
+    assert a[1].is_connected() and b[1].is_connected()
+    assert a[0] is b[0], "both browsers must hang off the one driver"
+    hooks.close_cached_browsers()
 
 
 # ---------------------------------------------------------------------------
