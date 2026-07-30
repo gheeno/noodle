@@ -1584,6 +1584,7 @@ def after_all(context):
             _suite_results,
             str(rdir / f"junit.{slice_id}.xml") if parallel
             else str(_paths.reports_dir() / "junit.xml"),
+            results_dir=rdir,
         )
         if not parallel:
             # NOOD_0187 — stamp retried-then-green results as flaky before the

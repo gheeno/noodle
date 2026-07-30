@@ -4,6 +4,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a20] — 2026-07-30
+
+**NOOD_0204** — fix: Azure CI reporting — every job stops going red at
+post-job, the Tests tab carries steps + evidence, the Allure tab uses the
+task's supported input, and `noodle init` reaches existing .gitignores.
+
+- `Cache@2`'s implicit post-job save tars its path unconditionally; on agents
+  with Node ≥ 20 the portable-Node dir was never created, so every job on
+  hosted Linux went red with `tar: .node: Cannot open`. The dir is now created
+  unconditionally before the cache task (`continueOnError` only covers the
+  restore, not the save).
+- `junit.xml` testcases now carry a `system-out` with the flattened Gherkin
+  step list (status + timing) and every on-disk attachment as an
+  `[[ATTACHMENT|path]]` marker — the documented hook Azure DevOps scans to
+  attach evidence to the built-in Tests tab. The tab is now a full fallback
+  when the Allure marketplace extension publishes nothing. Under `--parallel`,
+  attachment paths resolve to their post-flatten home so the published paths
+  are alive when Azure reads them.
+- `PublishAllureReport@2` is now passed `testResultsDir` only: `reportDir` is
+  not a declared input of the task (checked up to extension 2.1.5), its code
+  path logs nothing in any outcome, and on the deployed 2.1.3 the tab
+  published nothing, silently. The template also ensures the job's working
+  directory exists (`checkout: none` never creates it) and gains a
+  `publishAllureTab` parameter so orgs without the extension can turn the tab
+  off; the single-file report artifact publishes regardless.
+- The RCA report is no longer posted to the run's Extensions tab via
+  `uploadsummary`: testers download it instead — `reports/rca.md` plus the
+  standalone `reports/rca.html` ship inside the published test artifacts, in
+  the workspace template and both engine pipelines.
+- `noodle init` now append-merges `.gitignore` instead of skipping it when it
+  exists: repos that already had one (most, via repo-init) never received the
+  run-output ignores, leaving traces/screenshots/session state committable.
+  Missing entries are appended under one marked block, idempotently; user
+  lines are never touched.
+
 ## [1.0.0a19] — 2026-07-30
 
 **NOOD_0203** — fix: a tag that changes the browser no longer kills every

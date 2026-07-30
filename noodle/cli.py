@@ -955,6 +955,35 @@ session*.json
 docs/steps_dictionary_suggestions.md
 """
 
+
+def _merge_gitignore(root: Path):
+    """NOOD_0204 — .gitignore is the one scaffold file that needs MERGING.
+
+    It is neither glue (always overwrite) nor user config (never touch): most
+    repos already have one from repo-init, and the old config-file skip meant
+    they never received the run-output ignores — so traces, screenshots and
+    saved sessions (see _GITIGNORE's own comment for the stakes) stayed
+    committable in exactly the repos with collaborators and history. Append
+    only the missing entries, under one marked block, idempotently; never
+    remove or reorder what the user wrote. Returns 'created', 'updated' or
+    None for the init summary.
+    """
+    f = root / ".gitignore"
+    if not f.exists():
+        f.write_text(_GITIGNORE, encoding="utf-8")
+        return "created"
+    existing = f.read_text(encoding="utf-8")
+    have = {ln.strip() for ln in existing.splitlines()}
+    missing = [ln for ln in _GITIGNORE.splitlines()
+               if ln.strip() and not ln.startswith("#") and ln.strip() not in have]
+    if not missing:
+        return None
+    block = ("\n# --- added by noodle init: run output and secrets must never "
+             "be committable (NOOD_0177) ---\n" + "\n".join(missing) + "\n")
+    f.write_text(existing.rstrip("\n") + "\n" + block, encoding="utf-8")
+    return "updated"
+
+
 _ENV_STUB_BASE = """\
 # .env — workspace settings, safe to commit. NO SECRETS here: put credentials
 # in secrets.env (gitignored) and reference them in tests as {env:MY_PASSWORD}.
@@ -1444,7 +1473,7 @@ def init(
     config_files = {
         root / "noodle.yaml": _NOODLE_YAML,
         root / ".env": _env_stub(llm, model),
-        root / ".gitignore": _GITIGNORE,      # NOOD_0118 — keep generated <app>_secrets.env out of git
+        # .gitignore is NOT here — it append-merges via _merge_gitignore below
         tests / "pom.yaml": _GLOBAL_POM,
     }
     env_path = root / ".env"
@@ -1471,6 +1500,11 @@ def init(
             updated.append(f"{f} (old copy → {f.name}.bak)")
         else:
             stale.append(str(f))
+    gi_state = _merge_gitignore(root)
+    if gi_state == "created":
+        created.append(str(root / ".gitignore"))
+    elif gi_state == "updated":
+        updated.append(f"{root / '.gitignore'} (missing run-output ignores appended)")
     if created:
         typer.echo("Created:\n  " + "\n  ".join(created))
     if updated:
