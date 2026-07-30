@@ -4,6 +4,72 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a18] — 2026-07-30
+
+**NOOD_0202** — feature: a CI job can see what the run is doing, and an LLM
+session still doesn't pay for it.
+
+`--quiet` is automatic off a TTY, so every CI job got it — and quiet folded the
+behave child's *stderr* into `run.log` alongside its stdout. An Azure job
+watched a 20-minute suite in total silence, and the scenario/step events
+documented in `docs/logging.md` never reached the log stream at all: a
+`NOODLE_LOG_FORMAT=json` run shipped exactly two records (`run.start`,
+`run.end`), both from the parent CLI. The KQL in that doc could never have
+returned a scenario-level row.
+
+The file log was always complete — this makes the *console* a sink decision
+rather than an on/off one.
+
+- `log.progress_mode()` — is a build console watching? `NOODLE_LOG_PROGRESS`
+  explicit `0`/`1` wins, else on by default when `CI`/`TF_BUILD` is set (no
+  pipeline yaml change needed), else off.
+- Progress mode streams a maven-style build log: `run.start`, one line per
+  feature, one per scenario start and result (icon, name, elapsed), failures
+  inline, and a `run.end` verdict line. `--log-level DEBUG` adds a line per
+  step — the `mvn -X` tier that shows where a wedged suite stopped.
+- `log.attach_progress_handler()` carries only records with an `event` plus
+  every `WARNING+`, so the per-action firehose (81 logger sites in
+  `actions.py` alone) stays in `run.log` where it belongs.
+- Token guard: the agent doors set `NOODLE_LOG_PROGRESS=0` themselves
+  (`repl.core._engine`, `noodle run --json`) rather than trusting `CI` to be
+  unset — an AI-SDLC orchestrator runs *inside* the pipeline, and its captured
+  subprocess pipes stderr straight into the payload the model reads.
+- The run log now rides the agent payload by **path** (`log`), so a model reads
+  it with its own file tools when a run goes red instead of streaming it on
+  every green one.
+- `telemetry()` also fires in text mode under progress mode; the NOOD_0173
+  "json only" gating held on the premise that a human already had behave's
+  output, which is exactly what `--quiet` takes away.
+- The build log is level-prefixed and emoji-free (`[INFO]` / `[WARNING]` /
+  `[ERROR]`) — it's a log file, not a terminal, so it has to grep and diff, and
+  a failed scenario logs at ERROR so `grep '^\[ERROR\]'` yields exactly the
+  failures. Stripping happens at that sink only: the local TTY console keeps
+  its breadcrumbs (NOOD_0171's unchanged-console contract).
+- **Parallel runs are readable.** N behavex workers all stream to one stderr, so
+  a 4-worker run was four features' scenarios shuffled together with no
+  attribution — two identical `Step failed` lines in a row belonged to different
+  features. Every line now carries its lane (`[w3]`), claimed at worker startup
+  and matching `NOODLE_WORKER_INDEX`, so `grep '\[w3\]'` replays one worker in
+  order. json records carry `lane` next to `worker`/`feature`. Sequential runs
+  get no tag — nothing to disambiguate.
+- An **engine** exception is distinguishable from a test failure. A
+  non-`AssertionError` names its class and message under the failed step; the
+  six behave boundaries (`before_all` … `after_all`) log class, message and
+  traceback before re-raising, because behave otherwise reports a hook crash as
+  one `ABORTED: HOOK-ERROR` line with the traceback on stdout — which `--quiet`
+  had already diverted to run.log. Ordinary engine functions stay unwrapped: a
+  blanket try/except swallows failures rather than surfacing them.
+- The progress handler attaches as the *first* statement of `before_all`, so a
+  crash during run setup still has a console to report itself on.
+- A retried scenario is marked `[retry 1/1]`. behave's autoretry re-enters the
+  hooks, so the same scenario printed twice with nothing saying why — which
+  reads as a duplicate, or as two scenarios sharing a name.
+- The run-wide TLS warning (`NOODLE_IGNORE_HTTPS_ERRORS`) is said once per run
+  instead of once per browser context. It fired 109 times on a 109-scenario
+  suite — a quarter of the whole build log. `@insecure_certs` still warns per
+  scenario, where it is a per-scenario decision and the step's RCA should
+  carry it.
+
 ## [1.0.0a17] — 2026-07-29
 
 **NOOD_0201** — feature: the API wok grows up — localhost discovery, live

@@ -39,6 +39,10 @@ def _stub_run_env(monkeypatch, tmp_path, record):
 def test_run_quiet_diverts_stream_and_prints_summary(monkeypatch, tmp_path):
     record = {}
     ws = _stub_run_env(monkeypatch, tmp_path, record)
+    # NOOD_0202 — no build console watching: stderr still folds into run.log.
+    # (The suite itself runs under CI=true on GitHub Actions, which would
+    # otherwise switch this run into progress mode.)
+    monkeypatch.setenv("NOODLE_LOG_PROGRESS", "0")
     result = runner.invoke(cli.app, ["run", "tests", "-w", str(ws), "--quiet"])
     assert result.exit_code == 0
     # behave's stdout went to a file handle, stderr folded into it

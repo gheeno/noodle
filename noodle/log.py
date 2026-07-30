@@ -183,12 +183,18 @@ def event(name: str, body: str = "", level: int = logging.INFO, **attrs) -> None
 
 
 def telemetry(name: str, body: str = "", level: int = logging.INFO, **attrs) -> None:
-    """NOOD_0173 — a structured lifecycle event emitted ONLY in json mode
-    (machine telemetry: run/scenario/step). Silent in text mode, so the human
-    console stays byte-for-byte unchanged (the phase-1 contract) — the human
-    already has behave's output and the CLI summary. Use event() for a signal a
-    person should also see on the console."""
-    if _json_mode():
+    """NOOD_0173 — a structured lifecycle event (run/scenario/step).
+
+    Emitted in json mode, and (NOOD_0202) in text mode when progress_mode() is
+    on. The original contract was "json only, so the human console stays
+    byte-for-byte unchanged" — which held because the human already had behave's
+    output. In `--quiet` (every CI run: non-TTY) that premise is false, behave's
+    stream is in run.log and the console sees NOTHING for the length of the
+    suite. progress_mode() is precisely "someone is watching a console", so
+    these lines go there and the byte-for-byte TTY contract still holds.
+
+    Use event() for a signal a person should see on the console either way."""
+    if _json_mode() or progress_mode():
         event(name, body or name, level=level, **attrs)
 
 
@@ -240,6 +246,32 @@ def _json_mode() -> bool:
     return os.getenv("NOODLE_LOG_FORMAT", "text").lower() == "json"
 
 
+def progress_mode() -> bool:
+    """NOOD_0202 — is a build console watching this run?
+
+    `--quiet` (automatic off a TTY) sends behave's stream to run.log, which is
+    right for an agent and wrong for CI: an Azure job watched a 20-minute suite
+    in total silence, and the scenario/step events documented in docs/logging.md
+    never reached the log stream at all. This gate decides who gets the curated
+    stream on the console. The *file* log is unconditional either way — nothing
+    is ever lost, it only stops being charged to an LLM's context window.
+
+    Resolution, first match wins:
+      NOODLE_LOG_PROGRESS  explicit 0/1 — the pipeline's own switch
+      CI / TF_BUILD        a build console is watching → on by default
+      otherwise            off
+
+    The agent doors set NOODLE_LOG_PROGRESS=0 themselves (repl.core._engine and
+    `noodle run --json`) rather than relying on CI being unset: an AI-SDLC
+    orchestrator runs *inside* the pipeline, where CI=true, and its captured
+    subprocess pipes stderr straight into the payload the model reads.
+    """
+    env = os.getenv("NOODLE_LOG_PROGRESS", "").strip().lower()
+    if env:
+        return env not in ("0", "false", "no", "off")
+    return bool(os.getenv("CI") or os.getenv("TF_BUILD"))
+
+
 def _configure():
     if getattr(logger, "_noodle_configured", False):
         return
@@ -271,6 +303,79 @@ def route_console_to_stderr() -> None:
     for h in logger.handlers:
         if isinstance(h, _LiveStreamHandler):
             h._stream_name = "stderr"
+
+
+# NOOD_0202 — emoji ranges, for stripping the console's breadcrumbs out of the
+# CI build log. Covers arrows, the misc-symbol/dingbat blocks (⚠ ✅ ❌ ▶),
+# geometric shapes and the SMP pictographs (🩹 🏁 📊), plus the variation
+# selector and ZWJ that follow them. Trailing spaces go with the run so the
+# line's own indentation survives.
+_EMOJI_RE = re.compile(
+    "[←-⇿⌀-⏿■-➿⬀-⯿"
+    "️‍\U0001f000-\U0001faff]+[ ]*")
+
+
+class _PlainFormatter(logging.Formatter):
+    """NOOD_0202 — the CI build log is a log file, not a terminal: one level
+    prefix per line and no emoji, so it greps and diffs like maven/gradle
+    output. The local TTY console keeps its breadcrumbs — this formatter is
+    attached to the progress handler only."""
+
+    def format(self, record):
+        msg = _EMOJI_RE.sub("", super().format(record).lstrip("\n")).rstrip()
+        if not msg:
+            return ""
+        # NOOD_0202 — the lane tag. 8-10 behavex workers stream to ONE stderr, so
+        # without it a parallel build log is four features' scenarios shuffled
+        # together with no way to tell which line belongs to which: two identical
+        # "Step failed" lines in a row were different features. `grep '\[w3\]'`
+        # replays one lane in order. Absent on a sequential run — nothing to
+        # disambiguate, so no noise.
+        lane = (getattr(record, "noodle_context", None) or {}).get("lane")
+        tag = f"[w{lane}] " if lane else ""
+        # Every line gets the prefix, not just the first: a traceback from an
+        # engine crash has to grep as [ERROR] all the way down.
+        return "\n".join(f"[{record.levelname}] {tag}{ln}" for ln in msg.splitlines())
+
+
+_progress_handler: logging.Handler | None = None
+
+
+def attach_progress_handler() -> None:
+    """NOOD_0202 — the CI build log: a stderr handler carrying ONLY the curated
+    stream (records with an `event`, plus every WARNING+).
+
+    stderr because in `--quiet` this process's *stdout* is a redirect into
+    run.log, and behave's per-action firehose (81 logger call sites in
+    actions.py alone) belongs there, not on a build console. What lands here is
+    ~2 lines per scenario at INFO, plus one per step at DEBUG — so
+    `noodle run --log-level DEBUG` is the `mvn -X` of a Noodle run, and it's the
+    tier that tells you WHERE a wedged suite stopped.
+
+    No-op in json mode: the console handler is already stderr there, and a
+    second one would double every line.
+    """
+    global _progress_handler
+    if _json_mode() or _progress_handler is not None:
+        return
+    h = _LiveStreamHandler("stderr")
+    h.setFormatter(_PlainFormatter("%(message)s"))
+    h.addFilter(lambda r: getattr(r, "event", None) is not None
+                or r.levelno >= logging.WARNING)
+    logger.addHandler(h)
+    _progress_handler = h
+
+
+def route_console_to_build_log() -> None:
+    """NOOD_0202 — the CLI process's own console handler joins the build log:
+    stderr, level-prefixed, emoji-stripped, so its run.start/run.end read like
+    every line the behave child emits through attach_progress_handler(). A
+    no-op on formatting in json mode (that stream is already machine-shaped)."""
+    for h in logger.handlers:
+        if isinstance(h, _LiveStreamHandler):
+            h._stream_name = "stderr"
+            if not _json_mode():
+                h.setFormatter(_PlainFormatter("%(message)s"))
 
 
 _file_handler: logging.Handler | None = None

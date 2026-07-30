@@ -1,5 +1,6 @@
 import errno
 import json
+import logging
 import os
 import re
 import shutil
@@ -22,7 +23,7 @@ def _log_run_end(results_root: str, rc: int, t0: float, data: dict | None = None
     exit code, wall time, LLM spend, and model/engine provenance the behave
     child can't see. Emitted once from the CLI (not per behave worker), so a
     parallel run gets exactly one run.end. `data` reuses the CLI's own scan."""
-    if not log._json_mode():
+    if not (log._json_mode() or log.progress_mode()):   # NOOD_0202 — CI too
         return
     from noodle import install_check
     from noodle.llm import cost as _cost
@@ -30,7 +31,12 @@ def _log_run_end(results_root: str, rc: int, t0: float, data: dict | None = None
     s = data if data is not None else _summary.collect(results_root)
     usd = (_cost.load_total(results_root) or {}).get("usd")
     vr = install_check.version_report()
-    log.event("run.end", "🏁 run.end",
+    # NOOD_0202 — the build log's verdict line (maven's BUILD SUCCESS + Total
+    # time), so a CI console reading one stream gets the outcome on it.
+    _secs = time.monotonic() - t0
+    log.event("run.end", f"Run finished — {s.get('passed')} passed, "
+                         f"{s.get('failed')} failed, exit {rc} ({_secs:.1f}s)",
+              level=logging.ERROR if rc else logging.INFO,
               duration_ms=int((time.monotonic() - t0) * 1000),
               passed=s.get("passed"), failed=s.get("failed"),
               verified=s.get("verified"), exit_code=rc, llm_usd=usd,
@@ -271,6 +277,12 @@ def run(
     # NOOD_0131 — --json promises ONE parseable object on stdout, so it
     # implies quiet (the live behave stream would corrupt it).
     quiet = quiet or json_out or _agent_quiet()
+    # NOOD_0202 — `--json` is by construction a machine-facing caller (an agent
+    # tool call, a wrapper parsing stdout), and it is the one that pays per byte.
+    # Never stream the CI progress log into its captured pipe — not even inside
+    # a pipeline, where CI=true would otherwise turn it on. Explicit wins.
+    if json_out and not os.getenv("NOODLE_LOG_PROGRESS"):
+        os.environ["NOODLE_LOG_PROGRESS"] = "0"
     if serve is None:
         serve = _serve_default()
     # NOOD_0133 — every run names the build it executes: a user should never be
@@ -363,7 +375,12 @@ def run(
     # CLI's own run.start/run.end correlate with the child's scenario/step events.
     _run_t0 = time.monotonic()
     log.bind(run_id=env["NOODLE_RUN_ID"])
-    log.telemetry("run.start", "🏁 run.start", target=path, tags=tag,
+    # NOOD_0202 — in progress mode the whole build log rides stderr, so a CI
+    # console reads ONE ordered stream. typer.echo (summary, report URLs) keeps
+    # stdout, which is what a pipeline step parses or an agent captures.
+    if log.progress_mode():
+        log.route_console_to_build_log()
+    log.telemetry("run.start", f"Run started — {path}", target=path, tags=tag,
                   browser=browser, headless=env["NOODLE_HEADLESS"] == "true",
                   parallel=parallel)
     if retries is not None:
@@ -590,6 +607,9 @@ def run(
         rca_file = reports / "rca.html"
         payload["report"] = str(report_idx) if report_idx.is_file() else None
         payload["rca_html"] = str(rca_file) if rca_file.is_file() else None
+        # NOOD_0202 — the run log by path (--json suppresses the console stream)
+        log_file = _paths.last_run_root(cwd) / "logs" / "noodle.log"
+        payload["log"] = str(log_file) if log_file.is_file() else None
         # NOOD_0200 — evidence images by PATH: the agent reads the file via
         # its harness file-read, never an `open`/`cat` hunt through rca.md.
         from noodle.reporting import rca_report as _rca_rep
@@ -696,7 +716,14 @@ def _run_behave(args: list, env: dict, cwd: str, log_path=None,
     if log_path is not None:
         lf = open(log_path, "w", encoding="utf-8")
         kw["stdout"] = lf
-        kw["stderr"] = subprocess.STDOUT
+        # NOOD_0202 — stderr is the child's progress channel: in CI let it
+        # through to the build console (this is the whole fix — folding it into
+        # run.log is what made a quiet run silent AND kept every scenario/step
+        # event off the log stream docs/logging.md promises). With no console
+        # watching it folds in as before: an agent's captured pipe must not
+        # grow a firehose.
+        if not log.progress_mode():
+            kw["stderr"] = subprocess.STDOUT
     try:
         if not timeout:
             return subprocess.run(args, **kw).returncode, False
@@ -954,7 +981,9 @@ NOODLE_IGNORE_HTTPS_ERRORS=false
 #NOODLE_DEV_FIX_ATTEMPTS=10      # agent test-dev loop: CEILING on cause-backed fix+rerun attempts (first failure: reproduce once with probe --do, never guess-per-lap) before reporting the test as flaky
 #NOODLE_VIEWPORT=1920x1080      # run-wide viewport (or @viewport:WxH tag per scenario)
 #NOODLE_RETRIES=0               # retry failed scenarios N times
-#NOODLE_LOG_LEVEL=INFO
+#NOODLE_LOG_LEVEL=INFO          # DEBUG adds a line per step to the CI build log (the `mvn -X` tier — shows WHERE a wedged run stopped)
+#NOODLE_LOG_PROGRESS=1          # stream a maven-style build log to stderr. Auto-on when CI/TF_BUILD is set; agents (MCP, --json) force it off so an LLM session isn't charged for it. See docs/logging.md
+#NOODLE_LOG_FORMAT=json         # ship that same stream as one JSON object per line, for a platform log store
 # Session diagnostics (NOOD_0147) — agent failure self-reports in diagnostics/
 # (gitignored; see docs/session-diagnostics.md for the trigger definitions):
 #NOODLE_DIAG_MAX=25             # reports kept before the oldest rotate out
