@@ -158,9 +158,11 @@ def test_network_log_attached_to_allure_result(tmp_path, monkeypatch):
                          _failed_requests=[], _requests=["GET /"], _ws_frames=[])
     hooks.after_scenario(ctx, _make_scenario("Attach me"))
 
-    assert len(fake_result.attachments) == 1
-    name, path, mime_type = fake_result.attachments[0]
-    assert name == "network log"
+    # NOOD_0205 — assert on the network entry, not on a count of 1: the
+    # per-scenario `run log` is a second attachment now.
+    net = [a for a in fake_result.attachments if a[0] == "network log"]
+    assert len(net) == 1
+    name, path, mime_type = net[0]
     assert path.endswith("Attach_me.json")
     assert mime_type == "application/json"
 

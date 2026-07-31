@@ -7,7 +7,7 @@
 #       - repository: noodle
 #         type: git                  # or 'github' + endpoint: <service connection>
 #         name: Tooling/noodle
-#         ref: refs/tags/1.0.0a20     # pin the engine — a moving ref is not a build
+#         ref: refs/tags/1.0.0a21     # pin the engine — a moving ref is not a build
 #
 #   jobs:
 #     - template: ci/azure/noodle-tests.yml@noodle
@@ -30,26 +30,38 @@ parameters:
     displayName: 'Noodle workspace inside this repo (the dir holding noodle.yaml)'
     type: string
     default: tests/noodle
+  # NOOD_0205 — the default is the WORD 'all', not an empty string. Azure's
+  # Run-pipeline panel refuses to advance past a blank runtime string
+  # parameter, so an empty default made the common case — run the whole suite,
+  # by hand — literally unreachable. 'all' is translated away below; '' is
+  # still accepted so an automated caller passing it keeps working.
   - name: testTag
-    displayName: 'Only run scenarios with this tag (blank = everything discovered)'
+    displayName: 'Tag filter — "all" runs every feature and scenario'
     type: string
-    default: ''
+    default: all
   - name: pool
     displayName: 'Agent pool — pass your own for a self-hosted pool'
     type: object
     default:
       vmImage: ubuntu-latest
+  # NOOD_0205 — sharding scales linearly in JOBS, which is the wrong axis: a
+  # 29-feature suite listed 31 jobs, a 1000-feature one would list 1002, and
+  # every job pays the full setup (two checkouts, pip install, browser
+  # download, Allure CLI ≈ 60-90s) to run one file. One job that parallelises
+  # INSIDE itself pays that once. Sharding stays as the scaling lever for a
+  # suite one agent can no longer finish in time — opt-in, not the shape.
   - name: shard
-    displayName: 'One agent per .feature file'
+    displayName: 'Fan out to one agent per .feature file (large suites only)'
     type: boolean
-    default: true
+    default: false
   - name: maxParallel
+    displayName: 'Matrix width when sharding is on'
     type: number
     default: 4
   - name: parallelProcesses
-    displayName: 'behavex processes WITHIN a job (0 = single process)'
+    displayName: 'Parallel test processes within the job (0 = single process)'
     type: number
-    default: 0
+    default: 4
   - name: pythonVersion
     type: string
     default: '3.11'
@@ -126,9 +138,15 @@ jobs:
         runTarget: $(featurePath)
       ${{ else }}:
         runTarget: ''
+        # NOOD_0205 — one job, one report, and the Allure tab reads it directly
+        # (see the publish step below), so it has to be single-file. Job-level,
+        # so both `noodle run`'s own after_all report and the fallback
+        # generation step below build the same shape.
+        NOODLE_ALLURE_SINGLE_FILE: '1'
       # The tag rides inside single quotes so a tag containing a space
       # survives the shell's word-split of $(tagFlag); blank stays blank.
-      ${{ if ne(parameters.testTag, '') }}:
+      # NOOD_0205 — 'all' (any case) means the whole suite, same as blank.
+      ${{ if and(ne(parameters.testTag, ''), ne(lower(parameters.testTag), 'all')) }}:
         tagFlag: "--tag '${{ parameters.testTag }}'"
       ${{ else }}:
         tagFlag: ''
@@ -138,6 +156,20 @@ jobs:
         path: s/project
       - checkout: noodle
         path: s/noodle
+
+      # NOOD_0205 — which engine build actually ran. `noodle --version` cannot
+      # say: it reads the SHA by walking up from the *package* directory, and
+      # CI pip-installs a NON-EDITABLE copy into site-packages with no repo
+      # above it, so the banner silently drops the SHA in exactly the place it
+      # matters (an editable local install does print it, which is what makes
+      # the omission easy to miss). The checkout always has .git.
+      - bash: |
+          echo "engine sha:  $(git rev-parse HEAD)"
+          echo "engine tags: $(git tag --points-at HEAD | tr '\n' ' ')"
+          echo "engine head: $(git log -1 --pretty=%s)"
+        displayName: 'Engine build provenance'
+        workingDirectory: $(noodleRoot)
+        continueOnError: true
 
       - task: UsePythonVersion@0
         inputs:
@@ -157,6 +189,23 @@ jobs:
       - bash: |
           set -euo pipefail
           EXTRAS='${{ parameters.extras }}'
+          # A knob on this template must install what backs it — otherwise the
+          # install goes green and the run dies later naming a pip extra the
+          # project never asked for. Both cases below go through here.
+          add_extra() {
+            if [ -z "$EXTRAS" ]; then EXTRAS="[$1]"
+            elif ! printf '%s' "$EXTRAS" | grep -q "$1"; then EXTRAS="${EXTRAS%]},$1]"
+            fi
+          }
+          # NOOD_0205 — parallelProcesses != 0 makes `noodle run` take the
+          # --parallel path, which needs behavex. Without the extra the job
+          # died with "Parallel runs need behavex" the moment 4 became the
+          # default (constraints.txt already pins behavex, so this stays
+          # reproducible).
+          if [ '${{ parameters.parallelProcesses }}' != '0' ]; then
+            add_extra parallel
+            echo "Parallel run requested — installing with $EXTRAS"
+          fi
           KV='${{ parameters.keyVaultUrl }}'
           # NOOD_0193 — Key Vault needs the `azure` extra, and asking every
           # project to remember `extras: '[azure]'` NEXT TO keyVaultUrl is a
@@ -166,9 +215,7 @@ jobs:
           # rule hooks._load_keyvault uses to decide there is no vault.
           case "$KV" in
             ''|'$'*) ;;
-            *) if [ -z "$EXTRAS" ]; then EXTRAS='[azure]'
-               elif ! printf '%s' "$EXTRAS" | grep -q azure; then EXTRAS="${EXTRAS%]},azure]"
-               fi
+            *) add_extra azure
                echo "Key Vault configured — installing with $EXTRAS" ;;
           esac
           pip install "$(noodleRoot)$EXTRAS" -c "$(noodleRoot)/constraints.txt"
@@ -265,15 +312,46 @@ jobs:
           testResultsFiles: $(workspace)/artifacts/reports/junit.xml
           testRunTitle: 'Noodle — $(Build.SourceBranchName) — $(System.JobName)'
 
-      # Raw results exist only to feed the suite merge below; nobody consumes
-      # result JSON from the user-facing artifact.
-      - task: PublishPipelineArtifact@1
-        displayName: 'Publish raw Allure results'
-        condition: always()
-        inputs:
-          targetPath: $(workspace)/artifacts/allure-results
-          artifact: 'noodle-allure-results-$(System.JobName)'
-          publishLocation: pipeline
+      # NOOD_0205 — the Allure tab, published from THIS job. Unsharded there is
+      # one report and nothing to merge, so the extra job that used to exist
+      # only to re-generate it is gone.
+      #
+      # Two things had to be true at once for the tab to stop publishing
+      # nothing: the report must be single-file (NOODLE_ALLURE_SINGLE_FILE
+      # above), and `reportDir` must be RELATIVE, resolved against a job that
+      # actually has a source tree — the old report job ran `checkout: none`,
+      # so an absolute path there published nothing, silently. `testResultsDir`
+      # stays absolute. continueOnError because the task needs an org-level
+      # marketplace extension: a missing extension degrades the tab, it does
+      # not fail the suite.
+      - ${{ if and(eq(parameters.shard, false), eq(parameters.publishAllureTab, true)) }}:
+        - bash: |
+            set -euo pipefail
+            rm -rf "$(Build.SourcesDirectory)/allure-report"
+            cp -r "$(workspace)/artifacts/reports/allure-report" \
+                  "$(Build.SourcesDirectory)/allure-report"
+          displayName: 'Stage report for the Allure tab'
+          condition: always()
+        - task: PublishAllureReport@2
+          displayName: 'Publish Allure Report tab'
+          condition: always()
+          continueOnError: true
+          inputs:
+            testResultsDir: $(workspace)/artifacts/allure-results
+            reportDir: 'allure-report'
+            reportName: 'Allure Report'
+
+      # Raw results exist only to feed the suite merge job, which only exists
+      # when sharding; nobody consumes result JSON from the user-facing
+      # artifact.
+      - ${{ if eq(parameters.shard, true) }}:
+        - task: PublishPipelineArtifact@1
+          displayName: 'Publish raw Allure results'
+          condition: always()
+          inputs:
+            targetPath: $(workspace)/artifacts/allure-results
+            artifact: 'noodle-allure-results-$(System.JobName)'
+            publishLocation: pipeline
 
       - bash: rm -rf "$(workspace)/artifacts/allure-results"
         displayName: 'Drop raw results from TestArtifacts'
@@ -287,81 +365,85 @@ jobs:
           artifact: 'NoodleTestArtifacts-$(System.JobName)'
           publishLocation: pipeline
 
-  # One suite-level report across every shard, published as the browsable
-  # "Allure Report" tab. The tab needs the free qameta.allure-azure-pipelines
-  # extension installed ONCE at organization level — no extension? set
-  # publishAllureTab: false; the merged single-file report still publishes as
-  # a pipeline artifact either way.
-  - job: ${{ parameters.jobName }}_report
-    displayName: 'Allure report tab'
-    dependsOn: ${{ parameters.jobName }}
-    condition: always()
-    pool: ${{ parameters.pool }}
-    steps:
-      - checkout: none
+  # NOOD_0205 — sharding only. Unsharded there is one job, one report,
+  # and the tab is published from the test job itself (above), so this
+  # whole job — and the second report generation it did — is gone.
+  - ${{ if eq(parameters.shard, true) }}:
+    # One suite-level report across every shard, published as the browsable
+    # "Allure Report" tab. The tab needs the free qameta.allure-azure-pipelines
+    # extension installed ONCE at organization level — no extension? set
+    # publishAllureTab: false; the merged single-file report still publishes as
+    # a pipeline artifact either way.
+    - job: ${{ parameters.jobName }}_report
+      displayName: 'Allure report tab'
+      dependsOn: ${{ parameters.jobName }}
+      condition: always()
+      pool: ${{ parameters.pool }}
+      steps:
+        - checkout: none
 
-      - template: steps-allure-cli.yml
-        parameters:
-          allureVersion: ${{ parameters.allureVersion }}
+        - template: steps-allure-cli.yml
+          parameters:
+            allureVersion: ${{ parameters.allureVersion }}
 
-      - task: DownloadPipelineArtifact@2
-        displayName: 'Download shard results'
-        inputs:
-          patterns: 'noodle-allure-results-*/**'
-          path: $(Pipeline.Workspace)/shards
-
-      - task: Cache@2
-        displayName: 'Restore suite Allure history'
-        continueOnError: true
-        inputs:
-          key: '"noodle-history-suite" | "$(Build.BuildId)"'
-          restoreKeys: |
-            "noodle-history-suite"
-          path: $(Pipeline.Workspace)/allure-history
-
-      # --single-file is REQUIRED for the tab: the Qameta extension only
-      # uploads a report whose summary.json has meta.singleFile=true, and
-      # silently skips a multi-file one ("no report to show"). The same file
-      # also opens offline straight from the artifact.
-      - bash: |
-          set -euo pipefail
-          mkdir -p merged allure-history
-          cp -r shards/*/. merged/
-          HISTORY="$(Pipeline.Workspace)/allure-history/history.jsonl"
-          allure awesome --single-file --report-name "Noodle Suite" \
-            --output allure-report --history-path "$HISTORY" merged
-          if [ -f "$HISTORY" ]; then
-            tail -n ${{ parameters.historyRuns }} "$HISTORY" > "$HISTORY.tmp" && mv "$HISTORY.tmp" "$HISTORY"
-          fi
-        displayName: 'Merge shards + generate suite report'
-        workingDirectory: $(Pipeline.Workspace)
-
-      # NOOD_0204 — testResultsDir ONLY, on purpose. `reportDir` is not a
-      # declared input in the task's task.json (checked up to extension
-      # 2.1.5), its code path logs nothing on success OR failure, and on the
-      # deployed 2.1.3 the tab published nothing, silently. The documented
-      # path is testResultsDir: the task generates its own single-file report
-      # from the merged results (trend history lives in the artifact report
-      # below, not the tab). That path reads the job's working directory,
-      # which `checkout: none` never creates — hence the mkdir. The task also
-      # logs nothing there, hence the DIAG step: delete it once the tab has
-      # been seen working.
-      - ${{ if eq(parameters.publishAllureTab, true) }}:
-        - bash: |
-            mkdir -p "$(System.DefaultWorkingDirectory)"
-            echo "merged results: $(ls "$(Pipeline.Workspace)/merged" | wc -l) files"
-            find "$(Pipeline.Workspace)/allure-report" -name summary.json \
-              -exec sh -c 'echo "{}:"; head -c 600 "{}"; echo' \;
-          displayName: 'DIAG: state before PublishAllureReport'
-          condition: always()
-        - task: PublishAllureReport@2
-          displayName: 'Publish Allure Report tab'
+        - task: DownloadPipelineArtifact@2
+          displayName: 'Download shard results'
           inputs:
-            testResultsDir: $(Pipeline.Workspace)/merged
-            reportName: 'Allure Report'
+            patterns: 'noodle-allure-results-*/**'
+            path: $(Pipeline.Workspace)/shards
 
-      - task: PublishPipelineArtifact@1
-        displayName: 'Publish single-file Allure report'
-        inputs:
-          targetPath: $(Pipeline.Workspace)/allure-report
-          artifact: 'NoodleAllureReport'
+        - task: Cache@2
+          displayName: 'Restore suite Allure history'
+          continueOnError: true
+          inputs:
+            key: '"noodle-history-suite" | "$(Build.BuildId)"'
+            restoreKeys: |
+              "noodle-history-suite"
+            path: $(Pipeline.Workspace)/allure-history
+
+        # --single-file is REQUIRED for the tab: the Qameta extension only
+        # uploads a report whose summary.json has meta.singleFile=true, and
+        # silently skips a multi-file one ("no report to show"). The same file
+        # also opens offline straight from the artifact.
+        - bash: |
+            set -euo pipefail
+            mkdir -p merged allure-history
+            cp -r shards/*/. merged/
+            HISTORY="$(Pipeline.Workspace)/allure-history/history.jsonl"
+            allure awesome --single-file --report-name "Noodle Suite" \
+              --output allure-report --history-path "$HISTORY" merged
+            if [ -f "$HISTORY" ]; then
+              tail -n ${{ parameters.historyRuns }} "$HISTORY" > "$HISTORY.tmp" && mv "$HISTORY.tmp" "$HISTORY"
+            fi
+          displayName: 'Merge shards + generate suite report'
+          workingDirectory: $(Pipeline.Workspace)
+
+        # NOOD_0204 — testResultsDir ONLY, on purpose. `reportDir` is not a
+        # declared input in the task's task.json (checked up to extension
+        # 2.1.5), its code path logs nothing on success OR failure, and on the
+        # deployed 2.1.3 the tab published nothing, silently. The documented
+        # path is testResultsDir: the task generates its own single-file report
+        # from the merged results (trend history lives in the artifact report
+        # below, not the tab). That path reads the job's working directory,
+        # which `checkout: none` never creates — hence the mkdir. The task also
+        # logs nothing there, hence the DIAG step: delete it once the tab has
+        # been seen working.
+        - ${{ if eq(parameters.publishAllureTab, true) }}:
+          - bash: |
+              mkdir -p "$(System.DefaultWorkingDirectory)"
+              echo "merged results: $(ls "$(Pipeline.Workspace)/merged" | wc -l) files"
+              find "$(Pipeline.Workspace)/allure-report" -name summary.json \
+                -exec sh -c 'echo "{}:"; head -c 600 "{}"; echo' \;
+            displayName: 'DIAG: state before PublishAllureReport'
+            condition: always()
+          - task: PublishAllureReport@2
+            displayName: 'Publish Allure Report tab'
+            inputs:
+              testResultsDir: $(Pipeline.Workspace)/merged
+              reportName: 'Allure Report'
+
+        - task: PublishPipelineArtifact@1
+          displayName: 'Publish single-file Allure report'
+          inputs:
+            targetPath: $(Pipeline.Workspace)/allure-report
+            artifact: 'NoodleAllureReport'

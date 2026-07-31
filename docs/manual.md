@@ -1431,10 +1431,15 @@ directions exist; the shipped pipeline files implement the first:
   and now a shipped template rather than something to hand-write. The
   project repo commits its own Noodle workspace, declares this engine as a
   `resources.repositories` entry pinned to a tag, and adds
-  `ci/azure/noodle-tests.yml@noodle` as a job — about twelve lines. Its
+  `ci/azure/noodle-tests.yml@noodle` as a job — about twelve lines
+  (`noodle init` scaffolds them as `azure-pipelines/azure-pipelines.yml`).
+  That job runs the **whole suite in one job** by default, parallelising
+  inside it (NOOD_0205); sharding is an opt-in scaling lever there. Its
   pipeline, triggers and run history stay in *its* project, and the test
   lands in the same PR as the feature it covers. Full walkthrough →
-  **[docs/ci-project-repo.md](ci-project-repo.md)**
+  **[docs/ci-project-repo.md](ci-project-repo.md)**; editing the scaffolded
+  pipeline afterwards →
+  **[docs/ci-workspace-pipeline.md](ci-workspace-pipeline.md)**
 
 Cross-project gotcha (both directions): when the other repo lives in a
 different Azure DevOps **project** of the same organization, the

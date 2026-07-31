@@ -4,6 +4,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a21] — 2026-07-30
+
+**NOOD_0205** — fix: one Azure job, three report surfaces, and a log per
+scenario.
+
+- **One job by default.** `shard` now defaults to `false` and
+  `parallelProcesses` to `4`. Sharding expanded one job per `.feature` plus a
+  discover and a merge job — 31 jobs for a 29-feature suite, 1002 for a
+  thousand — and every one paid the full ~90 s setup to run a single file. The
+  discover and merge jobs are both guarded by `shard` now, so an unsharded run
+  compiles to exactly one job. Sharding stays as an opt-in scaling lever.
+- **The Allure tab publishes.** Two causes, both required: the report has to be
+  single-file (`allure generate` has no `--single-file` flag — only
+  `allure awesome` does, so `builder.generate` switches to it under
+  `NOODLE_ALLURE_SINGLE_FILE`), and `reportDir` has to be *relative*, resolved
+  in a job that has a source tree. The tab is now published from the test job
+  itself, and `continueOnError` — a missing org extension degrades the tab, it
+  doesn't fail the suite.
+- **`noodle init` scaffolds `azure-pipelines/azure-pipelines.yml`** — a
+  vendor-neutral consumer pipeline with two `REPLACE_ME` placeholders and the
+  engine ref as a runtime parameter, so trialling an engine build needs no
+  commit. Template ownership: written when missing, refreshed only by `--force`.
+- **`testTag` defaults to the word `all`.** Azure's Run panel refuses to advance
+  past an empty runtime string parameter, so the blank default made the
+  whole-suite manual run unreachable. `all` (any case) and `''` both mean no
+  `--tag`.
+- **`parallelProcesses != 0` installs the `parallel` extra.** The new default
+  took the `--parallel` path and died with "Parallel runs need behavex" after a
+  green install. The install step folds extras through one `add_extra()` helper,
+  which the Key Vault `azure` case now shares.
+- **A log per scenario.** `artifacts/logs/<scenario>.log` holds that scenario's
+  lines only, attached to its result as `run log` — so it reaches the Allure
+  report and (via the junit `[[ATTACHMENT|…]]` markers) the Tests tab. The
+  whole-suite `run.log` isn't sliceable and is interleaved across workers under
+  `--parallel`.
+- **`Engine build provenance` step** prints the engine checkout's SHA, tags and
+  head subject. `noodle --version` can't: it walks up from the *package*
+  directory for `.git`, and CI installs a non-editable copy into `site-packages`
+  — so the banner silently drops the SHA in exactly the place it matters.
+- Docs: new **`docs/ci-workspace-pipeline.md`** — how to *edit* the scaffolded
+  `azure-pipelines/azure-pipelines.yml`: anatomy, the three values that must be
+  right, a recipe per common change (engine version, tag filter, nightly
+  schedule, speed, agent pool, secrets, extras, two suites) and a
+  troubleshooting table. `docs/ci-project-repo.md` gains the `publishAllureTab`
+  row, the two-repo branch model, and a §8 greenfield walkthrough; README,
+  `manual.md` and `workspace-guide.md` point at both; the scaffolded workspace
+  README explains the pipeline `init` just wrote.
+
 ## [1.0.0a20] — 2026-07-30
 
 **NOOD_0204** — fix: Azure CI reporting — every job stops going red at
@@ -188,7 +236,7 @@ or an endpoint list. Five changes:
    can't say it), and the no-context API flow (scan repo → api-scan →
    probe → author with relative paths).
 
-Also: the last Canadian Tire reference is gone (a comment in `hooks.py` keeps
+Also: the last customer name is gone from the source (a comment in `hooks.py` keeps
 its false-pass lesson without the name).
 
 Second pass — the deferred gaps closed, and all of it validated against a live

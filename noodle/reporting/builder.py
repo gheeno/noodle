@@ -1,6 +1,7 @@
 import functools
 import http.server
 import json
+import os
 import shutil
 import socketserver
 import subprocess
@@ -62,10 +63,20 @@ def generate(results_dir: str = None, report_dir: str = None) -> bool:
     # (e.g. a leftover v2 index.html) shadow the fresh one. History survives —
     # it lives outside report_dir (see _history_path).
     shutil.rmtree(report_dir, ignore_errors=True)
-    proc = subprocess.run(
-        [allure, "generate", results_dir, "-o", report_dir, "--config", str(config)],
-        check=False,
-    )
+    # NOOD_0205 — NOODLE_ALLURE_SINGLE_FILE builds the whole report as one
+    # index.html. Azure's Allure extension only uploads a report whose
+    # summary.json carries meta.singleFile: true and skips anything else
+    # SILENTLY ("no report to show", empty task log) — and `allure generate` has
+    # no --single-file flag at all (the CLI rejects it and prints usage). Only
+    # `awesome` produces one. Same --config either way, so trend history is
+    # unchanged. Local runs stay multi-file: it serves faster, and
+    # `noodle report serve` is untouched.
+    if os.getenv("NOODLE_ALLURE_SINGLE_FILE"):
+        cmd = [allure, "awesome", "--single-file", results_dir,
+               "-o", report_dir, "--config", str(config)]
+    else:
+        cmd = [allure, "generate", results_dir, "-o", report_dir, "--config", str(config)]
+    proc = subprocess.run(cmd, check=False)
     return proc.returncode == 0
 
 

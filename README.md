@@ -84,6 +84,8 @@ No prior AI, automation, or Python experience assumed.
 | [docs/mcp-guide.md](docs/mcp-guide.md) | AI SDLC integrators | `noodle-mcp` setup, local quickstart, tool reference, design rationale, and MAF / Azure AI Foundry wiring (stdio + remote) |
 | [docs/engine-api-guide.md](docs/engine-api-guide.md) | developers calling Noodle from their own service | The **engine API** — drive Noodle over plain HTTP (`/api/*`) from Java/.NET/Node/CI with no MCP: install, start, Swagger UI, and a worked example per operation (author, update, run serial or parallel, reports). Spec: [docs/openapi.json](docs/openapi.json). Not the **api wok** (testing someone's REST service) — see [docs/woks.md](docs/woks.md#api) |
 | [docs/ai-sdlc-integration.md](docs/ai-sdlc-integration.md) | Azure DevOps admins, multi-agent AI SDLC integrators | One-time Azure DevOps setup, wiring a LangChain/MAF agent to generate/run tests via `noodle-mcp`, and a worked multi-agent Squad-pattern example |
+| [docs/ci-project-repo.md](docs/ci-project-repo.md) | teams putting Noodle in their own Azure pipeline | One-time setup, both topologies (a workspace nested in an app repo, or a standalone test repo from `noodle init`), the full parameter table, secrets, self-hosted agents |
+| [docs/ci-workspace-pipeline.md](docs/ci-workspace-pipeline.md) | whoever owns the pipeline YAML afterwards | **Editing** `azure-pipelines/azure-pipelines.yml`: anatomy, a recipe per common change (engine version, tag filter, nightly, speed, pool, secrets, extras), and a troubleshooting table |
 
 **Quick links:**
 
@@ -493,6 +495,15 @@ Commit a workspace at `tests/noodle`, then add this repo's ready-made
 template as a job — about twelve lines, and the test rides in the same PR as
 the feature it covers:
 **[docs/ci-project-repo.md](docs/ci-project-repo.md)**.
+
+**Starting a standalone test repo?** `noodle init <path>` scaffolds
+`azure-pipelines/azure-pipelines.yml` for you — fill its two `REPLACE_ME`
+placeholders, point a pipeline definition at it, and you get **one** job with a
+Tests tab, an Allure tab and an offline-openable report artifact, each carrying
+per-scenario steps, screenshots and logs. Walkthrough:
+[ci-project-repo.md § 8](docs/ci-project-repo.md#8-greenfield--a-standalone-test-repo-from-noodle-init-to-a-green-run).
+Editing that file later — schedules, tag filters, speed, pools, secrets:
+**[docs/ci-workspace-pipeline.md](docs/ci-workspace-pipeline.md)**.
 
 ### Zero to hero — let your agent install it
 

@@ -173,8 +173,13 @@ def test_keyvault_install_folds_in_the_azure_extra():
     itself — a project passing the one secrets knob shouldn't also have to know
     which pip extra backs it."""
     install = (REPO / "ci" / "azure" / "noodle-tests.yml").read_text(encoding="utf-8")
-    assert "EXTRAS='[azure]'" in install
-    assert ",azure]" in install, "an existing extras group must gain azure, not lose itself"
+    # NOOD_0205 — the literal EXTRAS='[azure]' became the shared add_extra()
+    # helper (parallelProcesses needs the same fold). Assert the two branches
+    # that were always the point: empty extras BECOME [azure], and an existing
+    # group GAINS it instead of losing itself.
+    assert 'EXTRAS="[$1]"' in install
+    assert '${EXTRAS%]},$1]' in install, "an existing extras group must gain the extra, not lose itself"
+    assert "add_extra azure" in install
     # '$(VAR)' left unexpanded means the variable was never set — same rule as
     # hooks._load_keyvault, or an unconfigured project installs azure for nothing.
     assert "''|'$'*)" in install
@@ -198,8 +203,12 @@ def test_pinned_engine_examples_match_the_current_version():
                         (REPO / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
     for rel in ("ci/azure/noodle-tests.yml", "ci/azure/example-project-pipeline.yml",
                 "docs/ci-project-repo.md"):
-        pins = set(re.findall(r"refs/tags/(\S+)", (REPO / rel).read_text(encoding="utf-8")))
-        stale = {p for p in pins if p != version and not p.startswith("<")}
+        # NOOD_0205 — [\w.-]+, not \S+: a pin written inside markdown backticks
+        # captured the trailing backtick and read as stale. REPLACE_ME is the
+        # scaffold's deliberate placeholder, not a version that fell behind.
+        pins = set(re.findall(r"refs/tags/([\w.-]+)", (REPO / rel).read_text(encoding="utf-8")))
+        stale = {p for p in pins
+                 if p != version and not p.startswith("<") and p != "REPLACE_ME"}
         assert not stale, f"{rel} pins {stale}, but this engine is {version}"
 
 
