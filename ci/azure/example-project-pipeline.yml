@@ -21,7 +21,7 @@ resources:
     - repository: noodle
       type: git                    # 'github' for a GitHub-hosted engine
       name: Tooling/noodle         # <Project>/<Repo> in Azure Repos
-      ref: refs/tags/1.0.0a20       # PIN IT. A moving ref is not a build.
+      ref: refs/tags/1.0.0a21       # PIN IT. A moving ref is not a build.
       # endpoint: my-github-connection   # only when type: github
 
 jobs:
@@ -33,9 +33,12 @@ jobs:
       workspaceDir: tests/noodle   # where `noodle init` was run, committed
 
       # Optional — every one of these has a working default.
-      # testTag: smoke             # only @smoke scenarios
-      # shard: false               # one job for the whole suite, no matrix
-      # maxParallel: 4
+      # testTag: smoke             # only @smoke scenarios ('all' = whole suite)
+      # parallelProcesses: 4       # behavex processes inside the one job
+      # shard: true                # one AGENT per .feature — only when a single
+      #                            # agent can no longer finish in time; it costs
+      #                            # the full setup (~90s) per job
+      # maxParallel: 4             # matrix width, when shard: true
       # pool:                      # a self-hosted pool instead of Microsoft's
       #   name: my-linux-pool
       # extras: '[visual]'         # ONLY if the suite uses @visual / @appium
@@ -53,11 +56,13 @@ jobs:
       #   APP_PASSWORD: $(APP_PASSWORD)
       #   API_KEY: $(API_KEY)
 
-# What the run produces:
+# What the run produces (one job, by default):
 #   • "Allure Report" tab   — browsable, with cross-run trend history
-#   • "Tests" tab           — pass/fail per scenario, from JUnit
+#   • "Tests" tab           — per scenario: steps, screenshots, and its own
+#                             slice of the run log
 #   • run summary           — the RCA markdown for every failure
-#   • NoodleTestArtifacts-* — screenshots, traces, videos, rca.html
+#   • NoodleTestArtifacts-* — screenshots, traces, videos, logs/, rca.html, and
+#                             the single-file Allure report (opens offline)
 #
 # Runs are headless. Headed is the local demo path: `noodle run --headed` on a
 # developer's own machine.

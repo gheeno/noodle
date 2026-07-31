@@ -1152,6 +1152,7 @@ Scaffolded by `noodle init`. What's here:
 | `noodle_tests/pom.yaml` | global page objects, shared across all tests | yes |
 | `noodle_tests/environment.py` | engine glue | never |
 | `noodle_tests/steps/z_catch_all.py` | engine glue | never |
+| `azure-pipelines/azure-pipelines.yml` | runs this workspace in Azure DevOps | once |
 | `diagnostics/` | agent failure self-reports (gitignored) — `noodle diagnostic bundle` to share | never |
 
 ## Layout — one package per app-under-test
@@ -1187,7 +1188,121 @@ that app alone.
 3. Check steps without a browser: `noodle validate noodle_tests/ --resolve`
 4. Run: `noodle run` — or interactively: `noodle repl`
 
+## Run it in Azure DevOps
+
+`azure-pipelines/azure-pipelines.yml` was scaffolded for you. It is the only
+CI file this repo owns — every step lives in the engine's own template, so a CI
+upgrade is a version bump, not a diff.
+
+Before the first run:
+
+1. **Fill the two `REPLACE_ME` placeholders** — the engine repo's
+   `<Project>/<Repo>`, and the engine version to pin
+   (`refs/tags/<version>`). Both fail at *compile* time, which produces no job
+   log: a run that dies before any job appears is almost always one of these.
+2. **`workspaceDir`** — leave it empty when this repo's root is the workspace
+   (the default here); set it to the path when the workspace is a folder inside
+   a bigger repo.
+3. **Point the pipeline definition** at `/azure-pipelines/azure-pipelines.yml`.
+   Azure stores the YAML path in the *pipeline*, not the repo — moving the file
+   does not move the pipeline (Edit → ⋮ → Triggers → YAML → path).
+4. **Grant the pipeline read access to the engine repo** (Project Settings →
+   Repositories → the engine repo → Security → `<Project> Build Service`), or
+   the run dies at compile time.
+5. *(Optional)* install the `qameta.allure-azure-pipelines` extension once per
+   organization for the Allure tab — or set `publishAllureTab: false`. The
+   Tests tab and the downloadable report publish either way.
+
+**Secrets never go in the pipeline file or in git** — use `keyVaultUrl` or
+`secretEnv` mapped from a variable group.
+
+Full walkthrough: `docs/ci-project-repo.md` in the noodle engine repo. Editing
+this pipeline later — schedules, tag filters, speed, pools, secrets, and a
+troubleshooting table: `docs/ci-workspace-pipeline.md`.
+
 Full guide: README.md § Agentic mode, in the noodle repo.
+"""
+
+_AZURE_PIPELINE = """\
+# Azure DevOps pipeline for this Noodle workspace — scaffolded by `noodle init`.
+#
+# This is the ONLY CI file this repo owns. Every step (checkout, install,
+# browsers, Allure CLI, run, publish) lives in the engine's own template, so
+# upgrading CI is a version bump here, not a diff.
+#
+# TWO PLACEHOLDERS to fill in before the first run. Both fail at COMPILE time,
+# which produces no job log — if a run dies before any job appears, look here:
+#   1. `name:` below — <Project>/<Repo> of the engine repo in Azure Repos
+#      (a bare repo name only resolves inside one project).
+#   2. `default:` of noodleRef — the engine version to pin, e.g. refs/tags/1.0.0a21.
+#
+# Also check `workspaceDir`: empty when this repo's ROOT is the workspace (what
+# `noodle init` scaffolds by default); a path like `tests/noodle` when the
+# workspace is a folder inside a bigger repo.
+#
+# Setup guide:  docs/ci-project-repo.md      (in the noodle engine repo)
+# Editing this: docs/ci-workspace-pipeline.md — a recipe per common change
+#               (engine version, tag filter, nightly schedule, speed, agent
+#               pool, secrets) plus a troubleshooting table.
+
+name: noodle-tests-$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger:
+  - main
+
+pr:
+  - main
+
+parameters:
+  # 'all', not '': Azure's Run-pipeline panel won't advance while a runtime
+  # string parameter is empty, which made the whole-suite run unreachable.
+  - name: testTag
+    displayName: 'Tag filter — "all" runs every feature and scenario'
+    type: string
+    default: all
+  - name: shard
+    displayName: 'Fan out to one agent per .feature file (large suites only)'
+    type: boolean
+    default: false
+  - name: parallelProcesses
+    displayName: 'Parallel test processes within the job (0 = single process)'
+    type: number
+    default: 4
+  # PIN IT. A branch is not a build: bump this deliberately once a new engine
+  # version has been validated against this suite. It is a runtime parameter so
+  # an engine feature branch can be tried from a one-off run — pick it in the
+  # Run panel — without committing anything here.
+  - name: noodleRef
+    displayName: 'Engine version — refs/tags/<version>, or refs/heads/<branch> to try a build'
+    type: string
+    default: refs/tags/REPLACE_ME
+
+resources:
+  repositories:
+    - repository: noodle
+      type: git                 # 'github' + endpoint: <service connection> off Azure Repos
+      name: REPLACE_ME/noodle   # the engine repo, <Project>/<Repo>
+      # The two repos have INDEPENDENT branches. The branch you pick when you
+      # run this pipeline applies to THIS repo only; the engine version comes
+      # from here and nowhere else (omit `ref` and Azure takes the engine's
+      # default branch — never a branch matching yours).
+      ref: ${{ parameters.noodleRef }}
+
+jobs:
+  - template: ci/azure/noodle-tests.yml@noodle
+    parameters:
+      # This repo IS the workspace — noodle.yaml sits at its root. A workspace
+      # nested inside a product repo passes its path instead (e.g. tests/noodle).
+      workspaceDir: ''
+      testTag: ${{ parameters.testTag }}
+      shard: ${{ parameters.shard }}
+      parallelProcesses: ${{ parameters.parallelProcesses }}
+      # extras: '[visual]'      # ONLY if the suite uses @visual / @appium
+      # publishAllureTab: false # if the org has no Allure extension
+
+      # Secrets, one knob: keyVaultUrl for Azure Key Vault, or secretEnv for an
+      # explicit KEY: $(VAR) map. See the workspace README § Secrets. Never put
+      # a secret value in this file or in git.
 """
 
 _REPORT_README = """\
@@ -1340,6 +1455,11 @@ def _template_files(root: Path) -> dict:
         root / "AGENTS.md": _AGENTS_MD,
         root / "CLAUDE.md": _CLAUDE_MD_POINTER,
         root / "PROMPT_TEMPLATE.md": _PROMPT_TEMPLATE,
+        # NOOD_0205 — its own folder, because a repo grows more than one
+        # pipeline (nightly, PR, release) and that's where every other Azure
+        # repo keeps them. A template file: written when missing, refreshed
+        # only with --force, never silently overwritten.
+        root / "azure-pipelines" / "azure-pipelines.yml": _AZURE_PIPELINE,
         sample / "features" / "login.feature": _SAMPLE_FEATURE,
         sample / "resources" / "pageobjects" / "login_pom.yaml": _SAMPLE_POM,
     }

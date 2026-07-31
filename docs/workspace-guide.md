@@ -50,6 +50,8 @@ my-tests/                     ← your workspace — name it anything
 ├── .env                         run-wide settings — safe to commit
 ├── secrets.env                  credentials — YOU create this, gitignore it
 ├── environments.yaml             base URLs — YOU create this
+├── azure-pipelines/
+│   └── azure-pipelines.yml      runs this workspace in Azure DevOps (NOOD_0205)
 └── noodle_tests/                ← the test folder (rename via tests_dir)
     ├── environment.py            engine glue — never edit
     ├── steps/z_catch_all.py      engine glue — never edit
@@ -70,6 +72,12 @@ run automatically; workspace-wide runs use `artifacts/` as before. Every
 noodle command also works from inside the app folder itself — `cd
 noodle_tests/<app>` then `noodle run`, `noodle summary`, `noodle report
 serve`, `noodle archive`.
+
+**Running it in CI?** `azure-pipelines/azure-pipelines.yml` is scaffolded for
+you and is the only CI file the workspace owns — every step lives in the
+engine's template. Fill its two `REPLACE_ME` placeholders and point a pipeline
+definition at it: [ci-project-repo.md § 8](ci-project-repo.md#8-greenfield--a-standalone-test-repo-from-noodle-init-to-a-green-run).
+Editing it afterwards: [ci-workspace-pipeline.md](ci-workspace-pipeline.md).
 
 **Generating tests with an agent?** `PROMPT_TEMPLATE.md` is a fill-in-the-
 brackets prompt (app, base URL, user goal, human steps, what to verify,

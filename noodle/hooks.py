@@ -785,6 +785,7 @@ def _record_skip(scenario, reason: str) -> None:
 @_report_engine_crash
 def before_scenario(context, scenario):
     log.bind(scenario=scenario.name)  # NOOD_0171 — correlation
+    log.start_scenario_log()  # NOOD_0205 — this scenario's own slice of the log
     context._noodle_scenario_t0 = time.monotonic()  # NOOD_0173 — scenario.end duration
     # NOOD_0202 — which attempt is this? behave's autoretry re-enters this hook,
     # so a retried scenario printed twice on the build log with nothing saying
@@ -1389,8 +1390,25 @@ def after_scenario(context, scenario):
                     "statusDetails", {}).setdefault(
                     "warnings", []).append(visual_warning)
 
+    # NOOD_0205 — this scenario's slice of the run log, attached as evidence
+    # alongside its screenshots. Popped unconditionally (even with no result to
+    # attach it to) so the buffer never carries into the next scenario. The
+    # junit writer emits every result attachment as an [[ATTACHMENT|path]]
+    # marker, so this reaches Azure's Tests tab as well as the Allure report.
+    scenario_log = log.pop_scenario_log()
+
     ar = _allure_result(context)
     if ar is not None:
+        if scenario_log:
+            try:
+                log_dir = _paths.logs_dir()
+                os.makedirs(log_dir, exist_ok=True)
+                safe_name = scenario.name.replace(" ", "_").replace("/", "_")[:80]
+                log_path = log_dir / f"{safe_name}.log"
+                log_path.write_text(log.redact(scenario_log), encoding="utf-8")
+                ar.add_attachment("run log", str(log_path), "text/plain")
+            except Exception:
+                pass
         ar.finish(scenario)
         _writer.write_result(ar)
         _suite_results.append(ar)

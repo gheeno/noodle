@@ -378,6 +378,57 @@ def route_console_to_build_log() -> None:
                 h.setFormatter(_PlainFormatter("%(message)s"))
 
 
+_scenario_handler: logging.Handler | None = None
+
+
+class _ScenarioBuffer(logging.Handler):
+    """NOOD_0205 — buffer one scenario's log lines in memory."""
+
+    def __init__(self):
+        super().__init__()
+        self.lines: list[str] = []
+
+    def emit(self, record):
+        # ponytail: unbounded buffer, one scenario deep. Cap it if a scenario
+        # ever logs enough to matter (it would have to out-log run.log itself).
+        self.lines.append(self.format(record))
+
+
+def start_scenario_log() -> None:
+    """NOOD_0205 — begin a per-scenario slice of the run log.
+
+    The run already writes artifacts/run.log and logs/noodle.log, and neither is
+    sliceable: reading a report you could see THAT a scenario failed and what its
+    screenshot looked like, but not what the engine was doing while it ran. Under
+    --parallel the single log is also interleaved across workers, which makes it
+    worse than useless for one scenario.
+
+    Replaces any buffer still open — an after_scenario that died before popping
+    must not leak its lines into the next scenario.
+    """
+    global _scenario_handler
+    if _scenario_handler is not None:
+        logger.removeHandler(_scenario_handler)
+    h = _ScenarioBuffer()
+    h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(h)
+    _scenario_handler = h
+
+
+def pop_scenario_log() -> str:
+    """Detach the current scenario buffer and return its text ('' if none).
+
+    The logger's own _RedactFilter runs before any handler sees a record, so
+    what comes back here is already scrubbed."""
+    global _scenario_handler
+    h = _scenario_handler
+    if h is None:
+        return ""
+    logger.removeHandler(h)
+    _scenario_handler = None
+    return "\n".join(h.lines)
+
+
 _file_handler: logging.Handler | None = None
 
 
