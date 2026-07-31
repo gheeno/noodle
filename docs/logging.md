@@ -145,6 +145,23 @@ Nothing is ever lost either way: the file log below is unconditional.
   logger. It's a direct file handler, immune to the behave runner's per-scenario
   output capture, so it's the reliable structured sink when nothing is streaming
   (CI archives the `artifacts/` tree). It honors `NOODLE_LOG_FORMAT` too.
+- **Per-scenario slice** — `<artifacts>/logs/<scenario>.log`, attached to that
+  scenario as `run log` in Allure and in the Azure Tests tab. It's the same
+  logger's output, cut at scenario boundaries so a parallel run's interleave
+  doesn't make it useless. Every step opens with its own line naming the engine
+  function that ran it, so the breadcrumbs under it (POM resolutions, evidence,
+  healing) have an owner:
+
+  ```
+  ▶️  Step: I click the login button
+     ↳ actions.click(locator='login button')
+  📋 POM: resolved 'login button' via pom.yaml
+  ```
+
+  It's a plain log line, not telemetry — it reaches the reports and the file
+  log, never the CI build console (that tier is `step.end` at `--log-level
+  DEBUG`). The function name is read off the runner's own dispatch chain, so it
+  can't drift; an action whose branch isn't a plain call shows the action type.
 - **Parallel runs** — one file per worker process, `noodle.p<pid>.log`. All
   workers share the run's `run_id`; each line also carries its own `worker` pid,
   so a merged view (`cat <artifacts>/logs/noodle.p*.log | sort`) is coherent

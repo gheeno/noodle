@@ -1,3 +1,5 @@
+import functools
+import inspect
 import json
 import os
 import re
@@ -713,6 +715,42 @@ def _rest_json(context, path: str):
     return data if path in ('', '$', '.') else _json_path(data, path)
 
 
+@functools.lru_cache(maxsize=1)
+def _handler_names() -> dict:
+    """NOOD_0206 — action type → the engine function that runs it
+    ('click' → 'actions.click'), read off execute_step's own dispatch chain.
+
+    ponytail: a hand-written table would be ~150 entries drifting out of sync
+    the first time a branch is renamed; this reads the code that actually runs.
+    Branches whose body doesn't start with a plain call (a local first, a nested
+    if) simply aren't in the map — the caller falls back to the action type.
+    """
+    try:
+        src = inspect.getsource(execute_step)
+    except OSError:                     # zipped/frozen install — no source
+        return {}
+    return dict(re.findall(r"t == '(\w+)':\n(?:\s*#.*\n)*\s*(?:return\s+)?([\w.]+)\(", src))
+
+
+def _log_step(step_text: str, action: dict) -> None:
+    """NOOD_0206 — one INFO line per step, naming the engine call behind it.
+
+    The report surfaces (Allure's "run log" attachment, junit system-out) carried
+    the engine's breadcrumbs — POM resolutions, evidence — with nothing saying
+    which step produced them and nothing at all about which Python function ran.
+    A plain logger.info, deliberately not telemetry: the CI build console only
+    carries records with an `event`, so this enriches the reports and the run log
+    without putting a line per step on a build log (that tier stays `step.end`
+    at DEBUG). Values go through _safe_repr, so a token-ish key is masked.
+    """
+    args = ", ".join(f"{k}={_safe_repr(k, v)}" for k, v in action.items()
+                     if k != 'type')
+    if len(args) > 160:
+        args = args[:157] + "..."
+    fn = _handler_names().get(action['type'], action['type'])
+    logger.info(f"\n  ▶️  Step: {step_text}\n     ↳ {fn}({args})")
+
+
 def execute_step(step_text: str, context):
     if ctx_get(context, "_vars", None) is None:
         context._vars = {}
@@ -766,6 +804,8 @@ def execute_step(step_text: str, context):
         action = resolve(safe, tags=set(
             getattr(scenario, "effective_tags", None) or []))
         t = action['type']
+
+    _log_step(step_text, action)
 
     # Phase F — @appium scenarios route supported steps to the mobile agent.
     if ctx_get(context, "_mobile") is not None and t in _MOBILE_TYPES:
