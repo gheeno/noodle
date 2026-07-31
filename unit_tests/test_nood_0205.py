@@ -222,6 +222,8 @@ def test_scenario_log_is_attached_as_evidence(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     class _FakeResult:
+        uuid = "9f2c4ab1d0e37c58"      # NOOD_0206 — the log filename's unique tail
+
         def __init__(self):
             self.attachments = []
 

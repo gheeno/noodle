@@ -4,6 +4,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a22] — 2026-07-31
+
+**NOOD_0206** — fix: a step in the report says which Python method ran it.
+
+- **A line per step in every report surface.** The per-scenario `run log`
+  (Allure attachment, Azure Tests tab, `artifacts/logs/<scenario>.log`) showed
+  the engine's breadcrumbs — `📋 POM: resolved 'number input'`, `📸 Evidence
+  saved` — with no step boundaries between them and no sign of what the engine
+  actually called. Each step now opens with its own line: the step text as the
+  engine sees it (variables substituted, secrets redacted) and the engine
+  function behind it with its arguments —
+  `↳ actions.click(locator='login button')`.
+- **The function name can't drift.** It's read off `execute_step`'s own dispatch
+  chain at import (158 of ~160 branches map today), not a hand-written table, so
+  renaming a handler renames it in the log too. A branch that doesn't start with
+  a plain call falls back to the action type.
+- **Parallel-safe.** The buffer is per-process, so each worker's slice is
+  already clean — but the file it was written to was `logs/<scenario name>.log`,
+  and two scenarios sharing a title (two features, an outline's rows, two
+  workers, a retry) overwrote each other, leaving a report attached to another
+  scenario's log. The name now carries the result uuid.
+- **Off the CI build console.** Deliberately a plain log line, not telemetry:
+  the build-log handler carries only records with an `event`, so a
+  1000-scenario suite doesn't gain 10k console lines. `step.end` at
+  `--log-level DEBUG` is still the console tier.
+
 ## [1.0.0a21] — 2026-07-30
 
 **NOOD_0205** — fix: one Azure job, three report surfaces, and a log per

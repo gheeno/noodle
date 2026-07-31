@@ -1404,7 +1404,13 @@ def after_scenario(context, scenario):
                 log_dir = _paths.logs_dir()
                 os.makedirs(log_dir, exist_ok=True)
                 safe_name = scenario.name.replace(" ", "_").replace("/", "_")[:80]
-                log_path = log_dir / f"{safe_name}.log"
+                # NOOD_0206 — the result uuid makes it unique. Two scenarios
+                # sharing a name (same title in two features, an outline's rows,
+                # or two --parallel workers writing the same path at once) wrote
+                # over each other's log, so a report attached the WRONG
+                # scenario's log — the exact class of lie NOOD_0187 closed
+                # everywhere else.
+                log_path = log_dir / f"{safe_name}_{ar.uuid[:8]}.log"
                 log_path.write_text(log.redact(scenario_log), encoding="utf-8")
                 ar.add_attachment("run log", str(log_path), "text/plain")
             except Exception:
