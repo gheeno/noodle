@@ -2272,6 +2272,21 @@ def _apply_page_signals(pg: dict, raw: dict) -> None:
             "accessibility semantics or use @ocr_fallback visual steps")
     else:
         pg["coverage"] = "dom"
+    # NOOD_0207 — a state-dependent route reached with no prior state renders
+    # its shell and an empty container. The probe reported it as an ordinary
+    # thin page, so the reader read "this form has no fields" as a fact about
+    # the app and went hunting; it is a fact about how the page was reached.
+    # Deliberately narrow: a page with a heading and (nearly) nothing to act
+    # on. A genuinely sparse landing page carries no cost from the hint.
+    if pg["coverage"] == "dom" and pg.get("headings") \
+            and len([c for c in pg["controls"] if c.get("visible")]) <= 1 \
+            and not pg.get("result_items"):
+        warns.append(
+            "this page rendered a heading but almost nothing to act on — if "
+            "the route depends on earlier state (a selection, a login, an "
+            "item in a basket), reach that state first with --click/--do and "
+            "re-probe; an empty container is not evidence the app lacks these "
+            "controls")
 
 
 def _activate_flutter_semantics(page, raw: dict, timeout_ms: int) -> dict:
@@ -3356,6 +3371,13 @@ def find_controls(result: dict, needle: str) -> list[dict]:
                                        f'{a.get("selector", "")}'):
                         _hit(url, {**a, "item_caption": it.get("caption")},
                              "result-item-action")
+            # NOOD_0207 — headings too. --find searched controls and result
+            # items only, so looking for an item by the text a human reads —
+            # its card heading — returned "no match" on a page that plainly
+            # showed it, and the reader concluded the item was absent.
+            for h in blk.get("headings", []) or []:
+                if h and n in _norm_name(h):
+                    _hit(url, {"caption": h, "kind": "heading"}, "heading")
     return hits
 
 
@@ -3364,9 +3386,14 @@ def render_find(result: dict, needle: str) -> str:
     nothing else. Empty result says so instead of printing a blank page."""
     hits = find_controls(result, needle)
     if not hits:
-        return (f'--find "{needle}": no matching control, result item, or '
-                "card action in this probe — loosen the text or re-probe "
-                "with --search/--click to reach the state that renders it")
+        # NOOD_0207 — name WHICH page state was searched. "No match" without
+        # it reads as "the app doesn't have this", when the commonest cause is
+        # that the probe never reached the state that renders it.
+        where = ", ".join(p.get("url", "?") for p in result.get("pages", []))
+        return (f'--find "{needle}": no matching control, heading, result '
+                f"item, or card action in this probe (searched: {where or '—'})"
+                " — loosen the text or re-probe with --search/--click/--do to "
+                "reach the state that renders it")
     out = [f'--find "{needle}": {len(hits)} match(es)']
     for h in hits:
         name = h.get("name") or h.get("caption") or "?"
@@ -3403,7 +3430,13 @@ def _render_section(result: dict, section: str,
             if hidden:
                 out.append(f"… (+{hidden} more — raise --max-controls)")
         elif section == "controls":
-            controls = [c for blk in _blocks(pg) for c in blk["controls"]]
+            # NOOD_0207 — collapse repeated families HERE too. The collapse
+            # ran only for the compact/needs-POM slices, so a per-item control
+            # repeated once per card flooded this list and pushed the page's
+            # one submit control past --max-controls: the reviewed session
+            # raised the cap to 200 and still could not see it.
+            controls = _collapse_numbered(
+                [c for blk in _blocks(pg) for c in blk["controls"]])
             shown, hidden = _cap(controls, max_controls)
             out += [line.strip() for line in _control_lines(shown)]
             if hidden:

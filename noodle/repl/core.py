@@ -769,7 +769,7 @@ def author_test(*, prompt: str | None = None,
                     # re-author only has to fill the unresolved ones.
                     "goal_partial": exp.get("goal_partial"),
                     "example": goal_mod.EXAMPLE,
-                    "vocabulary": goal_mod.vocabulary(),
+                    **goal_mod.vocabulary_hint(),
                     "planner": {"state": ("NEEDS_INTERPRETATION" if needs
                                           else "CONTRACT_BLOCKED"),
                                 "budgets": {"interpretation_model_calls":
@@ -803,10 +803,13 @@ def author_test(*, prompt: str | None = None,
                     probed = api_probe.probe(base_url)
                     app_name = _slug(probed.get("title", ""), "") \
                         or _slug(urlsplit(base_url).netloc, "api_app")
-                if feature_path is None:
-                    slug = _slug(goal.get("scenario", ""), "api_flow")[:40]
-                    feature_path = (f"noodle_tests/{app_name}/features/"
-                                    f"{slug}.feature")
+    # NOOD_0207 — feature_path is derivable from the goal's own scenario, and
+    # author RELOCATES it anyway (it says so in a warning), so requiring it
+    # cost a full round trip to supply a value the engine then overrode.
+    if feature_path is None and app_name and isinstance(goal, dict) \
+            and goal.get("scenario"):
+        slug = _slug(goal["scenario"], "flow")[:40]
+        feature_path = f"noodle_tests/{app_name}/features/{slug}.feature"
     if not (app_name and base_url and feature_path):
         err = ("app_name, base_url and feature_path are required "
                "(a prompt with a 'go to <url>' step derives all three)")
@@ -923,13 +926,14 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             return {"ok": False,
                     "error": "invalid goal: " + "; ".join(errs),
                     "example": goal_mod.EXAMPLE,
-                    # NOOD_0169 — the full key tables beside the minimal
-                    # example: schema recovery in zero further round trips.
-                    "vocabulary": goal_mod.vocabulary(),
+                    **goal_mod.vocabulary_hint(),
                     **({"goal_normalized": norm_notes} if norm_notes else {})}
         if feat_dest.exists() and not overwrite:
+            # NOOD_0207 — the error carries its own retry: learning the flag
+            # name cost a full round trip on a call that was otherwise ready.
             return {"ok": False, "error":
-                    f"{feat_dest.name} exists — pass overwrite=true to replace"}
+                    f"{feat_dest.name} exists — re-send this same call with "
+                    "overwrite: true to replace it"}
         # NOOD_0156 — ordered navigation contract: probe EVERY requested URL
         # in order (one browser, state carries), interacting only on the last
         # — earlier URLs are setup navigation, not action pages.

@@ -284,10 +284,14 @@ def test_evidence_blocks_on_ambiguous_target():
 
 # --- P1-2: no-navigation verdict ----------------------------------------------
 
-def _stub_page(url="https://x/login", click=None):
-    page = SimpleNamespace(url=url)
+def _stub_page(url="https://x/login", click=None, rendered="same"):
+    # NOOD_0207 — stuck_click now needs a DOM fingerprint too: same URL is not
+    # same page on an SPA. The click tuple grew a third element; a legacy
+    # 2-tuple is padded here so these cases keep meaning "nothing changed".
+    page = SimpleNamespace(url=url, evaluate=lambda _js: len(rendered))
     if click is not None:
-        page._noodle_click = click
+        page._noodle_click = (click if len(click) == 3
+                              else (*click, len("same")))
     return page
 
 
@@ -295,7 +299,8 @@ def test_stuck_click_flags_a_submit_like_click_that_never_navigated():
     page = _stub_page(click=("sign in", "https://x/login"))
     note = actions.stuck_click(page)
     assert note == ("[no-navigation] clicking 'sign in' left the page "
-                    "unchanged (URL still /login)")
+                    "unchanged (URL still /login, and the rendered page is "
+                    "identical)")
 
 
 def test_stuck_click_stays_quiet_without_a_submit_intent_or_after_navigation():

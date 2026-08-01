@@ -49,9 +49,18 @@ _ACTION_KEYS = {"search": {"do", "id", "term"},
                 # observed controls (landed-page mutation control, plus at most
                 # one probe-PROVEN prerequisite reveal); the host never invents
                 # surface steps like 'Choose options'.
-                "add_to": {"do", "id", "item_from", "destination"},
-                "click": {"do", "id", "target"},
-                "enter": {"do", "id", "target", "value"},
+                # NOOD_0207 — `within` is the searchless shape: a catalogue or
+                # card grid has no search box, so demanding a prior search
+                # asked for a control that does not exist. The item's own text
+                # scopes the mutation instead.
+                "add_to": {"do", "id", "item_from", "destination", "within"},
+                # NOOD_0207 — `within: "<text unique to the row/card>"` scopes
+                # a REPEATED control (one Edit per table row, one Add per
+                # card) to the instance the author means. Without it the only
+                # way past the ambiguity gate was a hand-written POM selector,
+                # which is the one repair a test author cannot automate.
+                "click": {"do", "id", "target", "within"},
+                "enter": {"do", "id", "target", "value", "within"},
                 "select": {"do", "id", "target", "option"},
                 # NOOD_0188 — the form/navigation verbs. The runtime has had
                 # steps for all of these since NOOD_0186; only the cheap
@@ -90,7 +99,10 @@ _ACTION_KEYS = {"search": {"do", "id", "term"},
                         "headers", "auth", "store"}}
 _ACTION_REQUIRED = {"search": {"term"}, "suggest": {"term", "option"},
                     "pick": set(), "click": {"target"},
-                    "add_to": {"item_from", "destination"},
+                    # NOOD_0207 — `item_from` left the required set: it is one
+                    # of TWO ways to name the item (the other is `within`), and
+                    # validate() below requires exactly one of them.
+                    "add_to": {"destination"},
                     "enter": {"target", "value"}, "select": {"target", "option"},
                     "check": {"target"}, "uncheck": {"target"},
                     "hover": {"target"}, "upload": {"target", "file"},
@@ -186,6 +198,20 @@ def vocabulary() -> dict:
                  "the last",
     }
 
+
+def vocabulary_hint() -> dict:
+    """NOOD_0207 — the POINTER that replaces the dictionary on rejections.
+
+    vocabulary() is ~2 KB of JSON and rode every rejection alongside
+    VERBS_HELP; four rejections is ~18 KB, and — because cost is
+    calls x context and the transcript only grows — that payload was then
+    re-sent on every later call in the turn. EXAMPLE, goal_partial and the
+    per-blocker repairs are the parts a reader acts on; the full tables are
+    one flag away for the rare case that needs them."""
+    return {"vocabulary_hint": "noodle author --vocabulary "
+                               "(full goal schema + prompt grammar)",
+            "verbs": "|".join(sorted(_ACTION_KEYS))}
+
 # NOOD_0156 — Unicode-aware: `[\W_]` keeps letters/digits of ANY script
 # (the old [^a-z0-9] erased every non-ASCII caption to "", so goal matching
 # and result binding silently failed on non-English sites). casefold() is
@@ -242,8 +268,11 @@ def normalize(goal) -> tuple[dict, list[str]]:
     if isinstance(acts_in, list):
         actions = [dict(a) if isinstance(a, dict) else a for a in acts_in]
         acts = [a for a in actions if isinstance(a, dict)]
+        # NOOD_0207 — a `within`-scoped add_to already names its item; wiring
+        # an implied pick into it would bolt a search-driven binding onto the
+        # searchless shape.
         add_missing = [a for a in acts if a.get("do") == "add_to"
-                       and not a.get("item_from")]
+                       and not a.get("item_from") and not a.get("within")]
         has_pick = any(a.get("do") == "pick" for a in acts)
         search_at = next((i for i, a in enumerate(actions)
                           if isinstance(a, dict) and a.get("do") == "search"),
@@ -365,7 +394,15 @@ def validate(goal) -> list[str]:
         for k in set(a) - _ACTION_KEYS[do]:
             errs.append(f"actions[{i}] ({do}): unknown field {k!r}")
         for k in _ACTION_REQUIRED[do]:
-            if not isinstance(a.get(k), str) or not a[k].strip():
+            v = a.get(k)
+            if v is not None and not isinstance(v, str):
+                # NOOD_0207 — a present-but-unquoted scalar ({value: 5000})
+                # reported "value is required", which is false: the value was
+                # right there. The reader's repair is one pair of quotes, and
+                # it cost a full round trip to learn that.
+                errs.append(f"actions[{i}] ({do}): {k} must be a string — "
+                            f"quote it in YAML (got {type(v).__name__})")
+            elif not isinstance(v, str) or not v.strip():
                 errs.append(f"actions[{i}] ({do}): {k} is required")
         if do == "search":
             searches += 1
@@ -398,6 +435,16 @@ def validate(goal) -> list[str]:
             if isinstance(src, str) and src.strip() and src not in pick_ids:
                 errs.append(f"actions[{i}] (add_to): item_from={src!r} names "
                             "no earlier pick action id")
+            # NOOD_0207 — the item must be named ONE of two ways, and the
+            # error says both. Demanding a pick (and so a search) was
+            # unsatisfiable on a grid with no search box.
+            if not (isinstance(src, str) and src.strip()) \
+                    and not str(a.get("within") or "").strip():
+                errs.append(
+                    f"actions[{i}] (add_to): name the item — either "
+                    "item_from: <id of an earlier pick> (search-driven) or "
+                    'within: "<text unique to the item\'s card/row>" '
+                    "(searchless)")
         elif do == "api":
             # NOOD_0192 — the method is the only closed set here; the url may
             # be absolute or a path relative to {var:REST_BASE_URL}, which is
@@ -768,6 +815,27 @@ def probe_args(goal: dict) -> dict:
             "discover": bool((goal.get("probe") or {}).get("discover"))}
 
 
+def _evidence_gate(actions: list) -> int | None:
+    """NOOD_0207 — index of the first action that writes state the probe
+    deliberately never performs, so every page BEYOND it was never
+    snapshotted. An action there naming an unprobed control is a statement
+    about the probe's reach, not about the app: it is deferred to the run,
+    exactly as checks in that position already were. Without this, every
+    legitimate multi-page flow (mutate → checkout → form → submit) was
+    unauthorable, and the reader burned laps probing for a name authoring was
+    never going to accept.
+
+    Deliberately NARROWER than _runtime_gate, which also lists `pick`,
+    `enter` and `select`: the probe DOES follow a pick's navigation and
+    snapshot the landed page, and it does resolve the fields an enter/select
+    names — so a control unprobed there is genuinely absent, and blocking is
+    right (test_nood_0156 pins that)."""
+    for i, a in enumerate(actions):
+        if a.get("do") in ("add_to", "press_key", "go_back"):
+            return i
+    return None
+
+
 def _runtime_gate(actions: list) -> int | None:
     """Index of the first action whose effect the probe does NOT perform:
     enter/select values are never typed, and everything AFTER a pick runs on
@@ -902,7 +970,8 @@ def _mutating_name(name: str) -> bool:
     return _is_mutating(name)
 
 
-def mutation_control(controls: list[dict], destination: str) \
+def mutation_control(controls: list[dict], destination: str,
+                     scoped: bool = False) \
         -> tuple[dict | None, str | None]:
     """(control, why_not) — THE probed control that performs the requested
     mutation into `destination` ("add to cart"-shaped). One rule shared by
@@ -929,11 +998,29 @@ def mutation_control(controls: list[dict], destination: str) \
                       "(nothing names the destination beyond opening it)")
     names = {_norm(c.get("name")) for c in cands}
     if len(names) > 1:
+        # NOOD_0207 — a label that STARTS with the destination word names it
+        # ("cart now" navigates to the cart); one that mentions it after a
+        # verb acts on it ("add … to cart"). Position is the discriminator —
+        # _is_mutating on the name with the destination stripped returns
+        # False for both, so it cannot separate them.
+        acting = {n for n in names if not n.startswith(dn)}
+        if len(acting) == 1:
+            names = acting
+            cands = [c for c in cands if _norm(c.get("name")) in acting]
+    if len(names) > 1:
         return None, ("ambiguous — several distinct probed controls could "
                       "perform the mutation: "
                       + ", ".join(sorted(names)[:4])
                       + "; name the exact control")
     sels = {c.get("selector") for c in cands if c.get("selector")}
+    if scoped and cands:
+        # NOOD_0207 — the searchless shape. `within` already says WHICH
+        # instance, so a grid of N same-named controls is the expected shape,
+        # not a block: the run scopes the click to the anchored card. Bind
+        # the first visible instance for its selector/name only; the compiled
+        # step never uses that selector (compile_goal skips the POM entry
+        # precisely because it matches every card).
+        return next((c for c in cands if c.get("visible")), cands[0]), None
     if len(sels) > 1:
         # NOOD_0168 — responsive pages render the same-named buy control
         # more than once (buy box + sticky bar, often BOTH visible). After a
@@ -949,7 +1036,8 @@ def mutation_control(controls: list[dict], destination: str) \
             return next(iter(vis.values())), None
         return None, (f"{len(cands)} probed instances share the mutation "
                       "control name — scope the mutation to one concrete "
-                      "item/card first")
+                      'item/card: add within: "<text unique to that '
+                      'item\'s card/row>"')
     return cands[0], None
 
 
@@ -1033,15 +1121,53 @@ def _auth_synonyms(target: str) -> list[str]:
     return _synonym_candidates(target)
 
 
+# NOOD_0207 — how many same-named instances still count as ONE control. A
+# responsive page renders its header twice (desktop bar + collapsed menu), and
+# NOOD_0168 already settled the rule for the mutation path: a FEW same-named
+# visible instances are duplicates of one control, MANY are one-per-card. This
+# is that ceiling, shared — without it the ambiguity gate below blocked an
+# ordinary two-instance header link that resolves and runs green (the
+# feature-regression benchmark's tc2 caught exactly that).
+_DUPLICATE_CEILING = 3
+
+
 def _iter_controls(blocks: list):
     for blk, phase, trigger in blocks:
         for c in blk.get("controls", []):
             yield c, phase, trigger
 
 
-def _locate(target: str, blocks: list) \
+def _near_miss(target: str, blocks: list, kind: str = "control") -> str:
+    """NOOD_0207 — ' — did you mean "X"? (probed here: …)', or ''.
+
+    Every unmatched-target blocker was holding the probed vocabulary that
+    fixes it and shipped only the problem statement, so the repair was a
+    re-probe instead of a one-word edit. The `suggest:` branch already did
+    exactly this for typeahead options; this is that pattern, everywhere.
+
+    ponytail: difflib over the probed names, cap 8 — the names ride the
+    payload, and a shortlist longer than that is a probe dump, not a hint."""
+    # accepts either shape a caller holds: provenance tuples (_page_blocks)
+    # or plain block dicts (the check scopes).
+    plain = [b[0] if isinstance(b, tuple) else b for b in blocks or ()]
+    names = list(dict.fromkeys(
+        n for blk in plain for n in _block_texts(blk) if n))
+    if not names:
+        return ""
+    near = difflib.get_close_matches(target or "", names, 1, 0.6)
+    shown = ", ".join(f'"{n}"' for n in names[:8])
+    return ((f' — did you mean "{near[0]}"?' if near else "")
+            + f" (probed {kind}s here: {shown}"
+            + (f", +{len(names) - 8} more" if len(names) > 8 else "") + ")")
+
+
+def _locate(target: str, blocks: list, scoped: bool = False) \
         -> tuple[dict | None, str | None, str | None, str | None]:
     """(control, phase, trigger, blocking_note) for a goal action target.
+
+    `scoped` — the action carries a `within:` anchor (NOOD_0207), so a
+    repeated control is exactly what it means to address; the ambiguity gate
+    below is what `within:` is the answer to, and must not fire on it.
 
     NOOD_0145 — deterministic match order, replacing first-substring-wins
     (which picked a machine-named lookalike, e.g. "login options toggle btn",
@@ -1049,7 +1175,8 @@ def _locate(target: str, blocks: list) \
 
       1. exact canonical name — UNLESS the probe captured several distinct
          controls sharing that name (NOOD_0156: repeated per-card controls
-         like "Add to cart"); an unscoped repeated control blocks instead of
+         like "Add to cart"), or PROVED one selector matches many nodes
+         (NOOD_0207); an unscoped repeated control blocks instead of
          silently acting on whichever instance resolves first
       2. exact runtime auth-synonym name ("login" → "sign in")
       3. login/submit intent: THE unique visible submit control
@@ -1067,12 +1194,28 @@ def _locate(target: str, blocks: list) \
         # (one per result card/row). The same control snapshotted twice
         # (identical selector, or no selector captured) stays a unique match.
         sels = {c.get("selector") for c, _, _ in exact if c.get("selector")}
-        if len(sels) > 1:
+        # NOOD_0207 — the probe already PROVED the ambiguity. A card grid
+        # stores ONE representative selector per control family plus
+        # `unique: False` / `matches: N` (probe.py:2212), and prints
+        # "⚠ selector matches N nodes". N identical nodes collapse to one
+        # selector string, so the len(sels) test above scored them a unique
+        # match, compiled the POM, reached ready: true — and the run acted on
+        # instance 1. Fires only on the probe's own proof, never a heuristic.
+        # The ceiling is what keeps this a bug-catcher rather than a tax on
+        # every responsive header: 2-3 same-named instances are one control
+        # rendered twice and resolve to the same destination; more than that
+        # is a per-item family, where instance 1 is a coin flip.
+        amb = next((c for c, _, _ in exact if c.get("unique") is False
+                    and (c.get("matches") or 0) > _DUPLICATE_CEILING), None)
+        if scoped:
+            return (*exact[0], None)
+        if len(sels) > 1 or amb is not None:
+            n = len(exact) if len(sels) > 1 else amb["matches"]
             return None, None, None, (
-                f"matches {len(exact)} probed controls sharing this exact "
+                f"matches {n} probed controls sharing this exact "
                 "name — a repeated control; scope the action to one concrete "
-                "instance (an explicit POM selector for that item/card) or "
-                "use the exact instance's own name")
+                'instance: add within: "<text unique to the intended '
+                'row/card>"')
         return (*exact[0], None)
     for alt in _auth_synonyms(t):
         an = _norm(alt)
@@ -1311,6 +1454,35 @@ def evidence(goal: dict, probe_result: dict) -> dict:
             # prerequisite is never compiled on a guess.
             aid = a.get("id") or f"add_to:{a.get('destination', '')}"
             src = a.get("item_from", "")
+            scope = str(a.get("within") or "").strip()
+            if scope and not src:
+                # NOOD_0207 — the searchless shape: no pick, so no landed
+                # page; the mutation control lives on the CURRENT page,
+                # repeated once per card, and `within` says which card.
+                ctrl, why = mutation_control(
+                    [c for blk, _, _ in blocks for c in blk.get("controls", [])],
+                    a["destination"], scoped=True)
+                if ctrl is None:
+                    names = list(dict.fromkeys(
+                        c["name"] for blk, _, _ in blocks
+                        for c in blk.get("controls", []) if c.get("name")))[:8]
+                    blocking.append(
+                        f'add_to "{a["destination"]}": {why}'
+                        + ("; the page offers: "
+                           + ", ".join(repr(n) for n in names) if names else ""))
+                    continue
+                if not _find_text(scope, [blk for blk, _, _ in blocks]):
+                    blocking.append(
+                        f'add_to within "{scope}": no probed text on this page '
+                        "identifies that item"
+                        + _near_miss(scope, blocks, "text"))
+                    continue
+                mplans[aid] = {"prerequisite": None, "control": ctrl,
+                               "within": scope,
+                               "evidence": "mutation control observed on the "
+                                           "current page, scoped by `within`"}
+                proven[f"add_to:{aid}"] = ctrl["name"]
+                continue
             if src not in bound:
                 blocking.append(
                     f'add_to "{a.get("destination", "")}": item_from '
@@ -1418,18 +1590,41 @@ def evidence(goal: dict, probe_result: dict) -> dict:
         if not a.get("target"):
             continue
         after_pick = any(x.get("do") == "pick" for x in actions[:i])
+        # NOOD_0207 — a `within:` anchor says the repeated control IS the
+        # intent, so the ambiguity gate (which `within` exists to answer)
+        # must not fire on it.
+        scope = str(a.get("within") or "").strip()
         ctrl = phase = trigger = note = None
         if after_pick and picked_blk is not None:
             # NOOD_0156 — an action after the pick happens on the landed page:
             # resolve there FIRST, so the landed page's single "Add to cart"
             # wins over the results page's repeated per-card twins.
             ctrl, phase, trigger, note = _locate(
-                a["target"], [(picked_blk, "picked", None)])
+                a["target"], [(picked_blk, "picked", None)], bool(scope))
         if ctrl is None and note is None:
-            ctrl, phase, trigger, note = _locate(a["target"], blocks)
+            ctrl, phase, trigger, note = _locate(a["target"], blocks,
+                                                 bool(scope))
         if ctrl is None:
+            # NOOD_0207 — past the evidence gate the probe never snapshotted
+            # this page at all, so "no probed control matches" is a fact about
+            # the probe, not the app: defer to the run, as checks in the same
+            # position already are. Only for a plain missing name — a stated
+            # ambiguity/reachability `note` is real evidence and still blocks.
+            eg = _evidence_gate(actions)
+            if note is None and eg is not None and i > eg:
+                # No probe evidence to record, and none to invent: the step
+                # compiles with the author's own wording and the runtime's
+                # find() resolves it — proven by the run or red by the run.
+                proven_phase[f'{a["do"]}:{a["target"]}'] = "runtime"
+                continue
             blocking.append(f'{a["do"]} "{a["target"]}": '
-                            + (note or "no probed control matches that name"))
+                            + (note or "no probed control matches that name"
+                               + _near_miss(a["target"], blocks)))
+            continue
+        if scope and not _find_text(scope, [blk for blk, _, _ in blocks]):
+            blocking.append(
+                f'{a["do"]} within "{scope}": no probed text on this page '
+                "identifies that row/card" + _near_miss(scope, blocks, "text"))
             continue
         if phase == "picked" and not after_pick:
             blocking.append(
@@ -1576,7 +1771,10 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                     "probed evidence, anchor it to the page it belongs to "
                     "(`after: <action id>`, `after: start` for the landing "
                     "page), or leave it unanchored on a flow whose later "
-                    "actions only the run performs (the run then proves it)")
+                    "actions only the run performs (the run then proves it)"
+                    # NOOD_0207 — three named repairs still cost a lap when
+                    # none of them says what the page DOES show.
+                    + _near_miss(c["see"], scope, "text"))
             else:
                 proven[f"see:{c['see']}"] = hit
                 proven_phase[f"see:{c['see']}"] = \
@@ -1744,6 +1942,19 @@ def infer_postcondition(goal: dict, ev: dict) -> dict:
         # ITEM IDENTITY in the destination: the bound caption must be visible
         # there. Never a count — a count cannot prove which item was added.
         src, dest = last.get("item_from", ""), last.get("destination", "")
+        scope = str(last.get("within") or "").strip()
+        if scope and not src:
+            # NOOD_0207 — the searchless shape has no bound caption, but it
+            # DOES have the anchor the author supplied: that text identifies
+            # the item, so its presence is the postcondition. Identity, never
+            # a count — same rule as the pick path.
+            out["checks"] = [{"any_of": [scope], "after": aid}]
+            out["generated"] = [{
+                "after": aid,
+                "reason": "add_to had no user-supplied postcondition",
+                "check": f'the page shows "{scope}" (the scoped item — '
+                         "identity, never a count)"}]
+            return out
         if (ev.get("bound_targets") or {}).get(src, {}).get("caption"):
             out["checks"] = [{"item_in_destination": dest,
                               "expected_from": src, "after": aid}]
@@ -2125,12 +2336,20 @@ def _action_step(a: dict, target: str) -> str:
     not here compiled a plausible-but-wrong select step that still matched the
     pattern table — i.e. the compiler-agreement test could not catch it."""
     do = a["do"]
+    # NOOD_0207 — `within` compiles to the row/item-scoped steps the pattern
+    # table has carried since NOOD_0011 (click_in_row / fill_in_row). Only
+    # click and enter have a scoped runtime step; the schema allows `within`
+    # on exactly those two for that reason.
+    scope = str(a.get("within") or "").strip()
     if do == "search":
         return f'User searches for "{a["term"]}"'
     if do == "click":
-        return f'User clicks "{target}"'
+        return (f'User clicks "{target}" in the row containing "{scope}"'
+                if scope else f'User clicks "{target}"')
     if do == "enter":
-        return f'User enters "{a["value"]}" in the "{target}" field'
+        return (f'User enters "{a["value"]}" in the "{target}" field in the '
+                f'row containing "{scope}"' if scope
+                else f'User enters "{a["value"]}" in the "{target}" field')
     if do == "select":
         return f'User selects "{a["option"]}" from "{target}"'
     if do == "check":
@@ -2317,7 +2536,17 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
             plan = (ev.get("mutation_plans") or {}).get(aid) or {}
             chain = [c for c in (plan.get("prerequisite"),
                                  plan.get("control")) if c]
+            scope = plan.get("within")
             for ctrl in chain:
+                if scope:
+                    # NOOD_0207 — the row/item-scoped step (click_in_row) has
+                    # been in the pattern table since NOOD_0011; goal mode
+                    # simply never reached it. NO POM entry: the probed
+                    # selector matches every card, so writing it would
+                    # reintroduce the wrong-instance bug this fixes.
+                    steps.append(("When", f'User clicks "{ctrl["name"]}" in '
+                                          f'the row containing "{scope}"'))
+                    continue
                 steps.append(("When", f'User clicks "{ctrl["name"]}"'))
                 if ctrl.get("selector"):
                     pom_entries.setdefault(
@@ -2393,7 +2622,10 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
         # needs_pom (which is about probe presentation, not a runtime-lookup
         # guarantee). A probe-visible control can still lack a runtime accessible
         # name; the deterministic selector is what makes it resolvable.
-        if ctrl and ctrl.get("selector"):
+        # NOOD_0207 — a `within`-scoped action gets NO POM entry: the probed
+        # selector matches every row/card, so pinning it would re-bind the
+        # step to instance 1 and undo the scoping.
+        if ctrl and ctrl.get("selector") and not a.get("within"):
             # NOOD_0177 — quote the KEY as well as the value. The key is
             # page-derived text; unquoted it could carry a ':' (ScannerError,
             # breaking authoring outright) or, before _clean_name, a newline

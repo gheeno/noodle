@@ -1944,8 +1944,12 @@ def author(
             raise typer.BadParameter(f"spec is not valid JSON/YAML: {e}", param_hint="'--spec'")
         if not isinstance(data, dict):
             raise typer.BadParameter("spec must be a JSON/YAML object", param_hint="'--spec'")
-        missing = [k for k in ("app_name", "base_url", "feature_path")
+        # NOOD_0207 — feature_path is no longer required: with a goal, the
+        # engine derives it from the scenario (and relocates it regardless).
+        missing = [k for k in ("app_name", "base_url")
                    if not data.get(k)]
+        if not data.get("feature_path") and not data.get("goal"):
+            missing.append("feature_path (or goal, which derives it)")
         if not data.get("feature_content") and not data.get("goal"):
             missing.append("feature_content (or goal)")
         if missing:
@@ -1953,7 +1957,7 @@ def author(
                                      param_hint="'--spec'")
         result = core.author_test(
             app_name=data["app_name"], base_url=data["base_url"],
-            feature_path=data["feature_path"],
+            feature_path=data.get("feature_path"),
             feature_content=data.get("feature_content"),
             pom_content=data.get("pom_content"),
             environment_values=data.get("environment_values"),

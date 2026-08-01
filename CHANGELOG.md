@@ -4,6 +4,81 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a23] — 2026-07-31
+
+**NOOD_0207** — fix: a repeated control can be scoped to one instance, and
+every author-time block ships the repair the engine already holds.
+
+Two reviewed sessions authored the same simple ask — act on one named item's
+button in a list of 20 sibling cards, continue, fill a form, submit — against
+a page whose cards share one action-button selector. The first cost 45.7 AIC
+over 24 model calls: 21 author/run laps, 10 standalone probes, ~14 browser
+launches, one red run and a hand-edited POM selector. The second cost ~39 AIU
+and shipped a **green test for the wrong item** — it gave up on the requested
+one, renamed the scenario and asserted a sibling. Cost is `calls × context`
+and context only grows, so an early refusal is the most expensive object in
+the system; a false green is worse than a slow author.
+
+- **The probe's own ambiguity proof is honoured.** `_locate` decided "repeated
+  control" by counting distinct selector *strings*, while the probe stores one
+  representative selector per control family plus `unique: False` /
+  `matches: 20` — and prints `⚠ selector matches 20 nodes`. Twenty identical
+  nodes collapse to one string, so it scored a unique match, wrote the POM,
+  reached `ready: true`, and the run acted on instance 1. It now blocks on the
+  probe's proof (never a heuristic) with a message that names its own fix —
+  above a duplicate ceiling of 3, because a responsive page renders its header
+  twice and both instances go to the same place. That is NOOD_0168's existing
+  rule for the mutation path, now shared: a few same-named instances are one
+  control, many are one-per-card.
+- **`within:` scopes an action to one instance.** `{do: click, target: "Add to
+  basket", within: "<text unique to that card>"}` — on `click`, `enter` and
+  `add_to`. It compiles to the row/item-scoped steps the pattern table has
+  carried since NOOD_0011 and deliberately writes **no** POM entry: the probed
+  selector matches every card. The runtime's `_row_scope` looked up `role=row`
+  alone, so tables worked and card grids did not; it now falls back to a
+  bounded (≤6) climb from the caption to the nearest ancestor that also holds
+  the target control — walking *up* means the first hit is the item, never the
+  grid.
+- **`add_to` without a search is authorable.** A catalogue or card grid has no
+  search box, so "adding X needs a search step first" demanded a control that
+  does not exist — the single biggest cost sink, and the direct cause of the
+  wrong-item green. The item's own text scopes the mutation instead;
+  `item_from` and `within` are now alternatives, and the schema error names
+  both.
+- **Blocks carry their repair.** Unmatched targets and unproven `see` checks
+  ship a difflib near-miss plus the probed shortlist. A present-but-unquoted
+  scalar says `must be a string — quote it`, not `is required`. The exists
+  error says `re-send with overwrite: true`. `feature_path` is derived from
+  the goal's scenario (author relocated it anyway).
+- **Four refused prompt shapes now parse**: an `AC:`/`Objective:` preamble is
+  metadata, a label list (`Name - A, Email: B`) becomes one `enter` per pair, a
+  compound `verify A, B and C` becomes one check per part (never splitting a
+  disjunction or count floor the grammar already reads as one), and a short
+  terminal imperative (`place the order`) is the control it names. An evidence
+  suffix stops leaking `on this step` into the asserted literal.
+- **Pages past the probe's reach defer to the run.** The probe stops at the
+  first state-writing action, so "no probed control matches" beyond it is a
+  fact about the probe, not the app — every multi-page flow was unauthorable.
+  Checks in that position were already deferred; actions now are too.
+- **RCA stops blaming the part that worked.** `stuck_click` needed only an
+  unchanged URL, so an SPA that re-rendered the destination in place was
+  reported as "the click left the page unchanged" — provably false. It now
+  requires an unchanged DOM fingerprint as well, and a failed text assertion
+  appends what the page *does* render. New verdict `assertion-wording` outranks
+  `wrong-action-target`; `ambiguous-item-click` outranks it too.
+- **Rejections stopped shipping the dictionary.** `vocabulary()` (~2 KB) rode
+  every rejection and was then re-sent on every later call in the turn; it is a
+  pointer now (`noodle author --vocabulary` for the full dump). `EXAMPLE`,
+  `goal_partial` and the per-blocker repairs — the parts a reader acts on —
+  stay.
+- **Probe paper cuts.** Repeated families collapse in `--section controls` too
+  (a card family could push the page's one submit control past
+  `--max-controls`); `--find` searches headings and names which page state it
+  searched; a state-dependent route reached with no prior state says so instead
+  of reading as a thin page.
+
+48 browser-free tests in `unit_tests/test_nood_0207.py`.
+
 ## [1.0.0a22] — 2026-07-31
 
 **NOOD_0206** — fix: a step in the report says which Python method ran it.

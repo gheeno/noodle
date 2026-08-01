@@ -57,10 +57,16 @@ _PATHISH = re.compile(r"^/[\w\-./{}%?=&]*$")
 _ARTICLE = re.compile(r"^(?:a|an|the|any|some)\s+", re.I)
 _ANAPHORA = {"it", "that", "this", "them", "one", "item", "product",
              "the item", "the product", "the result"}
+# NOOD_0207 — the span now swallows its own punctuation and tail. It used to
+# strip only the word "screenshot", so "... is present -  on this step" was
+# left behind as the literal to assert: an assertion nothing renders, failing
+# with a message that named the wrong thing.
 _EVIDENCE = re.compile(
-    r"(?:\band\s+)?(?:take\s+(?:a\s+)?)?\bscreenshots?\b"
-    r"(?:\s+for\s+verification)?|(?:\band\s+)?\bcaptures?\b"
-    r"(?:\s+(?:the\s+)?(?:screen|page))?(?:\s+for\s+verification)?", re.I)
+    r"(?:\s*[-–—,]\s*)?(?:\band\s+)?(?:take\s+(?:a\s+)?)?"
+    r"(?:\bevidence\b\s*[:-]?\s*)?"
+    r"(?:\bscreenshots?\b|\bcaptures?\b(?:\s+(?:the\s+)?(?:screen|page))?)"
+    r"(?:\s+for\s+verification)?"
+    r"(?:\s+(?:on\s+this\s+step|here|as\s+evidence))?", re.I)
 _RUN_MODE = re.compile(r"\brun\b.*\b(headed|headless)\b|"
                        r"\b(headed|headless)\b.*\bmode\b|"
                        r"^\s*(headed|headless)\s*$", re.I)
@@ -117,10 +123,16 @@ _URL_LABEL = re.compile(
 _GOAL_LABEL = re.compile(
     r"^(?:user\s+)?(?:goal|story|steps?|flow|task|prompt|scenario)\s*:\s*",
     re.I)
+# NOOD_0207 — `ac`/`acceptance criteria`/`objective`/… joined the family. An
+# AC preamble restates the whole flow in one sentence; parsed as a step it
+# produced BOTH a bogus literal assertion and a "not understood" refusal on
+# clause 1 — the most expensive position a refusal can occupy, because every
+# later lap re-pays for the whole transcript.
 _META_LABEL = re.compile(
     r"^(?P<label>app(?:lication)?(?:\s+under\s+test)?|credentials?(?:/config)?"
     r"|config|shell\s+commands[^:]*|environments?|browsers?|device|"
-    r"test\s+name|title|tags?)\s*:\s*", re.I)
+    r"test\s+name|title|tags?|acceptance\s+criteria|ac|objective|summary|"
+    r"purpose|context)\s*:\s*", re.I)
 # a bracketed template placeholder is punctuation around the value
 _BRACKETED = re.compile(r"^\[\s*(.*?)\s*\]$")
 # NOOD_0199 — ordering words that open a sentence in prose ("After that, …").
@@ -761,6 +773,71 @@ def _verify_shape(rest: str) -> tuple[str, str] | None:
     return None
 
 
+# NOOD_0207 — three clause SHAPES people always type, normalized into grammar
+# the parser already owns. Pure clause→clause: no new node kinds, no new
+# assembly branches, and anything unrecognized passes straight through to the
+# ordinary refusal. Refusing these was pure cost — each one a lap, and a lap
+# re-pays for the whole growing transcript.
+
+# B1 — "fill the customer info: Name - A, Email: B" → one enter per pair.
+_LABEL_LIST = re.compile(
+    r"^(?:fill|enter|complete|populate)s?\s+(?:in\s+)?(?:the\s+)?"
+    r"(?P<what>[\w\s]{0,40}?)\s*(?:details|info(?:rmation)?|fields?|form)?"
+    r"\s*(?:with|using)?\s*:\s*(?P<pairs>.+)$", re.I)
+_LABEL_PAIR = re.compile(r"^(?P<label>[^:,-][^:]*?)\s*(?::|\s-\s)\s*"
+                         r"(?P<value>.+)$")
+# B2 — "verify A, B and C" → one verify per part. The guard words are
+# load-bearing: the grammar already reads those shapes as ONE assertion
+# (NOOD_0197 disjunctions, NOOD_0125 count floors), and splitting them breaks
+# tests that pin exactly that.
+_VERIFY_LEAD = re.compile(
+    r"^(?:verif(?:y|ies)|confirms?|ensures?|asserts?|checks?(?!\s*out\b))"
+    r"\b\s*:?\s*(?:that\s+)?(?P<body>.+)$", re.I)
+_VERIFY_NO_SPLIT = re.compile(
+    r"[\"']|\bor\b|\bany of\b|\bat least\b|\bresults? with\b", re.I)
+_VALUE_TAIL = re.compile(r"\s*,\s*(?:and\s+)?|\s+and\s+", re.I)
+# B3 — a short terminal imperative IS the control's label ("place the order").
+_BARE_CLICK = re.compile(
+    r"^(?:proceed|continue|submit|confirm|checkout|check\s+out|place|pay|"
+    r"finish|complete)\b", re.I)
+
+
+def _rewrite_asks(clauses: list[dict]) -> list[dict]:
+    out: list[dict] = []
+
+    def _emit(src: dict, text: str):
+        out.append({**src, "id": f"clause-{len(out) + 1}", "text": text})
+
+    for c in clauses:
+        t = (c["text"] or "").strip()
+        if m := _LABEL_LIST.match(t):
+            pairs = [_LABEL_PAIR.match(p.strip())
+                     for p in m.group("pairs").split(",")]
+            # all-or-nothing: a partial match means the shape was something
+            # else, and guessing half a form is worse than refusing whole.
+            if pairs and all(pairs):
+                for p in pairs:
+                    _emit(c, f'enter "{p.group("value").strip()}" in '
+                             f'{p.group("label").strip()}')
+                continue
+        if (m := _VERIFY_LEAD.match(t)) \
+                and not _VERIFY_NO_SPLIT.search(m.group("body")):
+            parts = [p.strip() for p in _VALUE_TAIL.split(m.group("body"))
+                     if p.strip()]
+            if len(parts) > 1:
+                # as ONE clause this became a single literal no page renders:
+                # green was impossible and the failure named the wrong thing.
+                for p in parts:
+                    _emit(c, f"verify {p}")
+                continue
+        if _BARE_CLICK.match(t) and len(t.split()) <= 6 \
+                and not any(rx.match(t) for _, rx in _VERBS):
+            _emit(c, f"click {t}")
+            continue
+        _emit(c, t)
+    return out
+
+
 # --- assembly ------------------------------------------------------------------
 
 def expand(text: str, base_url: str | None = None) -> dict:
@@ -770,7 +847,7 @@ def expand(text: str, base_url: str | None = None) -> dict:
     yields byte-identical output. `unresolved` names clauses outside the
     grammar (model_fallback may translate those); `conflicts` names typed
     contradictions the flow itself contains (no model may guess past them)."""
-    clauses = _clauses(text)
+    clauses = _rewrite_asks(_clauses(text))
     if not clauses:
         return {"ok": False, "error": "empty prompt", "assumptions": [],
                 "unrecognized": [], "unresolved": [], "conflicts": [],
@@ -986,9 +1063,18 @@ def expand(text: str, base_url: str | None = None) -> dict:
                 back and _tokens(_clean(item)) <= _tokens(back[-1][1]["term"]))
             if informative:
                 if not back:
-                    _refuse(n, f"adding '{item}' needs a search step first "
-                                "(results are what picks bind to)",
-                            conflict=True)
+                    # NOOD_0207 — the single biggest cost sink in the reviewed
+                    # sessions. On a catalogue or card grid there IS no search
+                    # box, so "needs a search step first" demanded a control
+                    # that does not exist: the reader burned laps inventing
+                    # search/pick/add_to chains, and one session gave up and
+                    # shipped a green test for the WRONG item. The item names
+                    # itself — `within` scopes the mutation to its card.
+                    add = {"do": "add_to", "id": _mint("add"),
+                           "within": item, "destination": dest}
+                    adds[i] = add
+                    actions.append(add)
+                    _cover(n, "action", [add["id"]])
                     continue
                 # explicit item: literal pick from the nearest earlier search
                 j, src = back[-1]
@@ -1089,8 +1175,11 @@ def expand(text: str, base_url: str | None = None) -> dict:
                         if _overlaps(dest_word, a["destination"])]
                 if hits:
                     j, add = hits[-1]
+                    # NOOD_0207 — a searchless add names its item with
+                    # `within`, so that text is a flow subject too.
                     subjects = [searches[k]["term"] for k in searches] + \
-                        [p.get("target") or "" for p in picks.values()]
+                        [p.get("target") or "" for p in picks.values()] + \
+                        [a.get("within") or "" for _, a in all_adds]
                     if not _is_anaphoric(item_word) and not any(
                             _overlaps(item_word, s) for s in subjects if s):
                         _refuse(n, f"verifies '{item_word}' but the flow's "
@@ -1100,9 +1189,15 @@ def expand(text: str, base_url: str | None = None) -> dict:
                                 f"verifies '{item_word}' — no flow item "
                                 "matches", conflict=True)
                         continue
-                    check = {"item_in_destination": add["destination"],
-                             "expected_from": add["item_from"],
-                             "after": add["id"]}
+                    check = ({"any_of": [add["within"]], "after": add["id"]}
+                             # NOOD_0207 — no pick, so no bound caption to
+                             # point expected_from at: the `within` text IS
+                             # the identity. Same rule as the pick path —
+                             # identity, never a count.
+                             if add.get("within") and not add.get("item_from")
+                             else {"item_in_destination": add["destination"],
+                                   "expected_from": add["item_from"],
+                                   "after": add["id"]})
                 elif all_adds:
                     dests = ", ".join(repr(a["destination"])
                                       for _, a in all_adds)
@@ -1115,9 +1210,11 @@ def expand(text: str, base_url: str | None = None) -> dict:
                             for _, a in all_adds):
                 j, add = next((j, a) for j, a in all_adds
                               if _overlaps(rest, a["destination"]))
-                check = {"item_in_destination": add["destination"],
-                         "expected_from": add["item_from"],
-                         "after": add["id"]}
+                check = ({"any_of": [add["within"]], "after": add["id"]}
+                         if add.get("within") and not add.get("item_from")
+                         else {"item_in_destination": add["destination"],
+                               "expected_from": add["item_from"],
+                               "after": add["id"]})
                 assumptions.append(
                     f"step {no} '{n['raw']}': bare destination — verifying "
                     f"the added item is shown in {add['destination']}")
@@ -1280,8 +1377,14 @@ def expand(text: str, base_url: str | None = None) -> dict:
             if urls:
                 partial["navigation"] = urls
         return {"ok": False,
-                "error": "prompt step(s) not understood — rewrite them or "
-                         "author with goal. Supported: " + VERBS_HELP,
+                # NOOD_0207 — the ~0.9 KB grammar dump became a pointer: each
+                # unresolved clause already carries its own `suggested`
+                # rewrite, which is the part a reader acts on, and the dump
+                # was then re-sent on every later call in the turn.
+                "error": "prompt step(s) not understood — rewrite them (each "
+                         "unresolved clause carries a `suggested` rewrite) or "
+                         "author with goal; full grammar: "
+                         "noodle author --vocabulary",
                 "unrecognized": unrecognized, "unresolved": unresolved,
                 "conflicts": conflicts, "assumptions": assumptions,
                 "clauses": clauses, "coverage": coverage, "goal": None,
@@ -1319,8 +1422,8 @@ def expand(text: str, base_url: str | None = None) -> dict:
                 "error": "the prompt parsed to setup only — no action and no "
                          "check, so there is nothing to test. Write the flow "
                          "as numbered steps: 1. go to <url> 2. search for "
-                         "\"<term>\" 3. verify \"<text>\". Supported: "
-                         + VERBS_HELP,
+                         "\"<term>\" 3. verify \"<text>\" — full grammar: "
+                         "noodle author --vocabulary",
                 "unrecognized": [], "conflicts": [],
                 "unresolved": [{"clause": c["id"], "text": c["text"],
                                 "reason": "parsed, but contributes no action "
