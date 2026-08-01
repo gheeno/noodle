@@ -937,7 +937,7 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         # NOOD_0156 — ordered navigation contract: probe EVERY requested URL
         # in order (one browser, state carries), interacting only on the last
         # — earlier URLs are setup navigation, not action pages.
-        nav_env = goal_mod.navigation_env(goal, app)
+        nav_env = goal_mod.navigation_env(goal, app, base_url=base_url)
         # NOOD_0192 — a pure-API goal has no page to probe: no browser is
         # launched here, and none is launched by the run either (@api). This
         # is the whole api wok's authoring path, and it costs one branch.
@@ -1036,9 +1036,12 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             env_map = {}
     env_map[app] = supplied_url
     # NOOD_0156 — the navigation contract's ordered URLs live here; the
-    # compiled feature carries only {env:KEY} references.
+    # compiled feature carries only {env:KEY} references. NOOD_0209 — the
+    # app's own key is already written above; re-adding it uppercase would
+    # store the same URL twice under two spellings.
     for k, v in nav_env:
-        env_map[k] = normalize_url(v)
+        if k != app.upper():
+            env_map[k] = normalize_url(v)
     for k, v in (environment_values or {}).items():
         env_map[k] = v
 
@@ -1209,6 +1212,31 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         # Unproven requested actions/checks block FIRST — the compiled
         # artifacts still carry every request verbatim (never dropped).
         blocking = goal_ev["blocking"] + blocking
+    # NOOD_0209 — a blocked GOAL lap writes nothing. `blocking` used to be
+    # computed after the writes ("so the caller can fix in place"), so every
+    # blocked lap minted files: one reviewed request left 4 features + 2 POMs
+    # where one of each was wanted, and the residue outlived the lap that
+    # finally passed. Goal mode owns its artifacts, so a blocked lap rolls
+    # the feature/POM back through the same transaction bookkeeping. env and
+    # secrets stay: app-level and idempotent, and dropping supplied
+    # secret_values would force the next lap to re-ask for credentials.
+    # Hand-authored feature_content keeps write-always — the caller owns that
+    # content and fixes it in place. NB: gate on `goal is not None`, never on
+    # the feature_content local — goal mode reassigns it to the compiled
+    # Gherkin, so it is no longer None here.
+    rolled_back = False
+    if blocking and goal is not None:
+        for p in (feat_dest, pom_path):
+            if p in backups:
+                p.write_bytes(backups[p])
+            elif p in created:
+                p.unlink(missing_ok=True)
+        removed_stale_pom = False
+        rolled_back = True
+        state = load_state(workspace)
+        for k in ("last_feature", "last_pom"):
+            state.pop(k, None)
+        save_state(state, workspace)
     # NOOD_0197 — path contract honesty: the wok layout keeps only the
     # basename of the requested feature_path, and the reviewed session had to
     # GUESS the corrected path for its overwrite retry. Requested vs written,
@@ -1225,18 +1253,27 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     # flows; dropping them is the defect NOOD_0207 fixed everywhere else.
     warnings = list((goal_ev or {}).get("warnings") or []) + warnings
     requested_norm = Path(feature_path).as_posix().removesuffix(".feature")
-    if not rel(feat_dest).removesuffix(".feature").endswith(requested_norm):
+    if not rolled_back and \
+            not rel(feat_dest).removesuffix(".feature").endswith(requested_norm):
         warnings = [
             f"feature_path relocated: requested '{feature_path}', written "
             f"'{rel(feat_dest)}' (the layout is "
             "<tests_dir>/<wok>/<app>/features/ — reuse the written path for "
             "overwrite retries)"] + warnings
+    if rolled_back:
+        # NOOD_0209 — lead with it: the caller must not go looking for files
+        # this lap deliberately did not leave behind.
+        warnings = [
+            "authoring blocked — nothing written: the compiled feature/POM "
+            "were rolled back (fix `blocking` and re-author; the compiled "
+            "text is in `compiled`)"] + warnings
     result = {
         "ok": True, "app": app, "app_dir": rel(app_dir),
         "base_url_key": app.upper(),
-        "feature": rel(feat_dest),
+        "feature": None if rolled_back else rel(feat_dest),
         "feature_path_requested": str(feature_path),
-        "pom": rel(pom_path) if pom_content is not None else None,
+        "pom": rel(pom_path) if pom_content is not None and not rolled_back
+        else None,
         "environments": rel(env_path), "secrets": rel(secrets_path),
         "created_secret_keys": new_secret_keys,
         "missing_secret_keys": missing_secret_keys,

@@ -748,14 +748,29 @@ def navigation_urls(goal: dict) -> list[str]:
     return out
 
 
-def navigation_env(goal: dict, app: str) -> list[tuple[str, str]]:
+def navigation_env(goal: dict, app: str,
+                   base_url: str | None = None) -> list[tuple[str, str]]:
     """Ordered (ENV_KEY, url) pairs for the goal's navigation contract — the
     compiler emits only {env:KEY} references; the URLs live in the app
     environments.yaml. Keys derive from the app + each URL's last path
-    segment (universal — no site-specific names), deduplicated by suffix."""
+    segment (universal — no site-specific names), deduplicated by suffix.
+    NOOD_0209 — a navigation URL that IS the app's base URL reuses the app's
+    own key instead of minting a second one (<APP>_HOME next to <APP> was
+    systematic: two keys, one value, and the extra one never pruned)."""
     from urllib.parse import urlsplit
+
+    def _same(a: str, b: str) -> bool:
+        return a.rstrip("/").removeprefix("https://").removeprefix("http://") \
+            == b.rstrip("/").removeprefix("https://").removeprefix("http://")
+
     taken, out = set(), []
     for u in navigation_urls(goal):
+        if base_url and _same(u, base_url):
+            key = app.upper()
+            if key not in taken:
+                taken.add(key)
+                out.append((key, u))
+                continue
         path = urlsplit(u if "://" in u else f"https://{u}").path.strip("/")
         stem = path.rsplit("/", 1)[-1] if path else ""
         stem = stem.rsplit(".", 1)[0] if "." in stem else stem
@@ -1243,6 +1258,32 @@ def _iter_controls(blocks: list):
             yield c, phase, trigger
 
 
+def _contains(t: str, cn: str) -> bool:
+    """NOOD_0209 — guarded bidirectional containment for substring matching.
+
+    Bare `t in cn or cn in t` let a control named "e" match nearly every
+    target and let "edit" match "credit" (a substring of a word is not that
+    word): the resulting ambiguity blockers named controls with nothing to do
+    with the request, and each one cost the calling agent a rewrite lap. Two
+    guards: a 1-2 character name carries no intent, and a containment must
+    land on word boundaries — in BOTH directions, so a "cart" target still
+    meets an "add to cart" control. Exact-name matching stays ungated
+    upstream: a control genuinely named "OK" still matches "OK"."""
+    if not cn or len(cn) < 3:
+        return False
+    return bool(re.search(rf"\b{re.escape(t)}\b", cn)
+                or re.search(rf"\b{re.escape(cn)}\b", t))
+
+
+def _closest_first(target: str, names: list[str]) -> list[str]:
+    """NOOD_0209 — rank candidate names by closeness to the target before any
+    list is truncated for display; an arbitrary cut used to lead the blocker
+    with the least likely candidate."""
+    return sorted(names, key=lambda n: difflib.SequenceMatcher(
+        None, (target or "").casefold(), (n or "").casefold()).ratio(),
+        reverse=True)
+
+
 def _near_miss(target: str, blocks: list, kind: str = "control") -> str:
     """NOOD_0207 — ' — did you mean "X"? (probed here: …)', or ''.
 
@@ -1260,11 +1301,12 @@ def _near_miss(target: str, blocks: list, kind: str = "control") -> str:
         n for blk in plain for n in _block_texts(blk) if n))
     if not names:
         return ""
+    ranked = _closest_first(target, names)
     near = difflib.get_close_matches(target or "", names, 1, 0.6)
-    shown = ", ".join(f'"{n}"' for n in names[:8])
+    shown = ", ".join(f'"{n}"' for n in ranked[:8])
     return ((f' — did you mean "{near[0]}"?' if near else "")
             + f" (probed {kind}s here: {shown}"
-            + (f", +{len(names) - 8} more" if len(names) > 8 else "") + ")")
+            + (f", +{len(ranked) - 8} more" if len(ranked) > 8 else "") + ")")
 
 
 def _locate(target: str, blocks: list, scoped: bool = False) \
@@ -1317,6 +1359,22 @@ def _locate(target: str, blocks: list, scoped: bool = False) \
             return (*exact[0], None)
         if len(sels) > 1 or amb is not None:
             n = len(exact) if len(sels) > 1 else amb["matches"]
+            # NOOD_0209 — tell the two repeated shapes apart before advising.
+            # A per-item FAMILY (one selector shape stamped once per card, or
+            # the probe's own unique:False proof) is what `within:` answers.
+            # Structurally DIFFERENT controls sharing a label (a page-level
+            # control plus per-section ones — distinct selector shapes) are
+            # not in rows: `within:` advice there authored ready:true and the
+            # run died with "No row containing '<text>' found".
+            shapes = {re.sub(r"\d+", "N", s) for s in sels}
+            if amb is None and len(shapes) > 1:
+                return None, None, None, (
+                    f"matches {n} structurally different probed controls "
+                    "sharing this exact name (distinct selectors) — these "
+                    "are not one control repeated per row/card, so a "
+                    "within: anchor will not resolve at run time; instead, "
+                    "name the instance by nearby unique text or probe the "
+                    "page (--discover) and use the distinguishing control")
             return None, None, None, (
                 f"matches {n} probed controls sharing this exact "
                 "name — a repeated control; scope the action to one concrete "
@@ -1336,7 +1394,7 @@ def _locate(target: str, blocks: list, scoped: bool = False) \
     subs, names = [], []
     for c, phase, trigger in _iter_controls(blocks):
         cn = _norm(c.get("name"))
-        if cn and (t in cn or cn in t):
+        if _contains(t, cn):                     # NOOD_0209 — guarded
             subs.append((c, phase, trigger))
             if cn not in names:
                 names.append(cn)
@@ -1346,10 +1404,13 @@ def _locate(target: str, blocks: list, scoped: bool = False) \
         # NOOD_0200 — name the candidate it would have picked and why it
         # won't: "ambiguous" alone cost the reviewed session a full
         # round-trip guessing which spelling the engine wanted.
+        # NOOD_0209 — likeliest first: the truncated list is what the calling
+        # agent acts on, and an arbitrary cut misdirected the repair.
+        ranked = _closest_first(t, names)
         return None, None, None, (
-            "ambiguous — matches " + ", ".join(f'"{n}"' for n in names[:4])
-            + ("…" if len(names) > 4 else "")
-            + f'; not guessing between them — if you meant "{names[0]}", '
+            "ambiguous — matches " + ", ".join(f'"{n}"' for n in ranked[:4])
+            + ("…" if len(ranked) > 4 else "")
+            + f'; not guessing between them — if you meant "{ranked[0]}", '
             "say exactly that, otherwise use the exact probed control name")
     return None, None, None, None
 
@@ -2762,9 +2823,20 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
                     f'{a["do"]}:{a["target"]}')
                 if res_name:
                     ctrl = ev.get("controls", {}).get(_norm(res_name))
-            ctrl = ctrl or ev.get("controls", {}).get(_norm(a["target"])) \
-                or _find_control(a["target"],
-                                 [{"controls": list(ev.get("controls", {}).values())}])
+            # NOOD_0209 — refuse rather than guess: when the evidence pass
+            # BLOCKED this very target, the best-effort fallback still bound
+            # it (the observed artifact tied an enter target named "-" to a
+            # quantity stepper — a file an operator could hand-run). A
+            # blocked target keeps the author's own wording and mints no POM
+            # entry; the blocker, not a guessed binding, is the deliverable.
+            blocked = any(
+                b.startswith(f'{a["do"]} "{a.get("target", "")}"')
+                for b in ev.get("blocking") or ())
+            if not blocked:
+                ctrl = ctrl or ev.get("controls", {}).get(_norm(a["target"])) \
+                    or _find_control(
+                        a["target"],
+                        [{"controls": list(ev.get("controls", {}).values())}])
         target = ctrl["name"] if ctrl else a.get("target", "")
         steps.append(("When", _action_step(a, target)))
         # POM every goal action target with a stable selector — NOT gated on

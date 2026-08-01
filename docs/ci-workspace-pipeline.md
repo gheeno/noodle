@@ -34,7 +34,7 @@ trigger:                                  # ① when it runs
 
 parameters:                               # ② what a human can pick at Run time
   - name: noodleRef
-    default: refs/tags/1.0.0a24
+    default: refs/tags/1.0.0a25
   - name: testTag
     default: all
 
@@ -76,7 +76,7 @@ using the old path.
 ### Run a different engine version
 
 ```yaml
-      default: refs/tags/1.0.0a24      # ← the pinned version
+      default: refs/tags/1.0.0a25      # ← the pinned version
 ```
 
 `ref:` resolves against **tags in the engine repo**, so bumping the engine's
