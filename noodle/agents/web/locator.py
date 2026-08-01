@@ -1042,8 +1042,19 @@ def _on_ambiguous(page: Page, text: str, loc: Locator):
         f"Ambiguous locator '{text}' — matched multiple elements:\n"
         + "\n".join(f"    [{i}]{' (used)' if i == 0 else ''} {c}"
                     for i, c in enumerate(candidates))
-        + f"\n  → Pin the intended one in pom.yaml:  {text.lower()}:\n"
-        f"      css: '<selector from its line above>'"
+        # NOOD_0212 — this advice used to say only "pin it in pom.yaml", and
+        # the obvious place to put it — the pageobjects/<page>_pom.yaml the
+        # engine itself writes — is scoped to URLs matching its own FILENAME.
+        # A control you click to REACH a page never sits on that page, so the
+        # pin silently never applied and the run stayed verified:false with
+        # the fix apparently already made.
+        + f"\n  → Pin the intended one in the app's resources/pom.yaml:\n"
+        f"      {text.lower()}:\n"
+        f"        css: '<selector from its line above>'\n"
+        f"    (putting it in pageobjects/<page>_pom.yaml instead? that file "
+        f"applies ONLY on URLs matching its own filename — put `match: {{}}` "
+        f"on the first line, or a control clicked to reach that page will "
+        f"never resolve.)"
     )
     if _is_strict():
         raise AssertionError(msg)
