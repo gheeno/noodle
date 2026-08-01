@@ -4,6 +4,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a27] — 2026-08-01
+
+**NOOD_0212** — fix: "search for a toy, add it to the cart" authors and runs
+in one lap.
+
+The regression prompt that cost seven laps and 6m30s while the other three
+landed in one or two. Every lap died on the same blocker — `add_to "cart": no
+probed control mutates into 'cart'` — while `probe --find add` had been
+printing the button the whole time. Five separate faults, each enough alone.
+
+- **The card's own Add button reaches the prover.** A retail grid keeps its
+  per-item buttons in `result_items[].actions[]`, never in `blk["controls"]`
+  — the one list the mutation prover read. NOOD_0195 fixed exactly this shape
+  for captions; this is the same fix for controls. The "the page offers:" hint
+  now enumerates the same merged list instead of advertising the landing
+  page's carousel (`play`, `pause`) as what a results page offers.
+- **A control need not spell the destination it acts on.** The prover required
+  the word "cart" inside the control's own name, so a button labelled `Add`
+  could never qualify. Card actions are exempt — being an action *on a result
+  item* is the proof a flat control earns by naming what it acts on. Guarded
+  by an additive-only verb gate, because `_MUTATING_RE` matches `remove`,
+  `delete` and `save`: the three sibling card actions that must never bind.
+- **No detour through the product page.** The implied pick (NOOD_0168) CLICKS
+  the result, so the prover then hunted for the add button on the one page it
+  cannot be on. An untargeted pick now re-binds to a card that can actually be
+  added (the probe's pick had landed on in-store-only stock) and the
+  navigation click is dropped. A pick that NAMES its target still blocks —
+  silently adding a different product answers a question nobody asked.
+- **The card climb stops guessing.** `within:` support (NOOD_0207) ran its
+  shape probe with `allow_dom_scan=False`, which cannot see an aria-label-only
+  button — how card grids label Add — so every level missed and the grid
+  reported "No row containing '<caption>'". The climb now also matches by
+  accessible name, waits out an async grid (it read `count()` once, the
+  instant the step began), and clicks *that* element: under a row scope
+  `find()` cannot consult the POM, so it healed its way to the product IMAGE
+  and clicked that — green step, empty cart, failure blamed on the next
+  assertion.
+- **Same name, same destination is not an ambiguity.** A responsive header
+  renders its nav twice; both instances linked to the same page but their
+  selectors differed, so authoring refused and advised "name the instance by
+  nearby unique text" — which has no answer when both sit in chrome. Links
+  proven to share an `href` collapse to the visible one, with a warning;
+  distinct hrefs still block. The probe now carries a link's `href` onto the
+  control at all: it was scraped for the selector builder and dropped, so
+  NOOD_0208's navigation-shaped demotion had been reading `None` on every
+  link since it was written.
+
+Deliberately NOT done: dropping a prose `Verify:` line that restates the goal.
+That rule was tried and reverted before (`prompt_expander.py`), and
+`test_an_outcome_worded_verify_is_never_silently_dropped` guards it — no
+wording test separates it from "verify order is placed successfully". It costs
+one lap and stays honest.
+
+Measured on the four-prompt regression, verbatim prompts, engine LLM spend
+`none` throughout: TC2 13 laps → 1, TC4 7 laps / 6m30s → 1 lap / 82s.
+
 ## [1.0.0a26] — 2026-08-01
 
 **NOOD_0211** — feat: evidence follows the Gherkin keyword, and a plain-English

@@ -1095,6 +1095,57 @@ def navigation_shaped(c: dict) -> bool:
             and bool(href) and not href.startswith(("#", "javascript:")))
 
 
+# NOOD_0212 — a card's own action button is already proven to act on ONE item,
+# so it need not spell the destination the way a flat page control must: retail
+# grids label the control "Add" (or "+") and put the word "cart" nowhere near
+# it. _MUTATING_RE is the WRONG gate here — it matches "remove", "delete" and
+# "save", which are precisely the sibling card actions that must never bind as
+# an add. This one is additive-only, with the destructive/deferral siblings
+# named explicitly so a locale addition can't quietly let one through.
+_ADDITIVE_ITEM_RE = re.compile(
+    r"(?:^|\b)(add|\+|buy|purchase|"
+    r"hinzuf\w*|kaufen|ajouter|acheter|a[ñn]adir|agregar|comprar|"
+    r"aggiungi|acquista|adicionar|toevoegen|kopen)(?:\b|$)", re.I)
+_ITEM_ACTION_EXCLUDE_RE = re.compile(
+    r"\b(remove|delete|save|wish\s?list|favou?rite|compare|later|share|"
+    r"quick\s?view|entfernen|l[öo]schen|supprimer|eliminar|rimuovi)\b", re.I)
+
+
+def item_actions(blk: dict) -> list[dict]:
+    """NOOD_0212 — the probe stores a card's own buttons in
+    `result_items[].actions[]`, NEVER in `blk["controls"]`.
+
+    NOOD_0195 fixed exactly this shape for text (captions live in
+    `result_items` too, and a `see:` naming a real product hard-blocked while
+    the probe held the caption all along). The mutation prover was still
+    reading `controls` only, so a results page whose every card carries an
+    "Add" button reported "no probed control mutates into 'cart'" — and the
+    reader burned laps probing for a name that was in the payload the whole
+    time. `--find add` printed it as `[result-item-action]`; this is the same
+    list, handed to the prover."""
+    out = []
+    for it in blk.get("result_items") or []:
+        for a in it.get("actions") or []:
+            if not a.get("name"):
+                continue
+            out.append({**a, "item_caption": it.get("caption"),
+                        "origin": "result-item-action"})
+    return out
+
+
+def block_mutation_candidates(blk: dict) -> list[dict]:
+    """Everything on one probed block that could perform a mutation: the flat
+    controls plus each card's own actions. One list, so the prover and the
+    "the page offers:" hint can never again disagree about what was seen."""
+    return list(blk.get("controls") or []) + item_actions(blk)
+
+
+def _additive_item_action(c: dict) -> bool:
+    n = c.get("name") or ""
+    return bool(_ADDITIVE_ITEM_RE.search(n)) \
+        and not _ITEM_ACTION_EXCLUDE_RE.search(n)
+
+
 def mutation_control(controls: list[dict], destination: str,
                      scoped: bool = False) \
         -> tuple[dict | None, str | None]:
@@ -1112,12 +1163,25 @@ def mutation_control(controls: list[dict], destination: str,
         return None, "no destination named"
     cands = []
     for c in controls or []:
+        if c.get("origin") == "result-item-action":
+            continue          # NOOD_0212 — considered below, as a fallback
         n = _norm(c.get("name"))
         if not n or dn not in n or n == dn:
             continue
         if c.get("kind") == "button" or c.get("submit") \
                 or _mutating_name(c.get("name", "")):
             cands.append(c)
+    if not cands:
+        # NOOD_0212 — no flat control names the destination; fall back to the
+        # cards' own actions. Deliberately a FALLBACK, not a peer: where a
+        # page carries a real "Add to cart" control the existing binding must
+        # not change, and a card action can never introduce a new ambiguity
+        # into a page that already resolved. The destination word is not
+        # required here — being an action ON a result item is the proof that
+        # a flat control has to earn by naming what it acts on.
+        cands = [c for c in controls or []
+                 if c.get("origin") == "result-item-action"
+                 and _additive_item_action(c)]
     if not cands:
         return None, (f"no probed control mutates into {destination!r} "
                       "(nothing names the destination beyond opening it)")
@@ -1376,6 +1440,22 @@ def _locate(target: str, blocks: list, scoped: bool = False) \
         if scoped:
             return (*exact[0], None)
         if len(sels) > 1 or amb is not None:
+            # NOOD_0212 — same NAME and same DESTINATION is not an ambiguity.
+            # The ceiling comment above already states the principle ("one
+            # control rendered twice ... resolve to the same destination");
+            # for links the probe captured the href, so it can be CHECKED
+            # rather than assumed from a count. A site whose header renders
+            # its nav once for desktop and once for the collapsed menu hit
+            # this on every such link, and the advice it printed ("name the
+            # instance by nearby unique text") has no answer when both
+            # instances sit in chrome with no nearby text of their own.
+            # Distinct hrefs stay a block: those really are different pages.
+            hrefs = {str(c.get("href") or "").strip() for c, _, _ in exact}
+            if (amb is None and len(hrefs) == 1 and "" not in hrefs
+                    and all(c.get("kind") == "link" for c, _, _ in exact)):
+                c, ph, tr = next((x for x in exact if x[0].get("visible")),
+                                 exact[0])
+                return ({**c, "collapsed_from": len(exact)}, ph, tr, None)
             n = len(exact) if len(sels) > 1 else amb["matches"]
             # NOOD_0209 — tell the two repeated shapes apart before advising.
             # A per-item FAMILY (one selector shape stamped once per card, or
@@ -1655,13 +1735,18 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
                 # NOOD_0207 — the searchless shape: no pick, so no landed
                 # page; the mutation control lives on the CURRENT page,
                 # repeated once per card, and `within` says which card.
-                ctrl, why = mutation_control(
-                    [c for blk, _, _ in blocks for c in blk.get("controls", [])],
-                    a["destination"], scoped=True)
+                # NOOD_0212 — cards' own actions join the flat controls, and
+                # the hint below enumerates THE SAME list: it used to print
+                # `blk["controls"]` in block order, so a searchless add_to on
+                # a results page advertised the landing page's chrome ("skip
+                # to main content", "play", "pause") as what the page offers.
+                cand = [c for blk, _, _ in blocks
+                        for c in block_mutation_candidates(blk)]
+                ctrl, why = mutation_control(cand, a["destination"],
+                                             scoped=True)
                 if ctrl is None:
                     names = list(dict.fromkeys(
-                        c["name"] for blk, _, _ in blocks
-                        for c in blk.get("controls", []) if c.get("name")))[:8]
+                        c["name"] for c in cand if c.get("name")))[:8]
                     blocking.append(
                         f'add_to "{a["destination"]}": {why}'
                         + ("; the page offers: "
@@ -1718,17 +1803,59 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
                             "evidence": "mutation control observed on the "
                                         "landed page"}
             if not plan or not plan.get("control"):
+                # NOOD_0212 — the landed page has no add control, but the
+                # RESULTS page card the pick came from may carry its own. On
+                # most retail grids that card button IS the add-to-cart, and
+                # opening the product first is a detour the goal never asked
+                # for: the implied pick (NOOD_0168) inserted the navigation,
+                # then the prover looked for the button on the page that
+                # navigation left. Bind the card's action, scoped to the very
+                # caption the pick bound, and compile_goal drops the detour.
+                srch = (pg.get("search") or {})
+                cap = (bound.get(src) or {}).get("caption")
+                # A pick with no `target` means "any matching result" — the
+                # implied pick NOOD_0168 inserts is exactly that shape. There,
+                # a card the probe happened to click but which offers no add
+                # (in-store-only stock is the common one) must not decide the
+                # flow: any addable card satisfies the goal equally, so bind
+                # one and RE-BIND the caption to it, keeping the assertion and
+                # the mutation on the same product. A pick that NAMES its
+                # target keeps the strict match — silently adding a different
+                # product would answer a question the author didn't ask.
+                pick_act = next((x for x in actions if x.get("do") == "pick"
+                                 and (x.get("id") or "result") == src), None)
+                any_result = not (pick_act or {}).get("target")
+                cards = item_actions(srch)
+                if not any_result and cap:
+                    cards = [c for c in cards
+                             if _norm(c.get("item_caption")) == _norm(cap)]
+                ctrl2, _why2 = mutation_control(cards, a["destination"])
+                if ctrl2 is not None:
+                    chosen = ctrl2.get("item_caption") or cap
+                    if chosen and chosen != cap and src in bound:
+                        bound[src]["caption"] = chosen
+                        bound[src]["evidence"] = (
+                            "probe:search-results (the card carrying the "
+                            "add action)")
+                        proven[f"pick:{src}"] = chosen
+                    plan = {"prerequisite": None, "control": ctrl2,
+                            "on_results": True, "within": chosen,
+                            "evidence": "the picked result's own card action "
+                                        "on the results page"}
+            if not plan or not plan.get("control"):
                 # NOOD_0167 — name what the landed page DOES offer: a
                 # reviewed session dead-ended on this generic blocker while
                 # the page's tiles carried a differently-named control the
                 # whole time. Vocabulary from the probe's own evidence, so
                 # the reader's next move is a rename, not a re-probe.
                 names = list(dict.fromkeys(
-                    c["name"] for c in (picked.get("controls") or [])
+                    c["name"] for c in ((picked.get("controls") or [])
+                                        + item_actions(picked))
                     if c.get("name")))[:8]
                 blocking.append(
                     f'add_to "{a["destination"]}": no proven mutation path '
-                    "on the landed page"
+                    "on the landed page, and the picked result's own card "
+                    "carries no add-shaped action either"
                     + (f" — {why}" if why else "")
                     + " — fix the probe evidence; an unproven intermediate "
                     "step is never guessed"
@@ -1864,6 +1991,16 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
                             + (note or "no probed control matches that name"
                                + _near_miss(a["target"], blocks)))
             continue
+        if ctrl.get("collapsed_from"):
+            # NOOD_0212 — resolved, not guessed: every instance links to the
+            # same place. Said out loud because the compiled POM pins ONE of
+            # them, and a reader comparing the feature to the page should not
+            # have to rediscover why the other was safe to ignore.
+            warnings.append(
+                f'{a["do"]} "{a["target"]}": rendered '
+                f'{ctrl["collapsed_from"]} times (responsive header/nav '
+                "duplicates), every instance linking to the same "
+                "destination — bound the visible one")
         if scope and not _find_text(scope, [blk for blk, _, _ in blocks]):
             blocking.append(
                 f'{a["do"]} within "{scope}": no probed text on this page '
@@ -2770,6 +2907,17 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
             if aid is not None and c.get("after") == aid:
                 _emit_check(c)
 
+    # NOOD_0212 — picks whose add_to bound the results-page card action. Their
+    # navigation click is a detour away from that control, so the pick branch
+    # below emits the binding without the click.
+    _mp = ev.get("mutation_plans") or {}
+    _adds_on_results = {
+        a.get("item_from") for a in actions
+        if a.get("do") == "add_to" and a.get("item_from")
+        and (_mp.get(a.get("id")
+                     or f"add_to:{a.get('destination', '')}") or {}
+             ).get("on_results")}
+
     # NOOD_0201 — a relative api url joins {var:REST_BASE_URL} at run time;
     # without this Given the join is "" + path and the call never leaves the
     # machine. The env key is the same one the app's environments.yaml stores
@@ -2847,10 +2995,16 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
             # deterministic. The same caption feeds the item assertion.
             b = bound.get(a.get("id") or "result") or {}
             cap = b.get("caption") or a.get("target") or "result"
-            steps.append(("When", f'User clicks "{cap}"'))
-            if b.get("selector"):
-                pom_entries.setdefault(
-                    cap, [f"{cap}:", f'  css: {_yaml_str(b["selector"])}'])
+            # NOOD_0212 — when the add_to this pick feeds resolved on the
+            # RESULTS page (the card's own Add button), opening the product
+            # first is a detour: it navigates away from the very control the
+            # plan binds. Keep the binding — the caption still names the item
+            # and still feeds item_in_destination — and drop only the click.
+            if a.get("id") not in _adds_on_results:
+                steps.append(("When", f'User clicks "{cap}"'))
+                if b.get("selector"):
+                    pom_entries.setdefault(
+                        cap, [f"{cap}:", f'  css: {_yaml_str(b["selector"])}'])
             aid = a.get("id")
             if aid is not None:
                 for c in checks:
