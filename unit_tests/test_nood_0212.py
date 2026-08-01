@@ -180,3 +180,224 @@ def test_an_outcome_worded_verify_is_never_silently_dropped():
                     "2. verify order is placed successfully, subtotal is "
                     "shown, items listed")
     assert len(exp["goal"]["checks"]) == 3
+
+
+# --- the card's own Add button (the add-to-cart lap) --------------------------
+#
+# A retail results grid keeps its per-item buttons in `result_items[].actions[]`
+# and labels them "Add" — the word "cart" appears nowhere near them. The prover
+# read `blk["controls"]` only and required the destination word inside the
+# control's own name, so it reported "no probed control mutates into 'cart'"
+# while `probe --find add` was printing the button as [result-item-action].
+# NOOD_0195 fixed this exact shape for captions; these pin it for controls.
+
+def _card(caption, *actions):
+    return {"caption": caption,
+            "actions": [{"name": n, "selector": s, "kind": "button",
+                         "visible": True} for n, s in actions]}
+
+
+def _grid_block(*cards, controls=None):
+    return {"controls": list(controls or []), "result_items": list(cards)}
+
+
+def test_a_card_action_named_only_add_binds_as_the_mutation_control():
+    blk = _grid_block(_card("STEM Lab Kit", ("Add", '[aria-label="Add"]')),
+                      controls=[{"name": "cart", "selector": "[aria-label=Cart]",
+                                 "kind": "link", "visible": True}])
+    ctrl, why = goal_mod.mutation_control(
+        goal_mod.block_mutation_candidates(blk), "cart")
+    assert why is None and ctrl["name"] == "Add"
+    assert ctrl["item_caption"] == "STEM Lab Kit"
+
+
+def test_a_flat_add_to_cart_control_still_wins_over_a_card_action():
+    """The card list is a FALLBACK, never a peer: a page that already resolved
+    must bind exactly what it bound before."""
+    blk = _grid_block(_card("STEM Lab Kit", ("Add", ".card-add")),
+                      controls=[{"name": "Add to cart", "selector": "#atc",
+                                 "kind": "button", "visible": True}])
+    ctrl, _ = goal_mod.mutation_control(
+        goal_mod.block_mutation_candidates(blk), "cart")
+    assert ctrl["selector"] == "#atc"
+
+
+@pytest.mark.parametrize("label", ["Remove", "Save for later", "Delete",
+                                   "Add to wishlist", "Compare", "Entfernen"])
+def test_a_destructive_or_deferral_card_action_never_binds_as_an_add(label):
+    """_MUTATING_RE matches remove/delete/save, so reusing it here would have
+    bound the one button that must never stand in for an add."""
+    blk = _grid_block(_card("STEM Lab Kit", (label, ".x")))
+    ctrl, why = goal_mod.mutation_control(
+        goal_mod.block_mutation_candidates(blk), "cart")
+    assert ctrl is None and "mutates into" in why
+
+
+def test_the_blocker_hint_names_the_cards_actions_not_the_landing_chrome():
+    """The searchless hint enumerated blk["controls"] in block order, so a
+    results-page add_to advertised the landing page's carousel ("play",
+    "pause") as what the page offers — vocabulary for a rename that could
+    never work."""
+    grid = _grid_block(_card("STEM Lab Kit", ("Save for later", ".s")))
+    names = [c["name"] for c in goal_mod.block_mutation_candidates(grid)]
+    assert names == ["Save for later"]
+
+
+# --- the PDP detour ----------------------------------------------------------
+#
+# "search for a toy / add to cart" gets an implied pick (NOOD_0168). That pick
+# CLICKS the product, so the prover then looked for the add button on the
+# product page — the one page it cannot be on when the grid owns it. The card
+# the probe happened to click carried no Add at all (in-store-only stock), so
+# the flow blocked on a page it never needed to visit.
+
+def _detour_probe(picked_caption="ZURU Water Blaster"):
+    return {"pages": [{
+        "url": "https://shop.example.com/en.html", "title": "t",
+        "controls": [{"name": "cart", "selector": '[aria-label="Cart"]',
+                      "kind": "link", "visible": True}],
+        "headings": [], "pom_yaml": "", "permission_prompts": [],
+        "popups_closed": 0,
+        "search": {
+            "term": "toy", "headings": [], "controls": [],
+            "result_items": [
+                _card(picked_caption),                       # no add action
+                _card("STEM Lab Kit", ("Add", '[aria-label="Add"]'))],
+            "picked": {"controls": [], "headings": [picked_caption],
+                       "pom_yaml": "", "result_items": [],
+                       "picked_caption": picked_caption,
+                       "picked_selector": "#tile1"}}}],
+        "errors": []}
+
+
+def _detour_goal(pick_target=None):
+    pick = {"do": "pick", "id": "p"}
+    if pick_target:
+        pick["target"] = pick_target
+    return {"scenario": "add a toy to the cart",
+            "actions": [{"do": "search", "term": "toy", "id": "s"}, pick,
+                        {"do": "add_to", "destination": "cart",
+                         "item_from": "p", "id": "a"}],
+            "checks": [{"item_in_destination": "cart", "expected_from": "p",
+                        "evidence": "screenshot"}]}
+
+
+def test_an_untargeted_pick_rebinds_to_the_card_that_can_actually_be_added():
+    ev = goal_mod.evidence(_detour_goal(), _detour_probe())
+    assert ev["blocking"] == []
+    assert ev["mutation_plans"]["a"]["on_results"] is True
+    # the assertion must name the product that was actually added
+    assert ev["bound_targets"]["p"]["caption"] == "STEM Lab Kit"
+
+
+def test_the_products_own_page_is_never_opened_when_the_grid_owns_the_add():
+    goal = _detour_goal()
+    ev = goal_mod.evidence(goal, _detour_probe())
+    feat, _ = goal_mod.compile_goal(goal, ev, "SHOP")
+    assert 'User clicks "ZURU Water Blaster"' not in feat
+    assert 'User clicks "Add" in the row containing "STEM Lab Kit"' in feat
+
+
+def test_a_pick_that_names_its_target_never_swaps_in_another_product():
+    """Re-binding is only safe because an untargeted pick means "any matching
+    result". Name one, and adding a different product would answer a question
+    the author didn't ask — that still blocks."""
+    ev = goal_mod.evidence(_detour_goal(pick_target="ZURU Water Blaster"),
+                           _detour_probe())
+    assert any("no proven mutation path" in b for b in ev["blocking"])
+
+
+# --- the card climb ----------------------------------------------------------
+
+def test_the_card_climb_sees_a_button_whose_only_label_is_aria_label():
+    """NOOD_0207 taught `within:` to climb from a caption to the card, but the
+    climb's shape probe runs with allow_dom_scan=False, and an aria-label-only
+    match lives behind that scan. Retail grids label the Add control exactly
+    that way, so every level missed it and the card grid — the shape NOOD_0207
+    exists for — reported "No row containing '<caption>'"."""
+    from noodle.agents.web import actions as act
+
+    class _Loc:
+        def __init__(self, n): self._n = n
+        def count(self): return self._n
+        @property
+        def first(self): return self
+
+    class _Scope:
+        def __init__(self, label=0, role=0): self._l, self._r = label, role
+        def get_by_label(self, name, exact=True): return _Loc(self._l)
+        def get_by_role(self, role, name=None, exact=True): return _Loc(self._r)
+
+    assert act._accessible_hit(_Scope(label=1), "Add")      # aria-label only
+    assert act._accessible_hit(_Scope(role=1), "Add")       # accessible name
+    assert not act._accessible_hit(_Scope(), "Add")         # genuinely absent
+
+
+def test_the_climb_probe_survives_a_locator_that_raises():
+    from noodle.agents.web import actions as act
+
+    class _Boom:
+        def get_by_label(self, *a, **k): raise RuntimeError("detached")
+        def get_by_role(self, *a, **k): raise RuntimeError("detached")
+
+    assert act._accessible_hit(_Boom(), "Add") is False
+
+
+# --- same name, same destination --------------------------------------------
+#
+# A responsive header renders its nav twice (desktop bar + collapsed menu).
+# Both instances carry the same label and link to the same page, but their
+# selectors differ, so the ambiguity gate called them "structurally different"
+# and refused — advising "name the instance by nearby unique text", which has
+# no answer when both sit in chrome with no nearby text of their own.
+
+def _link(name, selector, href, visible=True):
+    return {"name": name, "selector": selector, "href": href, "kind": "link",
+            "visible": visible, "needs_pom": False, "step": "x"}
+
+
+def _page(*controls):
+    return [({"url": "https://shop.example.com/", "controls": list(controls),
+              "headings": [], "result_items": []}, "initial", None)]
+
+
+def test_two_chrome_links_to_the_same_destination_resolve_instead_of_blocking():
+    blocks = _page(_link("order status", 'a[class~="nl-order-status"]', "/orders"),
+                   _link("order status", "text=Order Status", "/orders"))
+    ctrl, _phase, _trig, note = goal_mod._locate("order status", blocks)
+    assert note is None and ctrl is not None
+    assert ctrl["collapsed_from"] == 2
+
+
+def test_same_named_links_to_DIFFERENT_destinations_still_block():
+    """The collapse is proof, not a tie-break: two links that genuinely go to
+    different pages are a real ambiguity and must keep refusing."""
+    blocks = _page(_link("order status", "#a", "/orders"),
+                   _link("order status", "#b", "/help/orders"))
+    ctrl, _p, _t, note = goal_mod._locate("order status", blocks)
+    assert ctrl is None and "structurally different" in note
+
+
+def test_the_collapse_needs_a_real_href_not_a_missing_one():
+    """Two links whose href the probe never captured cannot be shown to share
+    a destination — absent evidence is not matching evidence."""
+    blocks = _page(_link("order status", "#a", None),
+                   _link("order status", "#b", None))
+    ctrl, _p, _t, note = goal_mod._locate("order status", blocks)
+    assert ctrl is None and note
+
+
+def test_the_probe_carries_a_links_href_onto_the_control():
+    """The href was scraped (the selector builder reads it) but dropped from
+    the emitted control, so NOOD_0208's navigation-shaped demotion and the
+    same-destination collapse both read None on every link."""
+    from noodle.agents.web import probe as pb
+    out = pb.summarize({"controls": [
+        {"tag": "a", "href": "/en/check-order-status.html", "role": "link",
+         "text": "Order Status", "visible": True},
+        {"tag": "button", "role": "button", "text": "Go", "visible": True}]},
+        url="https://shop.example.com/")
+    link = next(c for c in out["controls"] if c["name"] == "order status")
+    assert link["href"] == "/en/check-order-status.html"
+    # a non-link never grows the key
+    assert "href" not in next(c for c in out["controls"] if c["name"] == "go")

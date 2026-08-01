@@ -480,6 +480,13 @@ def summarize(raw: dict, url: str = "", title: str = "") -> dict:
         # safety gates: a submit control mutates in any language.
         if c.get("type") == "submit":
             entry["submit"] = True
+        # NOOD_0212 — the link's destination. It was scraped (the selector
+        # builder above uses it) but never carried onto the emitted control,
+        # so every consumer downstream read None on every link: NOOD_0208's
+        # navigation-shaped demotion could not fire, and two chrome links
+        # sharing a name could not be shown to share a destination.
+        if c.get("tag") == "a" and (c.get("href") or "").strip():
+            entry["href"] = c["href"].strip()
         # NOOD_0136 — scope + discovery signals, only when informative: shadow
         # host chain (selectors still work — Playwright pierces open roots),
         # aria-expanded state and tab/menu roles feed --discover candidates.

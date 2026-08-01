@@ -1353,7 +1353,13 @@ def assert_number(page: Page, locator_text: str, count: float, op: str = "=="):
 def click_in_row(page: Page, locator_text: str, row: str):
     """Click an element scoped to the row/card containing `row` text — a grid
     row (D365) or, since NOOD_0207, any repeating item container."""
-    loc = find(page, locator_text, scope=_row_scope(page, row, locator_text))
+    scope = _row_scope(page, row, locator_text)
+    # NOOD_0212 — exact accessible name inside the card FIRST. find() cannot
+    # reach the POM under a scope, so on a product card it heals its way to
+    # the item's image (image-cue) and clicks that: the step goes green, the
+    # cart stays empty, and the failure lands on the next assertion.
+    loc = _accessible_locator(scope, locator_text) \
+        or find(page, locator_text, scope=scope)
     if loc is None:
         raise AssertionError(_not_found(f"Could not find '{locator_text}' in row '{row}'"))
     loc.click()
@@ -2460,6 +2466,38 @@ def switch_main_frame():
 _ROW_CLIMB = 6
 
 
+def _accessible_locator(scope, name: str):
+    """NOOD_0212 — the control with this exact accessible name inside `scope`,
+    or None.
+
+    `find(..., allow_dom_scan=False)` cannot see a button whose only label is
+    `aria-label` — that match lives behind the DOM scan (self-heal 4), which
+    the climb's shape probe deliberately switches off for cost. Retail card
+    grids label their per-item control exactly that way (`[aria-label="Add"]`),
+    so every climb level missed it and NOOD_0207's card support reported "No
+    row containing '<caption>'" on the commonest shape it exists to handle.
+
+    Returns the LOCATOR, not just a yes/no, so the click lands on the very
+    element the climb proved was there. Inside a row scope `find` cannot
+    consult the POM (selectors are page-global and would escape the scope),
+    so it falls through to healing — which on a product card happily matches
+    the item's IMAGE via image-cue and clicks that instead. Bounded and
+    non-polling: two locator counts, no scan, no heal."""
+    for probe in (lambda: scope.get_by_label(name, exact=True),
+                  lambda: scope.get_by_role("button", name=name, exact=True)):
+        try:
+            loc = probe()
+            if loc.count():
+                return loc.first
+        except Exception:                                # pragma: no cover
+            continue
+    return None
+
+
+def _accessible_hit(scope, name: str) -> bool:
+    return _accessible_locator(scope, name) is not None
+
+
 def _row_scope(page: Page, row: str, contains: str | None = None):
     """The container holding `row` text — a real table/grid row, else the
     nearest ancestor that also holds `contains`.
@@ -2477,6 +2515,18 @@ def _row_scope(page: Page, row: str, contains: str | None = None):
     # makes "the right ancestor" decidable rather than a guess. Callers that
     # know the control name pass it; the rest keep the old strict behaviour.
     anchor = page.get_by_text(row, exact=False).locator("visible=true")
+    if contains and not anchor.count():
+        # NOOD_0212 — a search-results grid renders ASYNC. Every other locator
+        # path polls (find carries the full NOODLE_FIND_TIMEOUT budget); this
+        # one read count() once, the instant the click step began, and a card
+        # that was still a skeleton became "No row containing '<caption>'" —
+        # blaming the caption for what was only a race. One bounded settle
+        # wait, the same budget a still-rendering page gets everywhere else.
+        try:
+            anchor.first.wait_for(state="visible",
+                                  timeout=_settle_timeout_ms())
+        except Exception:
+            pass
     if contains and anchor.count():
         loc = anchor.first
         for _ in range(_ROW_CLIMB):
@@ -2485,7 +2535,8 @@ def _row_scope(page: Page, row: str, contains: str | None = None):
             # polling the full find budget six times over would cost minutes,
             # and the real lookup happens once the scope is chosen.
             if find(page, contains, scope=loc, poll=False, heal=False,
-                    allow_dom_scan=False) is not None:
+                    allow_dom_scan=False) is not None \
+                    or _accessible_hit(loc, contains):
                 return loc
     raise AssertionError(f"No row containing '{row}' found.\nURL: {page.url}")
 
