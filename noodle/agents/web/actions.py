@@ -163,12 +163,21 @@ def navigate(page: Page, url: str):
     # returns at domcontentloaded — any in-app loading screen after that is the
     # next step's job (Playwright auto-wait / find() polling handles it).
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=_find_timeout_ms())
+        resp = page.goto(url, wait_until="domcontentloaded", timeout=_find_timeout_ms())
         # NOOD_0135 — remember (requested, landed) so a later element miss can
         # say "wrong page" instead of masquerading as locator rot. Advisory
         # bookkeeping — never allowed to fail the navigation itself.
         try:
             page._noodle_nav = (url, page.url)
+            # NOOD_0210 — the navigation's own HTTP status, so a web scenario
+            # can assert "the page returns 200". `the response status should
+            # be 200` is API-wok only: it asserts the last REST call, and after
+            # a plain `User is on '<url>'` there is no REST call, so there was
+            # no way to say it at all — a real AC ("assert the UI page returns
+            # 200") had to be approximated with `no server errors should
+            # occur`. None for file:// and same-document navigations, which
+            # produce no response.
+            page._noodle_status = resp.status if resp is not None else None
         except Exception:
             pass
     except PlaywrightTimeoutError as e:
@@ -727,6 +736,93 @@ def assert_on_screen(page: Page, text: str, on: bool = True):
             f"outside its container's overflow stays 'visible' to the DOM while the "
             f"user sees nothing of it.\nURL: {page.url}")
     logger.info(f"\n  ✓ {text!r} is {'on' if on else 'off'} screen ({ratio:.0%} showing)")
+
+
+def assert_page_status(page: Page, status: int | None = None):
+    """NOOD_0210 — assert the HTTP status the CURRENT PAGE was served with.
+
+    `the response status should be 200` belongs to the API wok and asserts the
+    last REST call; after `Given User is on '<url>'` there is no REST call, so
+    "assert the page returns 200" simply could not be written. The status is
+    captured by navigate() off goto()'s own response.
+
+    status=None means "any success" (2xx/3xx) — the common intent of "the page
+    loaded successfully", and honest about a redirect being fine.
+    """
+    got = getattr(page, "_noodle_status", "unset")
+    if got == "unset" or got is None:
+        raise AssertionError(
+            "No HTTP status was recorded for this page. A status exists only "
+            "after a real navigation step (`User is on '<url>'`); file:// URLs "
+            "and same-document navigations produce no response."
+            f"\nURL: {page.url}")
+    if status is None:
+        if not (200 <= got < 400):
+            raise AssertionError(
+                f"Expected the page to load successfully — got HTTP {got}."
+                f"\nURL: {page.url}")
+    elif got != status:
+        raise AssertionError(
+            f"Expected the page to return HTTP {status} — got {got}."
+            f"\nURL: {page.url}")
+    logger.info(f"\n  ✓ page returned HTTP {got}")
+
+
+def assert_motion(page: Page, text: str, direction: str | None = None):
+    """NOOD_0210 — assert an element is actually animating, optionally in a
+    named direction ('left to right', 'up and down', …).
+
+    A present-and-visible assertion cannot tell a bouncing logo from a frozen
+    one, which is the whole point of an animated banner. This resolves the
+    element through the normal stack (so a POM entry or the image-cue tier
+    works), then samples its box for ~0.85s and classifies the motion —
+    deterministic, no vision model.
+
+    The direction is asserted, not merely reported: a step claiming vertical
+    bounce FAILS on a horizontal drift, because a direction that accepts any
+    motion proves almost nothing.
+    """
+    from . import motion
+    el = find(page, text)
+    verdict = motion.observe(page, el)
+    if verdict is None:
+        raise AssertionError(
+            f"Cannot measure '{text}' — it never rendered a box to watch."
+            f"\nURL: {page.url}")
+    ok, why = motion.matches(verdict, direction)
+    if not ok:
+        wanted = f" {direction}" if direction else ""
+        raise AssertionError(
+            f"Expected '{text}' to be moving{wanted} — but {why} "
+            f"(watched {verdict['window_ms']}ms: net {verdict['dx']}px across, "
+            f"{verdict['dy']}px down; path "
+            f"{verdict['travel_x']}x/{verdict['travel_y']}y)."
+            f"\nURL: {page.url}")
+    logger.info(f"\n  🎞️  '{text}' is moving {verdict['direction']} "
+                f"({verdict['dx']}px across, {verdict['dy']}px down "
+                f"over {verdict['window_ms']}ms)")
+
+
+def assert_no_motion(page: Page, text: str):
+    """NOOD_0210 — the inverse: this element must hold still.
+
+    For a hero that should settle after load, or a `prefers-reduced-motion`
+    suite where animation is itself the defect.
+    """
+    from . import motion
+    el = find(page, text)
+    verdict = motion.observe(page, el)
+    if verdict is None:
+        raise AssertionError(
+            f"Cannot measure '{text}' — it never rendered a box to watch."
+            f"\nURL: {page.url}")
+    if verdict["moving"]:
+        raise AssertionError(
+            f"Expected '{text}' to be still — but it moves "
+            f"{verdict['direction']} ({verdict['dx']}px across, "
+            f"{verdict['dy']}px down over {verdict['window_ms']}ms)."
+            f"\nURL: {page.url}")
+    logger.info(f"\n  🧊  '{text}' is still over {verdict['window_ms']}ms")
 
 
 def assert_hidden(page: Page, text: str):

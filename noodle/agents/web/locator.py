@@ -433,6 +433,23 @@ def _find(page: Page, text: str, scope=None, poll: bool = True,
         _set_source("ambiguous-lenient")
         return _on_ambiguous(page, text, vis if n_visible > 1 else loc)
 
+    # NOOD_0210 — image identity, ABOVE the heal gate on purpose. An <img> with
+    # no alt/title has no text node and no accessible name, so every strategy
+    # above is blind to it, but its own src/resource routinely names it
+    # (.../Steve_Jobs_signature.svg). That is the same class of evidence as the
+    # alt/aria caption _find_probe_visible already exists to honour — just in a
+    # different attribute — so it is a resolution tier, not a repair, and must
+    # stay available to assertions (`the user sees "his signature"` runs
+    # find(heal=False)). Safe next to allow_dom_scan=False, whose whole point is
+    # that a LOOSE token match must never satisfy an assertion: this requires
+    # EVERY meaningful token of the phrase to appear in one image's attributes.
+    loc_img, amb_img = _image_cue_locator(search, text)
+    if loc_img is not None and not amb_img:
+        logger.info(f"\n  🖼️  Matched '{text}' via image attribute cues")
+        healing.record(text, "image-cue", "matched on img src/alt/resource")
+        _set_source("image-cue")
+        return loc_img.first
+
     # Cheap probe (heal=False): the one fast pass above missed, so fall straight
     # through. A non-final candidate in a find_first() chain must not pay the
     # self-heal chain below (scroll, partial text, DOM scan, vision, OCR) — the
@@ -667,28 +684,59 @@ def _try_strategies(scope, text: str, prefer: str | None = None) -> tuple[Locato
     Editable-constrained strategies now run first for those actions; the
     generic chain stays as the fallback so nothing that resolved before stops
     resolving.
+
+    NOOD_0210 — each group runs EXACT-first, then substring. The patterns are
+    unanchored substring regexes, and role/accessible-name strategies run ahead
+    of get_by_text, so asserting a short common word bound to whatever link
+    happened to contain it: `should see 'Born'` matched a citation link named
+    "…How To Win Arguments With Really Stubborn People" (Stub*born*) — one
+    element, so ambiguity never fired, and the run shipped `verified: true`
+    with an evidence screenshot of the references section while <th>Born</th>
+    in the infobox went unlooked-at. Exact-first fixes the class: a literal
+    that IS some element's whole text resolves to that element. The substring
+    pass is unchanged and still runs, so nothing that resolved before stops
+    resolving.
     """
-    pattern = re.compile(re.escape(text), re.IGNORECASE)
-    strategies = [
-        lambda: scope.get_by_role("button",   name=pattern),
-        lambda: scope.get_by_role("link",     name=pattern),
-        lambda: scope.get_by_label(pattern),
-        lambda: scope.get_by_placeholder(pattern),
-        lambda: scope.get_by_role("textbox",  name=pattern),
-        lambda: scope.get_by_role("combobox", name=pattern),
-        lambda: scope.get_by_role("checkbox", name=pattern),
-        lambda: scope.get_by_title(pattern),
-        lambda: scope.get_by_text(pattern, exact=False),
-    ]
-    if prefer == "input":
-        strategies = [
+    def chain(pattern):
+        """The generic strategy list for one pattern, priority order."""
+        return [
+            lambda: scope.get_by_role("button",   name=pattern),
+            lambda: scope.get_by_role("link",     name=pattern),
+            lambda: scope.get_by_label(pattern),
+            lambda: scope.get_by_placeholder(pattern),
+            lambda: scope.get_by_role("textbox",  name=pattern),
+            lambda: scope.get_by_role("combobox", name=pattern),
+            lambda: scope.get_by_role("checkbox", name=pattern),
+            lambda: scope.get_by_title(pattern),
+            # NOOD_0210 — alt text was reachable only through an explicit POM
+            # `alt_text:` entry (pom.py) and `noodle inspect`, never from the
+            # chain every step actually resolves through, so a correctly
+            # alt-labelled image needed a POM entry to be seen at all.
+            lambda: scope.get_by_alt_text(pattern),
+            lambda: scope.get_by_text(pattern, exact=False),
+        ]
+
+    def editable(pattern):
+        return [
             lambda: scope.get_by_label(pattern).and_(scope.locator(_EDITABLE_SEL)),
             lambda: scope.get_by_placeholder(pattern),
             lambda: scope.get_by_role("textbox",    name=pattern),
             lambda: scope.get_by_role("combobox",   name=pattern),
             lambda: scope.get_by_role("searchbox",  name=pattern),
             lambda: scope.get_by_role("spinbutton", name=pattern),
-        ] + strategies
+        ]
+
+    # \s* padding, not \b: Playwright matches the regex against the element's
+    # text/accessible name, which routinely carries surrounding whitespace.
+    exact = re.compile(rf"^\s*{re.escape(text)}\s*$", re.IGNORECASE)
+    loose = re.compile(re.escape(text), re.IGNORECASE)
+    if prefer == "input":
+        # Editable stays ahead of generic across BOTH passes — an exactly-named
+        # button must not outrank the field a fill actually needs (NOOD_0089).
+        strategies = (editable(exact) + editable(loose)
+                      + chain(exact) + chain(loose))
+    else:
+        strategies = chain(exact) + chain(loose)
     for strategy in strategies:
         try:
             loc = strategy()
@@ -891,6 +939,93 @@ def _narrow_to_visible(loc: Locator) -> tuple[Locator | None, int]:
         return vis, vis.count()
     except Exception:
         return None, -1
+
+
+# NOOD_0210 — image identity from its attributes. An <img> often carries no
+# alt, no title and no text node, so every accessible-name strategy is blind to
+# it and only a hand-written POM entry could reach it. But the tag is rarely
+# anonymous: the file it points at names it.
+#
+#   <img resource=".../File:Steve_Jobs_signature.svg"
+#        src="//upload.wikimedia.org/.../250px-Steve_Jobs_signature.svg.png"
+#        data-file-type="drawing" class="mw-file-element">
+#
+# "signature" is right there in resource/src. This tokenizes the phrase and
+# every identifying attribute (plus an enclosing <figure>'s caption, which is
+# how a photo is named when the tag isn't) and requires EVERY meaningful phrase
+# token to appear — deterministic, no model, no OCR. Deliberately strict: a
+# partial-token score would let "signature" match a "signup" sprite, and a
+# locator that guesses is worse than one that says it found nothing.
+#
+# ponytail: one evaluate() over the images, exact-attribute selectors back —
+# no DOM mutation, no per-element round trip. Size/format noise (250px, svg,
+# png, thumb) is stopworded so it can't accidentally satisfy a token.
+_IMAGE_CUE_JS = r"""
+(phrase) => {
+  const STOP = new Set([
+    'the','a','an','his','her','their','its','of','and','or','is','are','be',
+    'can','we','you','see','seen','on','in','at','this','that','with','show',
+    'shows','showing','visible','image','img','images','picture','photo',
+    'logo','icon','banner','thumb','thumbnail','file','px','svg','png','jpg',
+    'jpeg','gif','webp','static','upload','uploads','commons','wikipedia']);
+  const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const tokens = [...new Set(norm(phrase).split(/\s+/))]
+                   .filter(t => t && t.length > 1 && !STOP.has(t));
+  if (!tokens.length) return [];
+  const CUE = /^(src|srcset|alt|title|resource|href|longdesc|id|name|class|aria-label)$/i;
+  const sel = e => {
+    if (e.id) return '#' + CSS.escape(e.id);
+    const q = v => '"' + String(v).replace(/["\\]/g, '\\$&') + '"';
+    const tag = e.tagName.toLowerCase();
+    for (const a of ['alt', 'src', 'resource', 'srcset'])
+      if (e.getAttribute(a)) return `${tag}[${a}=${q(e.getAttribute(a))}]`;
+    return null;
+  };
+  const out = [];
+  for (const e of document.querySelectorAll('img, svg, picture, [role="img"]')) {
+    const cues = [];
+    for (const a of e.attributes || [])
+      if (CUE.test(a.name) || /^data-/i.test(a.name)) cues.push(a.value);
+    const fig = e.closest('figure');
+    if (fig) cues.push(fig.textContent || '');
+    const hay = norm(cues.join(' '));
+    if (!hay) continue;
+    if (tokens.every(t => hay.includes(t))) {
+      const s = sel(e);
+      if (s) out.push(s);
+    }
+  }
+  return out;
+}
+"""
+
+
+def _image_cue_locator(scope, text: str):
+    """Resolve an <img>/<svg> by the cues in its own attributes (NOOD_0210).
+
+    Returns (locator, ambiguous) like _try_strategies, or (None, False) when
+    no image carries every meaningful token of `text`. Best-effort: any
+    evaluate failure (a detached frame, a CSP that blocks nothing but still
+    trips us) reports no match rather than raising into the find() chain.
+    """
+    try:
+        page = getattr(scope, "page", scope)
+        selectors = page.evaluate(_IMAGE_CUE_JS, text)
+    except Exception:
+        return None, False
+    # Trust nothing back from evaluate(): a stubbed/patched page hands back a
+    # mock, and ", ".join() on one raises TypeError straight through find().
+    if not isinstance(selectors, (list, tuple)):
+        return None, False
+    selectors = [s for s in selectors if isinstance(s, str) and s]
+    if not selectors:
+        return None, False
+    try:
+        loc = page.locator(", ".join(selectors))
+        count = loc.count()
+    except Exception:
+        return None, False
+    return (loc, count > 1) if count else (None, False)
 
 
 def _on_ambiguous(page: Page, text: str, loc: Locator):

@@ -1652,6 +1652,49 @@ PATTERNS = [
     (rf'^(?:the )?["\'](.+?)["\'] {_IMG} (?:should )?(?:shows?|displays?|contains?|reads?) (?:the )?(?:text )?["\'](.+?)["\']$',
                                                    'assert_image_text', lambda m: {'locator': _q(m.group(1)), 'text': _q(m.group(2))}),
 
+    # NOOD_0210 — the PAGE's own HTTP status. Distinct from the REST-wok
+    # `the response status should be 200`, which asserts the last API call and
+    # is meaningless after a plain navigation. "assert the UI page returns 200"
+    # is a routine AC that previously had to be faked with a console/network
+    # health step. Anchored on page/url/site so it can never shadow the REST
+    # response assertions.
+    (r'^(?:the )?(?:page|url|site|website)(?: status(?: code)?)? '
+     r'(?:should |must )?(?:returns?|be|is|was)? ?(?:status |http )?(\d{3})$',
+                                                   'assert_page_status', lambda m: {'status': int(m.group(1))}),
+    (r'^(?:the )?(?:page|url|site|website) (?:should |must )?'
+     r'(?:load|loads|loaded|return|returns|responds?)(?:ed)? '
+     r'(?:successfully|ok|fine|without errors?)$',
+                                                   'assert_page_status', lambda m: {}),
+
+    # NOOD_0210 — motion assertions. Marketing pages animate logos and banner
+    # strips, and until now a test could only say such an element was PRESENT:
+    # a bouncing logo and a frozen one asserted identically. Deterministic —
+    # samples the element's box over ~0.85s (agents/web/motion.py), no vision
+    # model — so these sit here, ahead of the vision-LLM semantic catch-alls
+    # below, which would otherwise swallow "should be moving" as a scene
+    # description. The element name may be quoted or bare ("the pizza logo").
+    # Direction FIRST so "moving left to right" never parses as bare motion,
+    # and the negative before the bare positive so "is not moving" can't be
+    # swallowed as a locator ending in "is not".
+    (r'^(?:the )?["\']?(.+?)["\']? (?:can |could |should |will |'
+     r'may )?(?:be |is |are |was |were )?(?:seen |shown |visible )?'
+     r'(?:moving|bouncing|sliding|scrolling|drifting|animating|travelling|'
+     r'traveling|panning|floating)(?: from)? '
+     r'(left to right|right to left|top to bottom|bottom to top|up and down|'
+     r'down and up|side to side|sideways|horizontally|vertically)$',
+                                                   'assert_motion', lambda m: {'locator': _q(m.group(1)), 'direction': m.group(2)}),
+    # The negative: a hero that should hold still, or an animation that must
+    # stop once loaded. `prefers-reduced-motion` suites need exactly this.
+    (r'^(?:the )?["\']?(.+?)["\']? (?:is |are |should be |'
+     r'should remain |remains )?(?:not moving|not animated|not animating|'
+     r'static|still|frozen|stationary|motionless)$',
+                                                   'assert_no_motion', lambda m: {'locator': _q(m.group(1))}),
+    # Bare "is moving / is animated" — any motion, no direction claimed.
+    (r'^(?:the )?["\']?(.+?)["\']? (?:can |could |should |will )?'
+     r'(?:be |is |are |was |were )?(?:seen |shown )?'
+     r'(?:moving|bouncing|scrolling|sliding|animating|animated)$',
+                                                   'assert_motion', lambda m: {'locator': _q(m.group(1)), 'direction': ''}),
+
     # Semantic (vision LLM) assertions
     (r'^the (.+?) should (?:show|display|have) (?:a )?(.+)$',
                                                    'assert_semantic', lambda m: {'assertion': f"{m.group(1)} shows {m.group(2)}"}),

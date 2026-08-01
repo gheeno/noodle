@@ -17,6 +17,7 @@ import json
 
 import pytest
 
+from noodle import docs_reader
 from noodle.agents.web import probe as probe_mod
 from noodle.mcp import server as mcp_server
 from noodle.repl import goal as goal_mod
@@ -159,7 +160,11 @@ _DOC = ("# Title\n\npreamble line\n\n"
 def docs_dir(tmp_path, monkeypatch):
     (tmp_path / "big-doc.md").write_text(_DOC + ("filler line of prose\n" * 900), encoding="utf-8")
     (tmp_path / "small-doc.md").write_text("# Small\n\njust a little text\n", encoding="utf-8")
-    monkeypatch.setattr(mcp_server, "_docs_dir", lambda: tmp_path)
+    # NOOD_0210 — the implementation moved to noodle.docs_reader so `noodle
+    # docs` no longer imports the MCP server (and its FastMCP instance) just to
+    # read a markdown file. mcp_server.read_docs still delegates here, so these
+    # tests keep exercising the tool through its real entry point.
+    monkeypatch.setattr(docs_reader, "_docs_dir", lambda: tmp_path)
     return tmp_path
 
 

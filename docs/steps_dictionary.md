@@ -233,6 +233,69 @@ When User reads the screen text into [SCREEN_TEXT]
 Then [PRICE] should equal "1299.99"
 ```
 
+### Finding an image that has no alt text (NOOD_0210)
+
+An `<img>` often carries no alt, no title and no text node, so every
+accessible-name strategy is blind to it — it used to need a hand-written POM
+entry to be referenced at all. But the tag is rarely anonymous: the file it
+points at names it.
+
+```html
+<img resource=".../File:Steve_Jobs_signature.svg"
+     src="//upload.wikimedia.org/.../250px-Steve_Jobs_signature.svg.png"
+     data-file-type="drawing" class="mw-file-element">
+```
+
+`"signature"` is right there in `resource`/`src`, so this now resolves with no
+POM entry:
+
+```gherkin
+Then the user sees "his signature"
+```
+
+Cues read: `src`, `srcset`, `alt`, `title`, `resource`, `href`, `aria-label`,
+`id`, `name`, `class`, any `data-*`, and an enclosing `<figure>`'s caption.
+`alt` is also now reachable from the main strategy chain, not just from a POM
+`alt_text:` entry.
+
+Deliberately strict: **every** meaningful token of the phrase must appear in
+one image's attributes, so "signature" cannot match a "signup" sprite. Size and
+format noise (`250px`, `svg`, `png`, `thumb`) is stopworded so it can never
+satisfy a token. Deterministic — no OCR, no vision model — and reported in the
+run as `image-cue` so you can see *how* the element was identified.
+
+Note the difference from the label: `should see 'Signature'` matches the
+infobox `<th>`, proving the *row* exists; `sees "his signature"` matches the
+picture. Both are legitimate; they are not the same assertion.
+
+### Is it moving? (NOOD_0210)
+
+```gherkin
+Then the pizza logo can be seen bouncing up and down
+Then the brand logo are seen moving left to right
+Then the 'hero banner' should be moving right to left
+Then the carousel is scrolling
+Then the hero image should be static
+Then the 'promo strip' is not moving
+```
+
+A present-and-visible assertion cannot tell a bouncing logo from a frozen one,
+which is the entire point of an animated banner. These sample the element's
+box over ~0.85s and classify the motion.
+
+Directions: `left to right`, `right to left`, `top to bottom`, `bottom to top`,
+`up and down`, `side to side`, `sideways`, `horizontally`, `vertically`. Bare
+forms (`is moving` / `is animated` / `is scrolling`) accept any motion; the
+negative forms (`is not moving`, `static`, `still`, `frozen`, `stationary`)
+assert the opposite — what a `prefers-reduced-motion` suite needs.
+
+The direction is **asserted, not just reported**: claiming vertical bounce
+fails on a horizontal drift. Motion is measured from the rendered box, not from
+CSS, so it catches keyframes, a transform on any ancestor, a JS ticker and
+scroll-linked motion alike — thebrief.ai's logo strip drifts ~2.7px per 250ms
+while the `<img>` itself reports `animationName: none`, because the animation
+is on a parent. Deterministic; the cost is ~0.85s of wall-clock, not tokens.
+
 Object recognition (the *picture*, not its text) needs a vision LLM
 (`NOODLE_MODEL`) and is **nondeterministic** — `write_feature` auto-inserts a
 `# ⚠ requires a vision LLM (image recognition)` comment above the step and
@@ -1533,6 +1596,29 @@ the text contains `*`/`?`.
 fails on any HTTP 4xx/5xx response in the page's own traffic — distinct from
 `no network requests should fail`, which only sees transport-level aborts: a
 500 completes "fine" as a request, so a page full of server errors passed it.
+
+### The page's own HTTP status (NOOD_0210)
+
+```gherkin
+Then the page should return 200
+Then the page status should be 200
+Then the url should return 404
+Then the page should load successfully
+```
+
+**This is not `the response status should be 200`.** That one belongs to the
+REST wok and asserts the *last API call*; after a plain
+`Given User is on '<url>'` there is no API call, so it asserts nothing about
+the page. An AC as ordinary as "assert the UI page returns 200" therefore had
+no step at all and had to be approximated with `no server errors should
+occur` — which is a different claim (it watches *all* traffic, and a page can
+serve a clean 200 while a tracking pixel 404s).
+
+The status is captured from the navigation's own response, so it is the status
+of the document you are looking at. `should load successfully` accepts any
+2xx/3xx — the honest form when a redirect is fine. There is no status for a
+`file://` URL or a same-document navigation; asserting one there fails saying
+so rather than inventing a 200.
 
 ---
 
