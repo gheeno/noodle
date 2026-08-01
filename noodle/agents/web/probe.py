@@ -2020,11 +2020,31 @@ def _expect(page, pg: dict, texts: list[str]) -> None:
     """NOOD_0142 — cheap presence verdicts on the page the probe ended on
     (after --click/--suggest/--follow/--search): one FOUND/NOT-FOUND line per
     text instead of dumping hundreds of controls just to confirm a product
-    name. Advisory — a failure lands in pg["expect_warning"], never raises."""
+    name. Advisory — a failure lands in pg["expect_warning"], never raises.
+
+    NOOD_0211 — a text miss falls back to the image-cue matcher. innerText
+    cannot see a picture, so "we can see his signature" was NOT FOUND on a
+    page that renders exactly that image, and the goal contract blocked a
+    check the run would have passed (locator resolves it via NOOD_0210 image
+    cues). The probe and the runtime must agree about what is on the page.
+    """
     try:
         pg["expect"] = page.evaluate(_EXPECT_JS, texts)
     except Exception as e:
         pg["expect_warning"] = f"--expect: {e}"
+        return
+    try:
+        from noodle.agents.web.locator import _image_cue_locator
+        for e in pg["expect"]:
+            if e.get("found"):
+                continue
+            loc, ambiguous = _image_cue_locator(page, e["text"])
+            if loc is not None and not ambiguous:
+                e["found"] = True
+                e["via"] = "image-cue"
+                e["context"] = "matched an image by its src/alt/resource"
+    except Exception:
+        pass
 
 
 # NOOD_0128 — bounded reveal safety. Auto-opening native controls must never

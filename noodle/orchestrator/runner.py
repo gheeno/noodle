@@ -17,6 +17,22 @@ from noodle.resolver.step_resolver import LLM_FORBIDDEN_TYPES, resolve
 # values shell-quoted (see execute_step).
 _EXEC_TYPES = LLM_FORBIDDEN_TYPES | {'app_launch'}
 
+# NOOD_0210 — assertions about the DOCUMENT, not about an element in it. They
+# resolve no locator by design, so the evidence checker's "did this step
+# freshly match an element?" test can never be satisfied and an evidence shot
+# on one used to flip the whole run to `verified: false`. A viewport shot of
+# the page whose status/url/title just passed is legitimate proof of that
+# assertion — there is simply no element to outline. Deliberately an explicit
+# allowlist, not a heuristic: widening what counts as valid evidence is
+# exactly the kind of change that hides a real false pass, so every member
+# here has to be an assertion whose subject IS the page.
+_PAGE_LEVEL_ASSERTS = frozenset({
+    'assert_page_status', 'assert_url', 'assert_title',
+    'assert_no_console_errors', 'assert_no_page_errors',
+    'assert_no_failed_requests', 'assert_no_server_errors',
+    'assert_request_made', 'assert_request_count',
+})
+
 
 class SoftAssertionReport(AssertionError):
     """Raised by 'all soft assertions should pass' (Phase L). A distinct type
@@ -807,6 +823,20 @@ def execute_step(step_text: str, context):
 
     _log_step(step_text, action)
 
+    # NOOD_0210 — flag page-level assertions for the evidence checker. These
+    # resolve NO element by design: they assert a property of the document
+    # (its HTTP status, its URL, its title, the absence of console/server
+    # errors). The checker marks an evidence shot valid only when the step
+    # freshly matched an element, so requesting one on such a step turned the
+    # whole run `verified: false` — "each assertion must have an evidence
+    # screenshot" was therefore impossible to satisfy alongside a verified
+    # green. A viewport shot of the page whose status/url/title just passed IS
+    # evidence of that assertion; it simply has no box to draw.
+    try:
+        context._noodle_page_level_assert = t in _PAGE_LEVEL_ASSERTS
+    except Exception:
+        pass
+
     # Phase F — @appium scenarios route supported steps to the mobile agent.
     if ctx_get(context, "_mobile") is not None and t in _MOBILE_TYPES:
         return _execute_mobile(context, action)
@@ -909,6 +939,12 @@ def execute_step(step_text: str, context):
                                    action.get('min_count', 1))
     elif t == 'assert_hidden':
         actions.assert_hidden(page, action['text'])
+    elif t == 'assert_page_status':
+        actions.assert_page_status(page, action.get('status'))
+    elif t == 'assert_motion':
+        actions.assert_motion(page, action['locator'], action.get('direction'))
+    elif t == 'assert_no_motion':
+        actions.assert_no_motion(page, action['locator'])
     elif t == 'assert_on_screen':
         actions.assert_on_screen(page, action['text'], action.get('on', True))
     elif t == 'assert_url':

@@ -1541,7 +1541,7 @@ def docs(
     (NOOD_0160), so an agent without MCP still reaches content the
     instruction surfaces only point at. Large docs return a section index;
     fetch one section rather than the whole file."""
-    from noodle.mcp.server import read_docs
+    from noodle.docs_reader import read_docs
     out = read_docs(name=name, query=query, section=section)
     if "content" in out:
         typer.echo(out["content"])

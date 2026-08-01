@@ -28,7 +28,14 @@ _GOAL_KEYS = {"scenario", "actions", "checks", "dismissals", "probe",
               # entry compiles to its own navigation Given (stored in the app
               # environments.yaml, referenced as {env:...}), so a multi-URL
               # prompt requirement can never silently collapse to one page.
-              "navigation"}
+              "navigation",
+              # NOOD_0211 — run-wide evidence policy from a prompt directive
+              # ("each assertion must contain an evidence screenshot" / "no
+              # screenshots"). Compiles to ONE scenario tag instead of a
+              # ( take a screenshot ) marker pasted onto every line.
+              "evidence"}
+
+_EVIDENCE_MODES = {"assertions", "off"}
 _ACTION_KEYS = {"search": {"do", "id", "term"},
                 # NOOD_0141 — typeahead pick: type `term`, click the row whose
                 # text matches `option`. Compiles to the composite suggestion
@@ -140,7 +147,10 @@ _TARGETED_ACTIONS = ("click", "enter", "select", "check", "uncheck",
 _CHECK_KEYS = {"see", "count", "any_of", "field", "value", "min", "name",
                "after", "item_in_destination", "expected_from", "evidence",
                "not_see", "url_contains", "status", "response_contains",
-               "json", "equals", "contains", "items"}
+               "json", "equals", "contains", "items",
+               # NOOD_0211 — the PAGE's own HTTP status (web), as distinct
+               # from "status" which is the REST wok's last-call status.
+               "page_status"}
 # The check KINDS — exactly one per check. Single source (NOOD_0188): this
 # tuple was hand-repeated in validate(), its error string and intent_trace(),
 # so a new kind silently fell through to the any_of branch in three places.
@@ -149,7 +159,7 @@ _CHECK_KEYS = {"see", "count", "any_of", "field", "value", "min", "name",
 # tell "count": 20 from "count": 200.
 _CHECK_KINDS = ("see", "not_see", "count", "any_of", "field",
                 "item_in_destination", "url_contains", "status",
-                "response_contains", "json")
+                "response_contains", "json", "page_status")
 # NOOD_0163 — the landing-page anchor. NOOD_0158 made an unanchored check
 # observe the END state, which is right for the outcome but left a check on
 # text the LANDING page shows with nowhere to go: it compiled after the
@@ -660,11 +670,13 @@ def validate(goal) -> list[str]:
                     not all(isinstance(x, str) and x.strip() for x in alts):
                 errs.append(f"checks[{i}]: any_of must be a non-empty list of "
                             "strings")
-        elif kind == "status":
-            code = c["status"]
+        elif kind in ("status", "page_status"):
+            # NOOD_0211 — page_status validates like status (both are HTTP
+            # codes); the generic string branch below rejected the integer.
+            code = c[kind]
             if not isinstance(code, int) or isinstance(code, bool) \
                     or not 100 <= code <= 599:
-                errs.append(f"checks[{i}]: status must be an HTTP status "
+                errs.append(f"checks[{i}]: {kind} must be an HTTP status "
                             "code (an integer, 100-599)")
         elif not isinstance(c[kind], str) or not c[kind].strip():
             errs.append(f"checks[{i}]: {kind} must be a non-empty string")
@@ -711,6 +723,10 @@ def validate(goal) -> list[str]:
     if "allow_no_assertion" in goal and \
             not isinstance(goal["allow_no_assertion"], bool):
         errs.append("allow_no_assertion must be true or false")
+    if "evidence" in goal and goal["evidence"] not in _EVIDENCE_MODES:
+        errs.append("evidence must be one of "
+                    f"{sorted(_EVIDENCE_MODES)} (omit for the default: one "
+                    "shot on the last assertion)")
     return errs
 
 
@@ -1936,7 +1952,7 @@ def evidence(goal: dict, probe_result: dict) -> dict:
             # the probe never types data, so there is nothing to prove it by.
             runtime.append(_check_step(c)[0])
             continue
-        if "not_see" in c or "url_contains" in c:
+        if "not_see" in c or "url_contains" in c or "page_status" in c:
             # NOOD_0188 — absence and landing-URL are runtime-only by nature:
             # a probe snapshot cannot prove a thing is ABSENT (it may simply
             # not have rendered yet), and the probe never follows the flow to
@@ -2388,7 +2404,7 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
         if kind == "see":
             ok = f"see:{c['see']}" in proven or any(
                 c["see"] in s for s in runtime)
-        elif kind in ("not_see", "url_contains"):
+        elif kind in ("not_see", "url_contains", "page_status"):
             # NOOD_0188 — both are runtime-only by nature: the probe can't
             # prove an absence, and it never follows the flow to the landing
             # URL. Verified by the run, so they must appear in `runtime`.
@@ -2495,6 +2511,13 @@ def _check_step(c: dict, captions: dict | None = None) -> tuple[str, str | None]
             body = (f"the response json '{c['json']}' should equal "
                     f"'{c['equals']}'")
         pom = None
+    elif "page_status" in c:
+        # NOOD_0211 — "assert the UI page returns 200", a routine AC that used
+        # to compile to a literal-text assertion on the sentence itself
+        # ("the user sees \"UI page returns 200\"") and block, because no page
+        # renders that string. Runtime-only like url_contains: a probe
+        # snapshot cannot stand in for the navigation's own response.
+        body, pom = f"the page should return {c['page_status']}", None
     elif "url_contains" in c:
         # NOOD_0188 — "the flow landed where it should". Navigation was
         # driveable from a goal but never assertable from one.
@@ -2879,8 +2902,15 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
     # for THIS feature only (see the pom emission below).
     slug = re.sub(r"[^a-z0-9]+", "_", goal["scenario"].lower()).strip("_") \
         or "goal"
+    # NOOD_0211 — the evidence policy rides as ONE scenario tag. The
+    # alternative the engine used to force — `( take a screenshot )` appended
+    # to every assertion — put run configuration into the step text of every
+    # line, which reads as noise and is trivially forgotten on step nine.
+    evidence_tag = {"assertions": " @evidence:assertions",
+                    "off": " @no_evidence"}.get(goal.get("evidence"), "")
     tag = ("@web" if web else "@api") \
-        + (f" @page:{slug}" if web and pom_entries else "")
+        + (f" @page:{slug}" if web and pom_entries else "") \
+        + evidence_tag
     lines = [tag, f"Feature: {goal['scenario']}", "",
              f"  Scenario: {goal['scenario']}"]
     prev = None

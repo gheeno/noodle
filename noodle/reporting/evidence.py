@@ -30,19 +30,34 @@ import os
 from noodle.log import logger
 from noodle.reporting import paths as _paths
 
-_MODES = ("last", "all", "off")
+_MODES = ("last", "assertions", "all", "off")
 
 
 def mode() -> str:
-    """NOODLE_EVIDENCE — 'last' (default) | 'all' | 'off'. Unknown values
-    fall back to 'last' so a typo degrades to the default, never to silence."""
+    """NOODLE_EVIDENCE — 'last' (default) | 'assertions' | 'all' | 'off'.
+    Unknown values fall back to 'last' so a typo degrades to the default,
+    never to silence."""
     m = os.getenv("NOODLE_EVIDENCE", "last").strip().lower()
     return m if m in _MODES else "last"
 
 
-def wanted(tags, requested: bool, is_last_step: bool, has_page: bool) -> bool:
+def wanted(tags, requested: bool, is_last_step: bool, has_page: bool,
+           is_assertion: bool = False) -> bool:
     """Pure gate — should this passed step get an evidence shot? Unit-tested
-    without a browser. `tags` is the scenario's effective tag set."""
+    without a browser. `tags` is the scenario's effective tag set.
+
+    NOOD_0211 — `is_assertion` is the step's Gherkin type: True for a `Then`
+    and for any `And`/`But` chained under one (behave reports both as
+    step_type 'then'). "Every assertion gets evidence" is the thing testers
+    actually ask for, and it used to require hand-writing
+    `( take a screenshot )` on every line — noise in the feature file
+    expressing something the step's own keyword already says. `@evidence:
+    assertions` / NOODLE_EVIDENCE=assertions now says it once.
+
+    Precedence, strongest first: @no_evidence (silence, overriding everything
+    — an explicit "no screenshots" must not be second-guessed by the
+    always-capture-the-last rule) > explicit marker / @evidence > mode.
+    """
     if not has_page:
         return False
     tags = set(tags or ())
@@ -50,9 +65,13 @@ def wanted(tags, requested: bool, is_last_step: bool, has_page: bool) -> bool:
         return False
     if requested or "evidence" in tags:
         return True
+    if "evidence:assertions" in tags:
+        return is_assertion
     m = mode()
     if m == "off":
         return False
+    if m == "assertions":
+        return is_assertion
     return m == "all" or (m == "last" and is_last_step)
 
 

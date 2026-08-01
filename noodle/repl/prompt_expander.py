@@ -107,9 +107,22 @@ _CONDITIONAL = re.compile(
 # to be incomplete )' stripped everything up to that far-away " to " and left
 # "be incomplete )". The comma arm now also accepts `use`, the form humans
 # actually write ("Use the search bar , search for X").
+# NOOD_0211 — the third form, which has neither "to" nor a comma:
+# "Using search bar search for Steve Jobs". The other two arms lean on those
+# separators to know where the preamble ends; with a bare `[^,"']{1,40}?` and
+# no separator the lazy match has nothing to stop it eating the verb too. So
+# this arm names the instrument instead — a closed set of UI-control nouns —
+# which bounds the preamble by vocabulary rather than punctuation.
+_INSTRUMENT_NOUN = (
+    r"(?:search\s*(?:bar|box|field|input|widget)?|searchbar|searchbox|"
+    r"nav(?:igation)?(?:\s+(?:bar|menu))?|menu|sidebar|side\s+bar|header|"
+    r"footer|toolbar|tool\s+bar|top\s+bar|filter|dropdown|drop\s+down|"
+    r"form|page|site|website|app|ui)")
 _INSTRUMENT = re.compile(
     r"^(?:uses?|using)\s+(?:the\s+)?[^,\"']{1,40}?\s+to\s+(?=[a-z])"
-    r"|^(?:uses?|using|via)\s+(?:the\s+)?[^,\"']{1,40}?\s*,\s*", re.I)
+    r"|^(?:uses?|using|via)\s+(?:the\s+)?[^,\"']{1,40}?\s*,\s*"
+    rf"|^(?:uses?|using|via|through|with|from)\s+(?:the\s+)?{_INSTRUMENT_NOUN}"
+    r"\s*,?\s+(?=[a-z])", re.I)
 
 # NOOD_0199 — PROMPT_TEMPLATE.md is a LABELLED brief ("Base URL: [ … ]",
 # "User goal: …"), and a human pastes it whole. Every label line was a clause
@@ -133,6 +146,47 @@ _META_LABEL = re.compile(
     r"|config|shell\s+commands[^:]*|environments?|browsers?|device|"
     r"test\s+name|title|tags?|acceptance\s+criteria|ac|objective|summary|"
     r"purpose|context)\s*:\s*", re.I)
+# NOOD_0211 — trailing prose that CONFIGURES the run rather than describing a
+# step. "Note : each assertion must contain an evidence screenshot" is the
+# canonical one: every tester writes it, and parsing it as a step produced
+# both a bogus literal assertion ("Note : each assertion must contain an") and
+# a hard NEEDS_INTERPRETATION refusal on an otherwise complete brief.
+_DIRECTIVE_LABEL = re.compile(
+    r"^(?:note|notes|nb|n\.b\.|remark|reminder|important|caveat|"
+    r"requirements?|constraints?)\s*[:\-]\s*", re.I)
+
+# Evidence intent, recognised anywhere in the brief (labelled or standing on
+# its own line). Order matters: the negative is checked first, because "no
+# screenshots" contains "screenshot".
+_EVIDENCE_OFF = re.compile(
+    r"\b(?:no|without|skip|omit|don'?t\s+(?:take|capture|include)|"
+    r"do\s+not\s+(?:take|capture|include))\s+"
+    r"(?:any\s+)?(?:evidence\s+)?(?:screen\s*shots?|screen\s*caps?|"
+    r"captures?|evidence)\b"
+    r"|\bscreen\s*shots?\s+(?:are\s+)?not\s+(?:required|needed|necessary)\b",
+    re.I)
+_EVIDENCE_PER_ASSERTION = re.compile(
+    r"\b(?:each|every|all|per)\b[^.]{0,40}?\b(?:assert(?:ion)?s?|checks?|"
+    r"verif(?:y|ication)s?|steps?)\b[^.]{0,40}?"
+    r"\b(?:screen\s*shots?|screen\s*caps?|evidence)\b"
+    r"|\b(?:screen\s*shots?|evidence)\b[^.]{0,40}?\b(?:each|every|all|per)\b"
+    r"[^.]{0,40}?\b(?:assert(?:ion)?s?|checks?|verif(?:y|ication)s?|steps?)\b",
+    re.I)
+
+
+def evidence_intent(text: str) -> str | None:
+    """NOOD_0211 — the run-wide evidence mode a brief asks for, or None.
+
+    'off' beats 'assertions': an explicit "no screenshots" is a decision, and
+    the always-capture-the-last default must not quietly overrule it.
+    """
+    if _EVIDENCE_OFF.search(text or ""):
+        return "off"
+    if _EVIDENCE_PER_ASSERTION.search(text or ""):
+        return "assertions"
+    return None
+
+
 # NOOD_0209 — the only URL in a brief often lives on its metadata line
 # ("App: Demo · UI `https://demo.example`"). _META_LABEL keeps that line out
 # of the step flow (NOOD_0207), but discarding it whole took the URL with it,
@@ -594,6 +648,13 @@ def _clauses(text: str) -> list[dict]:
         if _META_LABEL.match(bare):
             frags.append((line_no, bare))    # kept whole; parsed as metadata
             continue
+        # NOOD_0211 — a run directive is decided on the RAW line and dropped
+        # here. The evidence-marker stripper downstream eats the very words
+        # that identify one ("NO SCREENSHOT" → "NO"), leaving a residue that
+        # then refused as an unknown step — the directive would configure the
+        # run correctly and still fail the brief it came from.
+        if _DIRECTIVE_LABEL.match(bare) or evidence_intent(bare):
+            continue
         if _SECTION_HEADER.match(bare) or (titled and _GOAL_LABEL.match(bare)):
             continue                         # header / title — not a step
         if row := _TABLE_ROW.match(bare):
@@ -706,6 +767,15 @@ def _parse_clause(c: dict) -> dict:
             "line": c["line"], "evidence": c["evidence"]}
     if c.get("evidence_only"):
         node["kind"] = "evidence_only"
+        return node
+    # NOOD_0211 — a directive line configures the run; it is never a step.
+    # Checked before the verb table because "each assertion must CONTAIN an
+    # evidence screenshot" trips the verify verb and compiles to an assertion
+    # on the literal text.
+    if _DIRECTIVE_LABEL.match(text) or evidence_intent(text):
+        node.update(kind="directive",
+                    directive=_DIRECTIVE_LABEL.sub("", text).strip(),
+                    evidence_mode=evidence_intent(text))
         return node
     if m := _META_LABEL.match(text):   # NOOD_0199 — a brief field, not a step
         node.update(kind="metadata", label=m.group("label").strip().lower())
@@ -826,6 +896,33 @@ def _flow_index(nodes: list[dict]) -> dict[int, int]:
     return fi
 
 
+# NOOD_0211 — "<subject> contains <text>" names WHERE to look, then what to
+# find; only the second half is the assertion. Kept as the whole sentence it
+# compiled to `the user sees "Main Page contains : From today's feature
+# article"` — a literal no page renders, so a correct AC failed on its own
+# phrasing. The subject must be a page-ish noun run (≤4 words, no quotes) so
+# "the error message contains 'timeout'" — where the subject is the element
+# being asserted about — is left alone, as are REST body assertions.
+_CONTAINMENT = re.compile(
+    r"^(?!.*\b(?:response|body|payload|json|api|endpoint|header)s?\b)"
+    r"(?:the\s+)?(?:\w+[\s-]+){0,2}?"
+    r"\b(?:page|screen|site|website|ui|view|browser)\b\s+"
+    r"(?:contains?|shows?|displays?|has|includes?)\b\s*:?\s+"
+    r"(?P<rest>\S.*)$", re.I)
+
+
+def _strip_containment(rest: str) -> str:
+    """Reduce '<page-ish subject> contains <text>' to '<text>'. Best-effort
+    and conservative — anything it does not recognise passes through whole."""
+    m = _CONTAINMENT.match(rest or "")
+    if not m:
+        return rest
+    inner = m.group("rest").strip().strip(":").strip()
+    # Never strip down to nothing, and never past a quote (a quoted value is
+    # handled by _CONTAINS_QUOTED, which keeps the quotes as delimiters).
+    return inner or rest
+
+
 def _verify_shape(rest: str) -> tuple[str, str] | None:
     """(destination_word, item_word) when the text claims item-in-destination
     ('cart has toy' / 'toy is added to cart'); None for plain prose."""
@@ -903,10 +1000,87 @@ def _split_conjuncts(body: str) -> list[str]:
             return []
         pos = sep.end()
     return members if len(members) > 1 else []
+# NOOD_0211 — "assert that UI page returns 200". A status claim is not a text
+# claim, but the verify verb had only literal text to compile to, so this
+# produced `the user sees "UI page returns 200"` and blocked on evidence no
+# page could ever show. Requires a page-ish subject so "the API returns 200"
+# (a REST assertion) is left alone.
+_PAGE_STATUS = re.compile(
+    r"^(?:the\s+)?(?:\w+\s+){0,2}?(?:page|url|site|website|ui|screen)\b"
+    r"[^.\d]{0,40}?\b(?:returns?|responds?\s+with|gives?|is|status(?:\s+code)?"
+    r"|should\s+(?:be|return))\b[^.\d]{0,20}?(?P<code>[1-5]\d\d)\b", re.I)
+
+# NOOD_0211 — "UI contains \"Welcome to Wikipedia\" banner". _PRESENCE_RESIDUE
+# already handles a quoted member with a trailing noun ('"Acme" logo is
+# present'); this is the same idea with the prose BEFORE it, which is how an
+# AC is actually written. The quoted string IS the assertion — the sentence
+# around it is the human explaining which thing they mean. Exactly one quoted
+# member, and a containment verb, so a disjunction or a multi-member list
+# (handled by _split_conjuncts) never reaches here.
+# The subject guard is load-bearing: "the response body contains 'total'" is a
+# REST assertion, and rewriting it to a bare `verify "total"` turned a
+# pure-API goal into one that launches a browser.
+_CONTAINS_QUOTED = re.compile(
+    r"^(?![^\"']*\b(?:response|body|payload|json|api|endpoint|header)s?\b)"
+    r"[^\"']{0,60}?\b(?:contains?|contain|shows?|displays?|has|have|with|"
+    r"including|includes?)\s+(?:the\s+|a\s+|an\s+)?"
+    r"([\"'])(?P<content>(?:(?!\1).)+?)\1"
+    r"(?:\s+[\w-]+){0,3}\s*$", re.I)
+
 # B3 — a short terminal imperative IS the control's label ("place the order").
 _BARE_CLICK = re.compile(
     r"^(?:proceed|continue|submit|confirm|checkout|check\s+out|place|pay|"
     r"finish|complete)\b", re.I)
+
+
+# NOOD_0211 — a category noun the LAST member of a conjunction carries on
+# behalf of all of them: "Born and Died dates" is the Born date and the Died
+# date, so splitting on "and" left "Born" (real page text) beside "Died dates"
+# (text no page renders) and blocked the whole brief on the second half of a
+# phrase the first half had already proven. Closed set, plural only, and it
+# fires ONLY when stripping the noun leaves something — never on a member that
+# IS the noun ("the dates and times").
+_BARE_DETERMINERS = {"the", "a", "an", "its", "his", "her", "their", "our",
+                     "this", "that", "these", "those", "all", "both", "any"}
+_SHARED_NOUN = re.compile(
+    r"^(?P<head>.+?)\s+(?:dates|times|names|values|fields|numbers|prices|"
+    r"amounts|labels|columns|headings|totals|counts|ids|links|buttons|"
+    r"sections|entries|rows)$", re.I)
+
+
+def _drop_shared_noun(parts: list[str]) -> list[str]:
+    """Strip a trailing shared category noun from any conjunct that carries it
+    on behalf of a bare peer. Unquoted PROSE only — the caller never reaches
+    here for quoted members (_VERIFY_NO_SPLIT bails on a quote), so this can
+    never touch a string the user marked as data.
+
+    The noun-bearing member is rarely last: "Steve Jobs, Born and Died dates,
+    and we can see his signature" splits four ways with "Died dates" in the
+    middle, so scanning only the tail missed the real case.
+    """
+    if len(parts) < 2:
+        return parts
+
+    def bare_peer(other: str) -> bool:
+        """A short co-ordinate item that does NOT itself end in a category
+        noun — the thing the shared noun is being shared WITH. Guards
+        'the dates and times', where every member is a category noun."""
+        return len(other.split()) <= 3 and not _SHARED_NOUN.match(other)
+
+    out = []
+    for i, p in enumerate(parts):
+        m = _SHARED_NOUN.match(p)
+        head = m.group("head").strip() if m else ""
+        peers = [o for j, o in enumerate(parts) if j != i]
+        # The head must be a real subject, not a stranded determiner: "the
+        # dates and times" must not become "the" and "times".
+        contentful = head.lower() not in _BARE_DETERMINERS
+        if head and contentful and len(head.split()) <= 3 \
+                and any(bare_peer(o) for o in peers):
+            out.append(head)
+        else:
+            out.append(p)
+    return out
 
 
 def _rewrite_asks(clauses: list[dict]) -> list[dict]:
@@ -939,8 +1113,17 @@ def _rewrite_asks(clauses: list[dict]) -> list[dict]:
                 for p in conj:
                     _emit(c, f'verify "{p}"')
                 continue
+            # NOOD_0211 — a status claim, before any text handling: the code
+            # is the assertion, and every text path below would turn the
+            # sentence into a literal nothing renders.
+            if ps := _PAGE_STATUS.match(body):
+                _emit(c, f'verify page status {ps.group("code")}')
+                continue
             if pr := _PRESENCE_RESIDUE.match(body):
                 _emit(c, f'verify "{pr.group("content")}"')
+                continue
+            if cq := _CONTAINS_QUOTED.match(body):
+                _emit(c, f'verify "{cq.group("content")}"')
                 continue
             if not _VERIFY_NO_SPLIT.search(body):
                 parts = [p.strip() for p in _VALUE_TAIL.split(body)
@@ -949,7 +1132,7 @@ def _rewrite_asks(clauses: list[dict]) -> list[dict]:
                     # as ONE clause this became a single literal no page
                     # renders: green was impossible and the failure named the
                     # wrong thing.
-                    for p in parts:
+                    for p in _drop_shared_noun(parts):
                         _emit(c, f"verify {p}")
                     continue
         if _BARE_CLICK.match(t) and len(t.split()) <= 6 \
@@ -988,6 +1171,13 @@ def expand(text: str, base_url: str | None = None) -> dict:
     meta_urls: list[str] = []           # NOOD_0209 — URLs on metadata lines
     counters = {"search": 0, "pick": 0, "add": 0, "api": 0}
     pending_evidence = False
+    # NOOD_0211 — scanned off the RAW brief, not off a clause. The clause
+    # splitter treats a trailing "evidence screenshot" as a per-step evidence
+    # MARKER and strips it, so by parse time the directive had been shortened
+    # to "Note : each assertion must contain an" — the exact string the old
+    # refusal quoted back. Reading the whole text also lets the directive sit
+    # anywhere in the brief, labelled or not.
+    evidence_mode = evidence_intent(text)
 
     def _cover(n, status, node_ids=()):
         coverage.append({"clause": n["clause"], "status": status,
@@ -1051,6 +1241,24 @@ def expand(text: str, base_url: str | None = None) -> dict:
             assumptions.append(
                 f"step {no} '{n['raw']}': narration of what the page does, "
                 "not an instruction — ignored here")
+            _cover(n, "metadata")
+            continue
+        if n["kind"] == "directive":
+            # NOOD_0211 — run configuration, not a step. An evidence directive
+            # is APPLIED (it becomes a scenario tag); anything else is named in
+            # assumptions so nothing is silently dropped.
+            if n.get("evidence_mode"):
+                evidence_mode = n["evidence_mode"]
+                how = ("no evidence screenshots for this scenario"
+                       if evidence_mode == "off"
+                       else "an evidence screenshot on every assertion — no "
+                            "( take a screenshot ) markers needed")
+                assumptions.append(
+                    f"step {no} '{n['raw']}': read as a directive — {how}")
+            else:
+                assumptions.append(
+                    f"step {no} '{n['raw']}': a note about the test, not a "
+                    "step — ignored here")
             _cover(n, "metadata")
             continue
         if n["kind"] == "metadata":
@@ -1325,6 +1533,14 @@ def expand(text: str, base_url: str | None = None) -> dict:
             if not rest:
                 _refuse(n, "nothing to verify")
                 continue
+            # NOOD_0211 — the status claim _rewrite_asks normalized. Anchored
+            # to `start`: it is the landing navigation's own response, not
+            # whatever page the flow ends on.
+            if st := re.match(r"^page status (\d{3})$", rest, re.I):
+                checks.append({"page_status": int(st.group(1)),
+                               "after": "start"})
+                _cover(n, "check")
+                continue
             all_adds = sorted(adds.items())
             shape = _verify_shape(rest)
             check = None
@@ -1391,7 +1607,13 @@ def expand(text: str, base_url: str | None = None) -> dict:
                 # intent ("literal text is visible") maps to `see`, which
                 # compiles to `the user sees "<text>"`. Wrapping quotes from
                 # the prompt are part of the quoting, not the text.
-                text = _VERIFY_FILLER.sub("", rest.strip()).strip()
+                # NOOD_0211 — only here, after every item-in-destination
+                # shape has had its chance: "<page-ish subject> contains
+                # <text>" names where to look, then what to find, and only
+                # the second half is the assertion. Stripping it earlier
+                # would eat "cart has toy", whose subject IS the destination.
+                text = _VERIFY_FILLER.sub(
+                    "", _strip_containment(rest.strip())).strip()
                 # NOOD_0188 — two shapes the `see` fallback cannot express,
                 # both read straight off the clause (no inference):
                 #   "<text> is not visible" / "no <text>"  → not_see
@@ -1655,6 +1877,10 @@ def expand(text: str, base_url: str | None = None) -> dict:
             "actions": actions, "checks": checks}
     if urls:
         goal["navigation"] = urls
+    if evidence_mode:
+        # NOOD_0211 — compiles to a scenario tag, so the feature file stays
+        # free of per-step ( take a screenshot ) noise.
+        goal["evidence"] = evidence_mode
 
     host = urlsplit(first_url or base_url).netloc
     app = re.sub(r"[^a-z0-9]+", "_",
@@ -1716,8 +1942,13 @@ def review_contract(exp: dict) -> dict:
                     f'{a["do"]} "{a["target"]}" has no source clause — '
                     "surface controls come from the prompt or probe "
                     "evidence, never from translation")
+    # NOOD_0211 — a run-wide evidence directive ("each assertion must contain
+    # an evidence screenshot") is satisfied by the scenario TAG, not by a
+    # marker on one check. Demanding a per-check marker here failed the
+    # contract on exactly the brief that asked for the most evidence.
     if any(c.get("evidence") or c.get("evidence_only")
-           for c in exp.get("clauses") or []):
+           for c in exp.get("clauses") or []) \
+            and not norm.get("evidence"):
         if not any(ch.get("evidence") == "screenshot"
                    for ch in norm.get("checks") or []):
             problems.append("the prompt requested screenshot evidence but "

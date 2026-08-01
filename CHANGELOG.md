@@ -4,6 +4,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a26] — 2026-08-01
+
+**NOOD_0211** — feat: evidence follows the Gherkin keyword, and a plain-English
+brief stops refusing. Includes the NOOD_0210 assertion/evidence fixes.
+
+Two asks from one session, and they were the same ask: the engine made the
+user say things twice.
+
+- **Evidence by keyword, not by marker.** New mode `assertions`
+  (`NOODLE_EVIDENCE` / `@evidence:assertions`) captures exactly the steps
+  behave reports as `then` — so "each assertion must carry a screenshot" no
+  longer means pasting `( take a screenshot )` onto every line. Default
+  unchanged, except the mandatory last shot now anchors to the last
+  **assertion**, not the last step: a scenario ending in a click used to ship
+  a picture of a page nobody asserted anything about. `@no_evidence` silences
+  everything, including that last shot.
+- **The brief stops refusing.** Instrument phrases bounded by a closed set of
+  UI-control nouns instead of a "to"/comma; `Note :` directive lines
+  configure the run instead of compiling into a literal assertion plus a hard
+  refusal (detected on the RAW line — the marker stripper ate the very words
+  that identify one); "assert that UI page returns 200" → a page-status
+  check; "page contains X" → `X`; "Born and Died dates" → `Born`, `Died`; the
+  probe's `--expect` falls back to image cues so probe and runtime agree that
+  innerText cannot see a picture.
+- **A page-level assertion can carry its own evidence** (NOOD_0210). Document
+  assertions — HTTP status, url, title, console/network health — resolve no
+  locator by design, so one screenshot on them turned the whole run
+  `verified: false`. An explicit allowlist, not a heuristic: element
+  assertions still have to prove a fresh match.
+- **An assertion resolves the element it names** (NOOD_0210). Exact text now
+  outranks a substring accessible-name match (`should see 'Born'` bound to a
+  citation link and reported verified:true); an `<img>` with no alt is
+  findable by its own src/resource tokens; motion assertions sample the
+  rendered box rather than reading CSS; `Then the page should return 200`
+  exists as a web-wok step; `noodle docs` no longer imports the MCP server,
+  and `mcp` is capped at `<2` (2.0 dropped `mcp.server.fastmcp`).
+- **Docs** — `docs/noodle-regression-test.md`, an LLM-executable runbook that
+  measures dev time and agent AIC per test case. The agent-in-the-loop
+  counterpart to `noodle feature-regression`, which is deterministic and
+  deliberately has no cost column; the drill runs that gate as its phase 0
+  rather than duplicating it.
+
 ## [1.0.0a25] — 2026-08-01
 
 **NOOD_0209** — fix: authoring lap waste — a blocked lap writes nothing, and

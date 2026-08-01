@@ -1083,13 +1083,28 @@ _PAGE_KILLING_ACTIONS = {"close_tab"}
 def _evidence_last_step(scenario):
     """The step evidence 'last' mode fires on, or None to mean steps[-1].
     Pattern-table only (never the LLM fallback) and best-effort: an
-    unmatched step counts as capturable."""
+    unmatched step counts as capturable.
+
+    NOOD_0211 — prefers the last ASSERTION (`Then`, or an `And` chained under
+    one). The default shot is meant to prove the scenario's outcome, and a run
+    ending in a click/navigate produced a picture of a page nobody asserted
+    anything about. Falls back to the last capturable step of any type, so a
+    scenario with no Then at all still gets its shot.
+    """
     try:
         from noodle.resolver.patterns import match, normalize_phrasing, normalize_subject
-        for step in reversed(list(getattr(scenario, "steps", None) or [])):
+        steps = list(getattr(scenario, "steps", None) or [])
+
+        def capturable(step):
             m = match(normalize_phrasing(normalize_subject(step.name)))
-            if m is None or m[0] not in _PAGE_KILLING_ACTIONS:
-                return step
+            return m is None or m[0] not in _PAGE_KILLING_ACTIONS
+
+        for want_assertion in (True, False):
+            for step in reversed(steps):
+                if want_assertion and getattr(step, "step_type", None) != "then":
+                    continue
+                if capturable(step):
+                    return step
     except Exception:
         pass
     return None
@@ -1255,7 +1270,12 @@ def after_step(context, step):
                 last_step = (ctx_get(context, "_evidence_last_step", None)
                              or (steps[-1] if steps else None))
                 is_last = last_step is step
-                if _evidence.wanted(tags, requested, is_last, page is not None):
+                # NOOD_0211 — behave reports both `Then` and an `And`/`But`
+                # chained under it as step_type 'then', which is exactly the
+                # "this step is an assertion" signal the evidence modes need.
+                is_assertion = getattr(step, "step_type", None) == "then"
+                if _evidence.wanted(tags, requested, is_last, page is not None,
+                                    is_assertion):
                     seq0 = ctx_get(context, "_match_seq_at_step_start", None)
                     fresh = seq0 is not None and locator_module.match_seq() != seq0
                     evidence_path = _evidence.capture(page, step.name, fresh)
@@ -1277,8 +1297,20 @@ def after_step(context, step):
                         # NOOD_0157 — refocused evidence (elementless final
                         # step, same page, element re-verified visible) is as
                         # good as fresh: the shot still proves the element.
+                        # NOOD_0210 — a page-level assertion (HTTP status, url,
+                        # title, console/network health) has no element to
+                        # match by design, so `fresh` can never be true for it.
+                        # The shot proves the page whose property just passed;
+                        # requiring an element box made "every assertion needs
+                        # an evidence screenshot" unsatisfiable next to a
+                        # verified green.
+                        page_level = ctx_get(context, "_noodle_page_level_assert",
+                                             False)
+                        if page_level:
+                            evidence_meta["page_level"] = True
                         evidence_meta["valid"] = ((bool(fresh)
-                                                   or evidence_meta.get("refocused") is True)
+                                                   or evidence_meta.get("refocused") is True
+                                                   or bool(page_level))
                                                   and not fuzzy)
             except Exception:
                 pass
