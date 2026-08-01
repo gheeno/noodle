@@ -1220,6 +1220,10 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         warnings = [f"check narrowed: asked for {nar['from']!r}, asserting "
                     f"{nar['to']!r} — the probe found it inside "
                     f"{nar['probed']!r}"] + warnings
+    # NOOD_0208 — evidence-pass risks that are real but unproven (a
+    # navigation-shaped mutation control). Blocking them would refuse working
+    # flows; dropping them is the defect NOOD_0207 fixed everywhere else.
+    warnings = list((goal_ev or {}).get("warnings") or []) + warnings
     requested_norm = Path(feature_path).as_posix().removesuffix(".feature")
     if not rel(feat_dest).removesuffix(".feature").endswith(requested_norm):
         warnings = [
@@ -1614,7 +1618,8 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
                expect: list[str] | None = None,
                open_native_controls: bool = False,
                max_reveal_depth: int = 1,
-               discover: bool = False, act_on: str | None = None,
+               discover: bool = False, perform: bool = False,
+               act_on: str | None = None,
                brief: bool = False, workspace: str = ".") -> dict:
     """NOOD_0113 — proactive DOM probe: open the page(s) headless and return
     actionable controls + POM suggestions + vocabulary-shaped steps, so an
@@ -1698,7 +1703,7 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
                           mutate=mutate, follow=follow, expect=expect,
                           open_native_controls=open_native_controls,
                           max_reveal_depth=max_reveal_depth, discover=discover,
-                          act_on=act_on)
+                          perform=perform, act_on=act_on)
     # NOOD_0179 — brief is a payload shape, so it implies compact: a raw result
     # has no step_templates to carry.
     return _probe.compact_payload(result, brief=True) if brief else result
