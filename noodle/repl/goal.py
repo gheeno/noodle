@@ -16,6 +16,8 @@ a browser. core.author_test wires it to the real probe/run.
 import difflib
 import re
 
+import yaml
+
 # --- goal schema -------------------------------------------------------------
 
 _GOAL_KEYS = {"scenario", "actions", "checks", "dismissals", "probe",
@@ -1528,8 +1530,12 @@ def _check_scope(check: dict, goal: dict) -> str:
     return "search" if anchor_i >= search_i else "initial"
 
 
-def evidence(goal: dict, probe_result: dict) -> dict:
+def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
     """Match every requested action/check against what the probe proved.
+
+    `pinned` — normalized POM keys the caller supplied in pom_content. A
+    pinned target has already been disambiguated by hand, so the ambiguity
+    gate stands down for it (NOOD_0212).
     Returns {blocking, proven, runtime_asserted, permission_prompts,
     popups_closed, results_summary, controls}. An unproven request BLOCKS — it
     is never dropped or broadened — EXCEPT a check anchored after data the probe
@@ -1808,16 +1814,39 @@ def evidence(goal: dict, probe_result: dict) -> dict:
         # intent, so the ambiguity gate (which `within` exists to answer)
         # must not fire on it.
         scope = str(a.get("within") or "").strip()
+        # NOOD_0212 — `within:` means "the row/card containing this TEXT", and
+        # supplying it SKIPS the ambiguity gate (see _locate's `scoped` arm).
+        # An unverified scope therefore authored ready:true and died at run
+        # time with "No row containing '<text>' found" — the most expensive
+        # ordering there is. Region words (header, nav, footer) are the common
+        # miss: they name a part of the page, which `within:` cannot express.
+        # Deferred on the same terms as a missing control below: after a pick,
+        # or past the evidence gate, the probe never saw this page at all.
+        _eg = _evidence_gate(actions)
+        if (scope and not after_pick and (_eg is None or i <= _eg)
+                and not _find_text(scope, [blk for blk, _, _ in blocks])):
+            blocking.append(
+                f'{a["do"]} "{a["target"]}" within "{scope}": no probed text '
+                "on this page identifies that row or card — `within:` scopes "
+                "to the TEXT of one repeated row/card and cannot name a "
+                "region of the page (header, nav, footer)"
+                + _near_miss(scope, blocks, "text"))
+            continue
         ctrl = phase = trigger = note = None
+        # NOOD_0212 — a caller who pinned this target in pom_content has
+        # ALREADY answered "which of the two?", the only question the
+        # ambiguity gate asks. Blocking anyway left the gate's own advice —
+        # "use the distinguishing control" — with nothing behind it: handing
+        # over the selector IS that, and there was no other way to say so.
+        settled = bool(scope) or _norm(a.get("target")) in pinned
         if after_pick and picked_blk is not None:
             # NOOD_0156 — an action after the pick happens on the landed page:
             # resolve there FIRST, so the landed page's single "Add to cart"
             # wins over the results page's repeated per-card twins.
             ctrl, phase, trigger, note = _locate(
-                a["target"], [(picked_blk, "picked", None)], bool(scope))
+                a["target"], [(picked_blk, "picked", None)], settled)
         if ctrl is None and note is None:
-            ctrl, phase, trigger, note = _locate(a["target"], blocks,
-                                                 bool(scope))
+            ctrl, phase, trigger, note = _locate(a["target"], blocks, settled)
         if ctrl is None:
             # NOOD_0207 — past the evidence gate the probe never snapshotted
             # this page at all, so "no probed control matches" is a fact about
@@ -2620,8 +2649,28 @@ def _action_step(a: dict, target: str) -> str:
         "fallthrough would compile a wrong-but-matching step)")
 
 
+def _flat_pom_entries(pom_text: str | None) -> dict:
+    """NOOD_0212 — the caller's pom_content as {key: selector}, or {}.
+
+    Only top-level entries: a caller who already wrote their own `pages:`
+    block has done the scoping themselves, and re-nesting it under this
+    feature's pin would change what they asked for.
+    """
+    if not pom_text or not pom_text.strip():
+        return {}
+    try:
+        data = yaml.safe_load(pom_text)
+    except Exception:
+        return {}                      # core.py reports the YAML error itself
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items()
+            if k not in ("pages", "match") and isinstance(v, (str, dict))}
+
+
 def compile_goal(goal: dict, ev: dict, base_url_key: str,
-                 nav_keys: list[str] | None = None) -> tuple[str, str | None]:
+                 nav_keys: list[str] | None = None,
+                 extra_pom: str | None = None) -> tuple[str, str | None]:
     """(feature_text, pom_text | None) — deterministically compiled, never
     model-authored. Observed prerequisites (permission prompts, popups) merge
     with requested dismissals and deduplicate; the POM is a pages: block
@@ -2930,6 +2979,19 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
         lines.extend(f"      {tl}" for tl in tables.get(idx, ()))
         prev = kw
     feature = "\n".join(lines) + "\n"
+
+    # NOOD_0212 — a caller-supplied pom_content used to be dropped on the floor
+    # the moment `goal:` was also present (the caller's variable was simply
+    # rebound to this function's return), so the documented way to pin a
+    # control the compiler cannot infer silently did nothing. Folded in here
+    # instead of alongside, for two reasons: the caller's keys must WIN over
+    # the compiled ones (that is the whole point of supplying them), and
+    # riding inside the @page block gives them the pin's reach — every URL the
+    # scenario visits — rather than the filename scoping a sibling flat file
+    # would have imposed, which never covers the page a nav control sits on.
+    for key, sel in _flat_pom_entries(extra_pom).items():
+        pom_entries[key] = [f"{key}:", *(f"  {k}: {v}" for k, v in sel.items())] \
+            if isinstance(sel, dict) else [f"{key}: {sel}"]
 
     pom = None
     if pom_entries:

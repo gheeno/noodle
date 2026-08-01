@@ -963,8 +963,13 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
                 dbg.write_text(json.dumps(probe_result, indent=2, default=str), encoding="utf-8")
             except OSError:
                 pass
+        # NOOD_0212 — targets the caller pinned by hand in pom_content. The
+        # ambiguity gate stands down for these: the pin already says which
+        # control is meant, which is the only thing the gate wants to know.
+        pinned = frozenset(
+            goal_mod._norm(k) for k in goal_mod._flat_pom_entries(pom_content))
         goal_ev = (goal_mod.browserless_evidence(goal) if browserless
-                   else goal_mod.evidence(goal, probe_result))
+                   else goal_mod.evidence(goal, probe_result, pinned))
         # NOOD_0156 — automatic postcondition synthesis: a goal with actions
         # but no checks gets an explicit generated `Then` derived from the
         # last meaningful action + probe evidence (emitted into the .feature,
@@ -977,11 +982,15 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             goal = dict(goal, actions=synth["actions"],
                         checks=synth["checks"])
             goal_ev = (goal_mod.browserless_evidence(goal) if browserless
-                       else goal_mod.evidence(goal, probe_result))
+                       else goal_mod.evidence(goal, probe_result, pinned))
         goal_ev["blocking"] = goal_ev["blocking"] + synth["blocking"]
+        # NOOD_0212 — pass the caller's POM in rather than letting this
+        # assignment quietly overwrite it; compile_goal folds those keys into
+        # the compiled page block, where they win over inferred ones.
         feature_content, pom_content = goal_mod.compile_goal(
             goal, goal_ev, app.upper(),
-            nav_keys=[k for k, _ in nav_env] or None)
+            nav_keys=[k for k, _ in nav_env] or None,
+            extra_pom=pom_content)
 
     # NOOD_0155 — wok tagging: authored content that already carries a routing
     # tag is caller intent and stays untouched; content with none gets the
@@ -1410,6 +1419,12 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         state = load_state(workspace)
         contracts = state.get("intent_contracts") or {}
         entry = {"blocked": bool(blocking),
+                 # NOOD_0212 — keep the blockers, not just the flag. The
+                 # manual-fallback gate below reports them, and it used to
+                 # echo the CURRENT call's list — empty for a hand-authored
+                 # feature that validates clean, so the refusal named nothing
+                 # to go and fix.
+                 "blocking": list(blocking or []),
                  "intent_verified": result["intent_verified"]}
         contracts[rel(feat_dest)] = dict(entry)
         contracts[f"app:{app}"] = dict(entry)
@@ -1470,9 +1485,11 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
                         "a structured intent contract exists for this "
                         "feature/app — manual feature_content is never "
                         "intent-verified and cannot auto-run around it; fix "
-                        "the goal's blockers instead (expert override: "
-                        "allow_unverified_intent=true)"),
-                        "blocking": blocking}}
+                        "the goal's blockers instead (expert override: add "
+                        "`allow_unverified_intent: true` to the --spec)"),
+                        # NOOD_0212 — the BLOCKED CONTRACT's blockers, not
+                        # this call's; see the note where the entry is saved.
+                        "blocking": (contract.get("blocking") or blocking)}}
     run = run_and_report(result["feature"], workspace=workspace,
                          headless=True, retries=0, serve_reports=True)
     if run.get("ok") and not run.get("passed"):

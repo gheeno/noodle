@@ -62,7 +62,10 @@ _ANAPHORA = {"it", "that", "this", "them", "one", "item", "product",
 # left behind as the literal to assert: an assertion nothing renders, failing
 # with a message that named the wrong thing.
 _EVIDENCE = re.compile(
-    r"(?:\s*[-–—,]\s*)?(?:\band\s+)?(?:take\s+(?:a\s+)?)?"
+    # NOOD_0212 — "…, with a screenshot as evidence" left "with a" behind once
+    # the noun was lifted out, and that residue compiled into an assertion on
+    # the literal text "with a". The lead-in has to go with the phrase.
+    r"(?:\s*[-–—,]\s*)?(?:\band\s+)?(?:\bwith\s+(?:an?\s+)?)?(?:take\s+(?:a\s+)?)?"
     r"(?:\bevidence\b\s*[:-]?\s*)?"
     r"(?:\bscreenshots?\b|\bcaptures?\b(?:\s+(?:the\s+)?(?:screen|page))?)"
     r"(?:\s+for\s+verification)?"
@@ -129,8 +132,12 @@ _INSTRUMENT = re.compile(
 # outside the grammar, so the template Noodle ships hard-failed its own
 # `--prompt` door. Three families: a URL label IS a navigation step, a goal
 # label wraps the flow, and the rest is brief metadata (named, never a step).
+# NOOD_0212 — `UI: <url>` / `Site: <url>` label a URL without ever saying the
+# word "url", and a brief that opens that way then refuses its own "go to UI"
+# back-reference for want of a URL.
 _URL_LABEL = re.compile(
-    r"^(?:base|target|start(?:ing)?|site|app)?\s*url\s*:\s*", re.I)
+    r"^(?:(?:base|target|start(?:ing)?|site|app)?\s*url|ui|uri|site|website)"
+    r"\s*:\s*", re.I)
 # NB: `Verify:` is NOT here — it is grammar (the verify verb reads its own
 # label), and stripping it would turn an assertion into an unknown clause.
 _GOAL_LABEL = re.compile(
@@ -145,7 +152,7 @@ _META_LABEL = re.compile(
     r"^(?P<label>app(?:lication)?(?:\s+under\s+test)?|credentials?(?:/config)?"
     r"|config|shell\s+commands[^:]*|environments?|browsers?|device|"
     r"test\s+name|title|tags?|acceptance\s+criteria|ac|objective|summary|"
-    r"purpose|context)\s*:\s*", re.I)
+    r"purpose|context|agent\s+rules?)\s*:\s*", re.I)
 # NOOD_0211 — trailing prose that CONFIGURES the run rather than describing a
 # step. "Note : each assertion must contain an evidence screenshot" is the
 # canonical one: every tester writes it, and parsing it as a step produced
@@ -154,6 +161,50 @@ _META_LABEL = re.compile(
 _DIRECTIVE_LABEL = re.compile(
     r"^(?:note|notes|nb|n\.b\.|remark|reminder|important|caveat|"
     r"requirements?|constraints?)\s*[:\-]\s*", re.I)
+
+# NOOD_0212 — brief scaffolding that carries no step. Three families, all of
+# them clause-1 refusals in the wild (the most expensive position there is:
+# every later lap re-pays the whole transcript):
+#   1. a bare section header — "Web Test", "AC :" (the clause splitter strips
+#      the trailing colon, so _META_LABEL, which requires one, never sees it);
+#   2. an instruction addressed to the AGENT, not the browser — "Generate a
+#      Noodle test in this workspace";
+#   3. a note about how the test itself should be written or reported —
+#      "follow AGENTS.md", "finish with the Allure + RCA report links".
+# These are matched ONLY as the last stop before a refusal (see _parse_clause),
+# so a real step always wins the classification and the blast radius is exactly
+# the set of clauses that would otherwise have been rejected.
+_BARE_HEADER = re.compile(
+    r"^(?:ac|acceptance\s+criteria|objective|summary|purpose|context|"
+    r"notes?|steps?|flow|scenario|background|preconditions?|pre-?requisites?|"
+    r"test\s+(?:case|name|type)|"
+    r"(?:web|api|ui|mobile|desktop|e2e|integration)\s+test|test)\s*:?\s*$",
+    re.I)
+_AGENT_DIRECTIVE = re.compile(
+    r"^(?:please\s+)?(?:generate|create|write|author|build|produce|make)\s+"
+    r"(?:a|an|the|one)?\s*(?:new\s+)?(?:noodle\s+)?(?:bdd\s+|automated\s+)?"
+    r"(?:test|scenario|feature)s?(?:\s+(?:case|suite)s?)?"
+    # the object has to BE the test, not merely start with the word: "create a
+    # test account" is a step about an account, and swallowing that as an
+    # instruction to the agent would silently drop a real one.
+    r"\s*(?:$|[.,;]|\b(?:in|for|that|which|to|from|using|with|covering)\b)",
+    re.I)
+_PROCESS_NOTE = re.compile(
+    r"\b(?:agents?\.md|step[-\s]dictionary|step-writing|gherkin|allure|rca|"
+    r"report\s+links?|token\s+economy|background\s*:)", re.I)
+# NOOD_0212 — deliberately NOT here: a rule that drops a "Verify:" line which
+# merely restates the goal ("Verify: picking a suggestion runs the search").
+# Tried and reverted — no wording test separates it from a real assertion, and
+# the one that looked safe also ate "verify order is placed successfully".
+# Silently dropping an asked-for verify produces a test that proves less than
+# it claims; blocking against probe evidence, which is what happens today,
+# costs a lap but names the fix and stays honest.
+
+
+def _is_brief_noise(text: str) -> bool:
+    """NOOD_0212 — scaffolding rather than a step; see the regexes above."""
+    return bool(_BARE_HEADER.match(text) or _AGENT_DIRECTIVE.match(text)
+                or _PROCESS_NOTE.search(text))
 
 # Evidence intent, recognised anywhere in the brief (labelled or standing on
 # its own line). Order matters: the negative is checked first, because "no
@@ -226,7 +277,11 @@ _NARRATION = re.compile(
     r"^(?:a|an|the)?\s*(?:search\s+)?(?:suggestions?|autocomplete|typeahead|"
     r"drop\s?-?down|results?|page|screen|window|tab|listings?)"
     r"[\w\s]{0,30}?\s+(?:will\s+|would\s+|should\s+|may\s+|might\s+)?"
-    r"(?:appears?|shows?(?:\s+up)?|opens?|loads?|is\s+(?:shown|displayed))\b",
+    # NOOD_0212 — "the results page LISTS these products" is the same
+    # scene-setting as "…appears": narration introducing the assertions that
+    # follow it, not an instruction of its own.
+    r"(?:appears?|shows?(?:\s+up)?|opens?|loads?|lists?|displays?|"
+    r"contains?|is\s+(?:shown|displayed))\b",
     re.I)
 # NOOD_0199 — sentence boundary: prose prompts are paragraphs, not one step.
 # A capital starts one; so does a lowercase grammar verb, because humans type
@@ -333,6 +388,18 @@ _VERBS = [
     ("nav", re.compile(
         r"^(?:go(?:es)?\s+to|open(?:s)?|visit(?:s)?|navigate(?:s)?\s+to|"
         r"launch(?:es)?|then)\s+(.+)$", re.I)),
+    # NOOD_0212 — the inverted phrasing a brief actually uses: "In the search
+    # bar, type 'Vaccu'". The `enter` verb below wants "<value> into
+    # <target>", so word-order-first refused. Routed to `search` rather than
+    # `enter` deliberately: step 3 of a suggestion flow IS a search whatever
+    # the word order, and this way it feeds the same typeahead pairing that
+    # "search for 'Vaccu'" already does. A trailing aside ("— deliberately
+    # incomplete") is a parenthetical about the term, never part of it.
+    ("search", re.compile(
+        r"^(?:in|into|on|using)\s+(?:the\s+)?(?:search|find)\s*"
+        r"(?:bar|box|field|input)?\s*[,:]?\s*"
+        r"(?:enter|type|fill|search(?:\s+for)?)s?\s+"
+        r"[\"']?([^\"'—–]+?)[\"']?\s*(?:[—–].*)?$", re.I)),
     ("search", re.compile(r"^search(?:es)?(?:\s+for)?\s+(.+)$", re.I)),
     # NOOD_0188 — go_back before nav so "goes back" is never read as a click.
     ("go_back", re.compile(
@@ -512,6 +579,13 @@ def _depreamble(ln: str) -> str:
         value = ln[m.end():].strip()
         if b := _BRACKETED.match(value):    # "Base URL: [ https://… ]"
             value = b.group(1)
+        # NOOD_0212 — the label's value is routinely prose WRAPPED around the
+        # URL ("base url : run this on www.example.com"). Taking the sentence
+        # whole produced a non-URL nav target, which fell through to a click —
+        # so the brief ended up with no URL at all and its own "open the
+        # website" line refused for want of one. Take the URL, not the prose.
+        if not _URLISH.match(value) and (u := _URL_IN_TEXT.search(value)):
+            value = u.group(0)
         ln = f"go to {value}"
     else:
         ln = _GOAL_LABEL.sub("", ln)
@@ -614,6 +688,33 @@ def _split_compound(text: str) -> list[str]:
         rest = rest[cut.end():]
 
 
+def _join_wrapped(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """NOOD_0212 — rejoin a numbered step that wrapped onto the next line.
+
+    Briefs are written to a column width, so a long step arrives as::
+
+        4. On the next page, verify you see the two textboxes
+           'Please enter your email address' and 'Please enter an order number'
+
+    Split line-by-line, the tail is a verbless fragment that refuses on its
+    own while the head asserts nothing — one clause-4 refusal for a step the
+    author wrote correctly.
+
+    A continuation is INDENTED and starts no list marker of its own. Table
+    rows (`| … |`) are excluded: they are already parsed one check per row,
+    and folding them into the narration above would lose every assertion.
+    """
+    out: list[tuple[int, str]] = []
+    for no, ln in lines:
+        cont = (out and ln[:1].isspace() and not ln.lstrip().startswith("|")
+                and not _BULLET.match(ln.strip()))
+        if cont:
+            out[-1] = (out[-1][0], out[-1][1].rstrip() + " " + ln.strip())
+        else:
+            out.append((no, ln))
+    return out
+
+
 def _clauses(text: str) -> list[dict]:
     """Source clauses: [{id, text, line, evidence}] — normalized syntax only,
     intent untouched. Markdown bullets/numbering/backticks stripped,
@@ -621,6 +722,7 @@ def _clauses(text: str) -> list[dict]:
     parentheticals and verb-verb conjunctions split into their own clauses."""
     lines = [(i + 1, ln) for i, ln in enumerate((text or "").splitlines())
              if ln.strip()]
+    lines = _join_wrapped(lines)
     if len(lines) == 1 and _INLINE_NUM.search(lines[0][1]):
         lines = [(lines[0][0], part)
                  for part in re.split(r"\d+\s*[.)]\s+", lines[0][1])]
@@ -880,6 +982,12 @@ def _parse_clause(c: dict) -> dict:
         elif kind == "click":
             node["target"] = _target_clean(m.group(1))
         return node
+    # NOOD_0212 — last stop before a refusal. No verb matched, so the only
+    # remaining question is whether this is a step nobody can parse or brief
+    # scaffolding nobody should have parsed. Rescued HERE, after every verb has
+    # had its turn, so a real step is never reclassified as noise.
+    if node.get("kind") == "unknown" and _is_brief_noise(text):
+        node.update(kind="metadata", label="brief")
     return node
 
 
@@ -957,7 +1065,44 @@ _VERIFY_LEAD = re.compile(
     r"\b\s*:?\s*(?:that\s+)?(?P<body>.+)$", re.I)
 _VERIFY_NO_SPLIT = re.compile(
     r"[\"']|\bor\b|\bany of\b|\bat least\b|\bresults? with\b", re.I)
+# NOOD_0212 — the same guard minus the quote clause, for the top-level split
+# below: quotes no longer veto splitting, they only bind the separators they
+# enclose. The disjunction/quantifier members are unchanged — those really do
+# have to stay one step.
+_VERIFY_NO_SPLIT_HARD = re.compile(
+    r"\bor\b|\bany of\b|\bat least\b|\bresults? with\b", re.I)
 _VALUE_TAIL = re.compile(r"\s*,\s*(?:and\s+)?|\s+and\s+", re.I)
+_POSSESSIVE = re.compile(r"^(?:his|her|their|its|your|my|our)\s+", re.I)
+
+
+def _split_top_level(body: str) -> list[str]:
+    """NOOD_0212 — split on `,` / ` and ` that sit OUTSIDE any quoted run.
+
+    A quoted member is data: a comma inside it belongs to the page text, not
+    to the list. Walking the string is the only way to tell the two apart —
+    the regex could not, which is why any quote used to veto the split whole.
+    """
+    parts, buf, quote, i = [], [], None, 0
+    while i < len(body):
+        ch = body[i]
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in "\"'":
+            quote, _ = ch, buf.append(ch)
+            i += 1
+            continue
+        if m := _VALUE_TAIL.match(body, i):
+            parts.append("".join(buf).strip())
+            buf, i = [], m.end()
+            continue
+        buf.append(ch)
+        i += 1
+    parts.append("".join(buf).strip())
+    return [p for p in parts if p]
 # NOOD_0209 — the QUOTED half of B2. The verify verb's greedy capture kept
 # quote DELIMITERS as literal content, so 'verify "A", "B" and "C"' compiled
 # to ONE literal no page renders ('A", "B" and "C'): the flow ran perfectly
@@ -982,10 +1127,7 @@ _PRESENCE_RESIDUE = re.compile(
     re.I)
 
 
-def _split_conjuncts(body: str) -> list[str]:
-    body = (body or "").strip()
-    if re.search(r"\bor\b", body, re.I):
-        return []
+def _quoted_conjuncts(body: str) -> list[str]:
     members, pos = [], 0
     while pos < len(body):
         m = _QUOTED_MEMBER.match(body, pos)
@@ -1000,6 +1142,24 @@ def _split_conjuncts(body: str) -> list[str]:
             return []
         pos = sep.end()
     return members if len(members) > 1 else []
+
+
+def _split_conjuncts(body: str) -> list[str]:
+    body = (body or "").strip()
+    if re.search(r"\bor\b", body, re.I):
+        return []
+    if members := _quoted_conjuncts(body):
+        return members
+    # NOOD_0212 — "you see the two textboxes 'A' and 'B'". The author names
+    # WHICH controls before quoting the text in them; the quoted members are
+    # the assertion, the noun phrase introducing them is not. Collapsed whole,
+    # it became ONE literal `see` on a sentence no page renders — two field
+    # assertions silently turned into one unprovable one. Retried without the
+    # preamble ONLY when everything after the first quote is a pure quoted
+    # list, so an ordinary sentence carrying a single quote never splits here.
+    cut = min((i for i in (body.find('"'), body.find("'")) if i > 0),
+              default=-1)
+    return _quoted_conjuncts(body[cut:]) if cut > 0 else []
 # NOOD_0211 — "assert that UI page returns 200". A status claim is not a text
 # claim, but the verify verb had only literal text to compile to, so this
 # produced `the user sees "UI page returns 200"` and blocked on evidence no
@@ -1125,15 +1285,27 @@ def _rewrite_asks(clauses: list[dict]) -> list[dict]:
             if cq := _CONTAINS_QUOTED.match(body):
                 _emit(c, f'verify "{cq.group("content")}"')
                 continue
-            if not _VERIFY_NO_SPLIT.search(body):
-                parts = [p.strip() for p in _VALUE_TAIL.split(body)
-                         if p.strip()]
+            # NOOD_0212 — a MIXED list ('the page contains "Steve Jobs", his
+            # born and died dates, and that his signature is visible') used to
+            # be refused wholesale by _VERIFY_NO_SPLIT, because any quote at
+            # all blocked the comma split — a guard meant to stop a quoted
+            # string being chopped mid-content. Splitting at top level only
+            # keeps that guarantee (a separator inside quotes is never a
+            # separator) while letting the unquoted members through, which is
+            # how an acceptance criterion is actually written. A disjunction is
+            # still ONE any_of step and never splits here.
+            if not _VERIFY_NO_SPLIT_HARD.search(body):
+                parts = _split_top_level(body)
                 if len(parts) > 1:
                     # as ONE clause this became a single literal no page
                     # renders: green was impossible and the failure named the
                     # wrong thing.
+                    # NOOD_0212 — "his born and died dates" splits to "his
+                    # born" / "died"; the possessive belongs to the sentence,
+                    # never to the page, and carrying it made the first member
+                    # unmatchable while its twin matched fine.
                     for p in _drop_shared_noun(parts):
-                        _emit(c, f"verify {p}")
+                        _emit(c, f"verify {_POSSESSIVE.sub('', p)}")
                     continue
         if _BARE_CLICK.match(t) and len(t.split()) <= 6 \
                 and not any(rx.match(t) for _, rx in _VERBS):
@@ -1229,6 +1401,18 @@ def expand(text: str, base_url: str | None = None) -> dict:
     for i, n in enumerate(nodes):
         no = _step_no(n)
         if n["kind"] == "unknown":
+            # NOOD_0212 — a brief's trailing directive paragraph WRAPS across
+            # lines ("…finish with the Allure + RCA report links and" /
+            # "nothing else"), and the clause splitter works line by line. The
+            # head matched as scaffolding and the tail — a verbless fragment
+            # with nothing to resolve — refused on its own, which cost a whole
+            # lap to fix by deleting words nobody meant as a step. A fragment
+            # directly after brief scaffolding is the rest of that sentence.
+            prev = nodes[i - 1] if i else None
+            if (prev is not None and prev.get("kind") in ("metadata", "directive")
+                    and not _has_verb(n["raw"]) and not _URLISH.match(n["raw"])):
+                _cover(n, "metadata")
+                continue
             _refuse(n, "")
             continue
         if n["kind"] == "run_mode":
@@ -1378,6 +1562,15 @@ def expand(text: str, base_url: str | None = None) -> dict:
             # quote the option; both used to leave a click on the label.
             sug = re.match(r"^(?:the\s+)?suggestions?\s*:?\s+(.+)$",
                            n["target"], re.I)
+            if not sug:
+                # NOOD_0212 — the other word order, just as common in briefs:
+                # "click the vacuum-cleaner suggestion". A trailing aside
+                # ("…, worded exactly as the site renders it") says HOW to
+                # find the option and is never part of its text; without this
+                # the whole descriptive phrase became a click target and
+                # blocked against every control the probe had seen.
+                sug = re.match(r"^(?:the\s+)?(.+?)\s+suggestions?\b\s*(?:,.*)?$",
+                               n["target"], re.I)
             back = [s for j, s in sorted(searches.items())
                     if j < i and s["do"] == "search"]
             if sug and back:
