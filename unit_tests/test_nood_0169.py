@@ -21,6 +21,7 @@ browser-free:
      ambiguous-candidate lines carry a paste-ready scoped selector and mark
      the one lenient mode used.
 """
+import json
 from unittest.mock import MagicMock
 
 from typer.testing import CliRunner
@@ -198,17 +199,27 @@ def test_vocabulary_mirrors_validation_tables():
     assert v["dismissals"] == sorted(goal_mod._DISMISSALS)
     # the exact keys whose absence from EXAMPLE cost the docs hunt
     assert "item_in_destination" in v["check_keys"]
-    assert v["actions"]["add_to"]["required"] == ["destination", "item_from"]
+    # NOOD_0207 — item_from left the required set: it is one of TWO ways to
+    # name the item (`within` is the searchless other), and validate() requires
+    # exactly one of them. `destination` is the only unconditional field.
+    assert v["actions"]["add_to"]["required"] == ["destination"]
+    assert "within" in v["actions"]["add_to"]["keys"]
 
 
-def test_invalid_goal_ships_vocabulary(tmp_path):
+def test_invalid_goal_ships_a_vocabulary_pointer_not_the_dictionary(tmp_path):
+    # NOOD_0207 — the ~2 KB dump became a pointer + the verb list. It rode
+    # EVERY rejection and was then re-sent on every later call in the turn;
+    # EXAMPLE and the per-error repairs are what a reader actually acts on.
     res = core.author_test(
         app_name="x", base_url="http://x.example",
         feature_path="noodle_tests/x/features/x.feature",
         goal={"actions": [{"do": "warp"}]}, workspace=str(tmp_path))
     assert res["ok"] is False
-    assert "vocabulary" in res and "example" in res
-    assert set(res["vocabulary"]["actions"]) == set(goal_mod._ACTION_KEYS)
+    assert "vocabulary" not in res
+    assert "--vocabulary" in res["vocabulary_hint"]
+    assert set(res["verbs"].split("|")) == set(goal_mod._ACTION_KEYS)
+    assert "example" in res
+    assert len(json.dumps(res)) < 1500
 
 
 # --- 4b. noodle steps: several keywords, one call ----------------------------
@@ -347,11 +358,17 @@ def test_prompt_bare_destination_check_borrows_context():
     assert any("bare destination" in a for a in exp["assumptions"])
 
 
-def test_prompt_checkout_is_refused_not_misread_as_verify():
+def test_prompt_checkout_is_read_as_the_control_it_names():
+    # NOOD_0207 — the original guard (never a checkbox CHECK) is kept below as
+    # an explicit assertion, but refusing "check out" outright was itself a
+    # cost: those words ARE the control's label, and the refusal cost a lap.
     exp = pe.expand("1. go to shop.example.com\n2. search for toy\n"
                     "3. add to cart\n4. check out")
-    assert not exp["ok"]
-    assert any("step 4" in u for u in exp["unrecognized"])
+    assert exp["ok"], exp.get("unrecognized")
+    dos = [a["do"] for a in exp["goal"]["actions"]]
+    assert "check" not in dos          # never a checkbox check
+    assert dos[-1] == "click"
+    assert exp["goal"]["actions"][-1]["target"] == "check out"
 
 
 def test_prompt_add_without_search_is_refused_by_name():
@@ -413,13 +430,18 @@ def test_author_prompt_mutually_exclusive_with_goal():
     assert res["ok"] is False and "mutually exclusive" in res["error"]
 
 
-def test_author_prompt_unparseable_ships_vocabulary(tmp_path):
+def test_author_prompt_unparseable_ships_a_vocabulary_pointer(tmp_path):
     res = core.author_test(prompt="1. go to shop.example.com\n"
                                   "2. frobnicate the cart",
                            workspace=str(tmp_path))
     assert res["ok"] is False
     assert res["unrecognized_steps"]
-    assert "vocabulary" in res and "example" in res
+    # NOOD_0207 — pointer, not dictionary; goal_partial and the per-clause
+    # `suggested` rewrites are the parts that survive, because they are the
+    # parts a reader acts on.
+    assert "vocabulary" not in res
+    assert "--vocabulary" in res["vocabulary_hint"]
+    assert "example" in res and res["goal_partial"]
 
 
 def test_author_prompt_attaches_expansion(tmp_path, monkeypatch):

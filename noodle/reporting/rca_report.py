@@ -40,6 +40,8 @@ CATEGORIES = (
     "test-data", "test-script", "config-gap", "known-quirk",
     "navigation-mismatch", "blocked-by-overlay", "wrong-action-target",
     "mutation-failed", "app-rejected-action", "unknown",
+    # NOOD_0207 — the two verdicts that stop RCA blaming the part that worked.
+    "assertion-wording", "ambiguous-item-click",
 )
 
 
@@ -675,6 +677,50 @@ def classify(entry: dict) -> dict:
                    "store state) — or assert the announcement itself if the "
                    "rejection is the expected behaviour. Locator/POM work "
                    "is wasted until the app accepts the action.",
+        }
+
+    # NOOD_0207 — the destination WAS reached and only the wording differs.
+    # Ranked above every click verdict below: when the expected text's near
+    # twin is on screen, click/POM advice is not merely unhelpful, it is
+    # actively false ("the click left the page unchanged" about a page that
+    # demonstrably re-rendered). Stamped at failure time by
+    # actions._rendered_near_miss.
+    m = re.search(r"Expected to see '([^']*)' on page — not found\. "
+                  r"\[near-miss\] the page renders: (.+?)(?:\n|$)", text)
+    if m:
+        return {
+            "category": "assertion-wording",
+            "confidence": "high",
+            "reason": f"The page DOES render {m.group(2)} — the step reached "
+                      f"its destination and the assertion is worded "
+                      f"differently from what the app shows "
+                      f"(expected '{m.group(1)}').",
+            "fix": "Change the expected text to the string the page renders "
+                   "(re-author with overwrite=true). Locator/POM/navigation "
+                   "work is wasted — that part of the flow succeeded.",
+        }
+
+    # NOOD_0207 — a `sees` failure downstream of a click the engine resolved
+    # to a control the probe marked `unique: False`: the run acted on
+    # instance 1 of a repeated control, not the item the assertion names.
+    # Above the click verdicts for the same reason — the submit control they
+    # blame is fine; the earlier ambiguous click is the cause.
+    # (Keyed off the warning locator._on_ambiguous already emits in lenient
+    # mode — no new stamp needed; only the ranking was wrong.)
+    m = re.search(r"Ambiguous locator '([^']*)' — matched multiple elements",
+                  "\n".join(entry["warnings"]
+                            + entry.get("scenario_warnings", []))) \
+        if re.search(r"Expected (?:to see|NOT to see) '", text) else None
+    if m:
+        return {
+            "category": "ambiguous-item-click",
+            "confidence": "high",
+            "reason": f"An earlier step resolved '{m.group(1)}' to several "
+                      "elements and acted on the first — not necessarily the "
+                      "item this step asserts.",
+            "fix": 'Scope the action to one instance: within: "<text unique '
+                   'to the intended row/card>" in the goal (or pin the POM '
+                   "entry to that instance).",
         }
 
     # NOOD_0145 — a submit-like click that produced no page change beats the

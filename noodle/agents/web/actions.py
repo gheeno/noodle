@@ -1,3 +1,4 @@
+import difflib
 import os
 import re
 import time
@@ -89,25 +90,41 @@ _NAV_INTENT_RE = re.compile(
     r"place order|pay|purchase|confirm)\b", re.I)
 
 
-def _note_click(page, locator_text: str, url_before: str | None):
-    """Remember the last click that actually landed and the URL it started
-    from, so a later failure can tell 'the wrong element was clicked' from
-    'the element rotted'. Advisory bookkeeping — never raises."""
+def _dom_fingerprint(page) -> int | None:
+    """NOOD_0207 — a cheap "is this still the same rendered page" number.
+    None means unknown, which is never evidence of sameness."""
     try:
-        page._noodle_click = (locator_text, url_before)
+        return int(page.evaluate("() => document.body.innerText.length"))
+    except Exception:
+        return None
+
+
+def _note_click(page, locator_text: str, url_before: str | None):
+    """Remember the last click that actually landed, the URL it started from
+    and what the page rendered then, so a later failure can tell 'the wrong
+    element was clicked' from 'the element rotted'. Advisory bookkeeping —
+    never raises."""
+    try:
+        page._noodle_click = (locator_text, url_before, _dom_fingerprint(page))
     except Exception:
         pass
 
 
 def stuck_click(page) -> str | None:
     """NOOD_0145 — no-navigation detector for failure reports. When the last
-    landed click named a submit-like intent and the page URL never moved off
-    where that click started, the destination the failing step expects was
-    never reached: the actionable verdict is 'wrong action target', not
-    locator rot or an app regression on a page we never got to. Never
-    raises."""
+    landed click named a submit-like intent and the page never moved off where
+    that click started, the destination the failing step expects was never
+    reached: the actionable verdict is 'wrong action target', not locator rot
+    or an app regression on a page we never got to. Never raises.
+
+    NOOD_0207 — "never moved" now means unchanged URL *and* unchanged render.
+    A single-page app draws the destination in place, so the URL test alone
+    read a fully-changed view as "unchanged" and told the reader the one thing
+    that was working had failed. An unknown fingerprint (None) suppresses the
+    verdict rather than claiming sameness."""
     try:
-        target, url_before = getattr(page, "_noodle_click", (None, None))
+        target, url_before, dom_before = (
+            getattr(page, "_noodle_click", (None, None, None)) + (None,))[:3]
         current = page.url
     except Exception:
         return None
@@ -115,9 +132,12 @@ def stuck_click(page) -> str | None:
         return None
     if not _NAV_INTENT_RE.search(target):
         return None
+    dom_now = _dom_fingerprint(page)
+    if dom_before is None or dom_now is None or dom_now != dom_before:
+        return None
     path = urlsplit(current).path or "/"
     return (f"[no-navigation] clicking '{target}' left the page unchanged "
-            f"(URL still {path})")
+            f"(URL still {path}, and the rendered page is identical)")
 
 
 def set_page(name: str):
@@ -634,6 +654,31 @@ def assert_any_visible(page: Page, alternatives: list[str],
         f"(NOODLE_FIND_TIMEOUT={_find_timeout_ms()}ms).\nURL: {page.url}")
 
 
+def _rendered_near_miss(page, text: str) -> str:
+    """NOOD_0207 — ' [near-miss] the page renders: …', or ''.
+
+    The expected wording came from a human ask against a page authoring never
+    probed, so a mismatch is USUALLY the same sentence said differently. The
+    page is right there at failure time; reading it turns a re-derivation into
+    a one-word edit. Never raises."""
+    try:
+        lines = [ln.strip() for ln
+                 in (page.evaluate("() => document.body.innerText") or "")
+                 .splitlines() if ln.strip()][:200]
+    except Exception:
+        return ""
+    want = (text or "").casefold()
+    near = difflib.get_close_matches(text or "", lines, 2, 0.6)
+    if not near:
+        # short expected text vs a long rendered line: containment by words,
+        # which difflib's whole-string ratio scores far too low.
+        toks = set(want.split())
+        near = [ln for ln in lines
+                if toks and toks <= set(ln.casefold().split())][:2]
+    return (" [near-miss] the page renders: "
+            + "; ".join(repr(n) for n in near)) if near else ""
+
+
 def _assert_visible_ocr_or_fail(page: Page, text: str):
     """Phase T — when the DOM lookup misses and the OCR fallback is opted in,
     text rendered inside a closed shadow root can still pass via pixels."""
@@ -642,7 +687,9 @@ def _assert_visible_ocr_or_fail(page: Page, text: str):
         from . import screen
         screen.assert_text_visible(page, text)   # raises its own if absent
         return
-    raise AssertionError(f"Expected to see '{text}' on page — not found.\nURL: {page.url}")
+    raise AssertionError(f"Expected to see '{text}' on page — not found."
+                         + _rendered_near_miss(page, text)
+                         + f"\nURL: {page.url}")
 
 
 # NOOD_0180 — visible fraction of an element, clipped by EVERY ancestor's
@@ -1208,11 +1255,9 @@ def assert_number(page: Page, locator_text: str, count: float, op: str = "=="):
 
 
 def click_in_row(page: Page, locator_text: str, row: str):
-    """Click an element scoped to the grid row containing `row` text (D365)."""
-    row_loc = page.get_by_role("row").filter(has_text=row)
-    if row_loc.count() == 0:
-        raise AssertionError(f"No row containing '{row}' found.\nURL: {page.url}")
-    loc = find(page, locator_text, scope=row_loc.first)
+    """Click an element scoped to the row/card containing `row` text — a grid
+    row (D365) or, since NOOD_0207, any repeating item container."""
+    loc = find(page, locator_text, scope=_row_scope(page, row, locator_text))
     if loc is None:
         raise AssertionError(_not_found(f"Could not find '{locator_text}' in row '{row}'"))
     loc.click()
@@ -2314,15 +2359,43 @@ def switch_main_frame():
     set_frame(None)
 
 
-def _row_scope(page: Page, row: str):
+# NOOD_0207 — how far up from the anchor text to look for the repeating
+# container. Bounded because walking to <body> would "scope" to the whole page.
+_ROW_CLIMB = 6
+
+
+def _row_scope(page: Page, row: str, contains: str | None = None):
+    """The container holding `row` text — a real table/grid row, else the
+    nearest ancestor that also holds `contains`.
+
+    NOOD_0207 — role=row alone covered tables and ARIA grids and nothing else,
+    so the same "in the row containing X" step that worked on a table silently
+    failed on a card/tile grid, which is the commoner shape. Climbing UP from
+    the caption means the FIRST ancestor that also holds the target control is
+    the innermost one — the item, never the whole grid. Pure widening: the
+    role=row path below is unchanged and still wins."""
     row_loc = page.get_by_role("row").filter(has_text=row)
-    if row_loc.count() == 0:
-        raise AssertionError(f"No row containing '{row}' found.\nURL: {page.url}")
-    return row_loc.first
+    if row_loc.count():
+        return row_loc.first
+    # ponytail: the climb needs a second thing to look for — that is what
+    # makes "the right ancestor" decidable rather than a guess. Callers that
+    # know the control name pass it; the rest keep the old strict behaviour.
+    anchor = page.get_by_text(row, exact=False).locator("visible=true")
+    if contains and anchor.count():
+        loc = anchor.first
+        for _ in range(_ROW_CLIMB):
+            loc = loc.locator("xpath=..")
+            # poll=False/heal=False: this is a shape probe, not the action —
+            # polling the full find budget six times over would cost minutes,
+            # and the real lookup happens once the scope is chosen.
+            if find(page, contains, scope=loc, poll=False, heal=False,
+                    allow_dom_scan=False) is not None:
+                return loc
+    raise AssertionError(f"No row containing '{row}' found.\nURL: {page.url}")
 
 
 def fill_in_row(page: Page, locator_text: str, row: str, value: str):
-    loc = find(page, locator_text, scope=_row_scope(page, row))
+    loc = find(page, locator_text, scope=_row_scope(page, row, locator_text))
     if loc is None:
         raise AssertionError(_not_found(f"Could not find '{locator_text}' in row '{row}'"))
     loc.fill(value)
