@@ -1168,6 +1168,12 @@ def _do(page, pg: dict, actions: list[tuple], timeout_ms: int):
                                if h not in seen_head]
             rev = summarize(raw, url=page.url, title=page.title())
             rev["revealed_by"], rev["settled"] = label, settled
+            # NOOD_0208 — a `do` block is a state the FLOW walked to, not a
+            # panel a reveal-click opened. Authoring must treat the two
+            # differently: a revealed control needs an explicit opening click
+            # before it is reachable, while this page is reachable precisely
+            # because the goal's own actions get there.
+            rev["performed"] = True
             if rev["controls"] or rev["headings"] or settled == "navigation":
                 _verify_unique(page, rev["controls"])
                 known = rev["controls"] + known
@@ -1184,6 +1190,7 @@ def _do(page, pg: dict, actions: list[tuple], timeout_ms: int):
                 rev["note"] = ("no new controls or headings appeared within "
                                "the settle window — the click landed but "
                                "produced no observable delta")
+                rev["performed"], rev["no_delta"] = True, True
                 pg.setdefault("revealed", []).append(rev)
             if tab is not None:
                 # NOOD_0178 — the delta is in the tab, not here: collect it and
@@ -1651,6 +1658,50 @@ def _pick(page, pg: dict, term: str, target: str, timeout_ms: int,
     except Exception as e:
         sr["pick_warning"] = f'--pick "{cand["name"]}": {e}'
     return page
+
+
+def _perform_mutation(page, pg: dict, destination: str,
+                      timeout_ms: int) -> None:
+    """NOOD_0208 — actually CLICK the mutation control and record what
+    happened, so "add to <dest>" that merely navigates is caught at author
+    time instead of one step later on an item that was never added.
+
+    `_prove_mutation` (the search/pick path) records a directly-observed
+    control WITHOUT clicking it, so it can prove the control exists but never
+    that it mutates. This is the missing half, and it is only reachable under
+    `probe: {perform: true}` because it writes state on the target app.
+
+    Any instance proves the CONTROL: on a grid of identical cards, clicking
+    card 1 answers "does this control mutate or navigate" for all of them —
+    the run still performs the scoped one. Advisory: never raises, and a
+    failure leaves no proof rather than a false one."""
+    from noodle.repl.goal import mutation_control  # pure; lazy (no cycle)
+    ctrl, _ = mutation_control(pg.get("controls") or [], destination,
+                               scoped=True)
+    if ctrl is None or not ctrl.get("selector"):
+        return
+    url_before = page.url
+    try:
+        seen = {c["selector"] for b in _blocks(pg) for c in b["controls"]}
+        seen_head = {h for b in _blocks(pg) for h in b["headings"]}
+        armed = _arm(page)
+        page.locator(ctrl["selector"]).first.click(timeout=3000)
+        settled = _settle(page, timeout_ms, armed=armed,
+                          url_before=url_before, mutating=True)
+        rev = _diff_snapshot(page, seen, seen_head)
+        navigated = not _same_page_identity(page.url, url_before)
+        delta = bool(rev.get("controls") or rev.get("headings"))
+        pg["mutation_proof"] = {
+            "control": ctrl["name"], "navigated": navigated,
+            "delta": delta, "settled": settled,
+            "url_before": url_before, "url_after": page.url}
+        if delta or navigated:
+            rev["revealed_by"] = f'performed: click "{ctrl["name"]}"'
+            rev["performed"] = True
+            pg.setdefault("revealed", []).append(rev)
+    except Exception as e:                               # pragma: no cover
+        pg.setdefault("warnings", []).append(
+            f'perform: could not click "{ctrl.get("name")}": {e}')
 
 
 _PREREQ_TRIALS = 3
@@ -2598,6 +2649,7 @@ def probe(urls: list[str], timeout_ms: int = 15000,
           follow: str | None = None, expect: list[str] | None = None,
           open_native_controls: bool = False,
           max_reveal_depth: int = 1, discover: bool = False,
+          perform: bool = False,
           act_on: str = "each", browser_name: str | None = None) -> dict:
     """Open each URL headless (one browser for all) and return
     {"pages": [summarize(...)], "errors": [{url, error}]}. Never raises —
@@ -2699,6 +2751,13 @@ def probe(urls: list[str], timeout_ms: int = 15000,
                     # the later phases act on it.
                     if clicks and acting:
                         page = _reveal(page, pg, clicks, timeout_ms)
+                    # NOOD_0208 — the searchless mutation, PERFORMED (opt-in).
+                    # Ahead of the do-chain on purpose: those actions are the
+                    # steps that follow the mutation, so the transaction has
+                    # to start from the mutated state to reach the page the
+                    # test asserts on.
+                    if perform and mutate and not pick and acting:
+                        _perform_mutation(page, pg, mutate, timeout_ms)
                     if do_actions and acting and not search:
                         page = _do(page, pg, do_actions, timeout_ms)
                     if discover and acting:

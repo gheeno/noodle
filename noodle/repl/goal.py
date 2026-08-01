@@ -159,7 +159,11 @@ _CHECK_KINDS = ("see", "not_see", "count", "any_of", "field",
 # was observed on.
 _START = "start"
 _DISMISSALS = {"popups", "location_prompt", "notifications_prompt"}
-_PROBE_KEYS = {"discover"}
+# NOOD_0208 — `perform: true` lets the probe EXECUTE the goal's post-gate
+# actions instead of stopping at the first state-writing one, so the
+# destination page becomes real evidence. Opt-in because it mutates the target
+# app; see perform_do().
+_PROBE_KEYS = {"discover", "perform"}
 
 # NOOD_0161 — the minimal valid goal, one copy-pasteable object. The reviewed
 # session spent 25 model inferences recovering this shape (goal passed as a
@@ -195,7 +199,11 @@ def vocabulary() -> dict:
                  "start|<action id> anchors a check to its page; "
                  "item_in_destination pairs with expected_from: <pick id>; "
                  "navigation: [<url>, ...] = ordered URLs, actions run on "
-                 "the last",
+                 "the last; probe: {discover: true} auto-reveals unnamed "
+                 "triggers, {perform: true} PERFORMS the post-mutation steps "
+                 "so the destination page is proven evidence (it writes state "
+                 "on the app — opt-in, never default)",
+        "probe_keys": sorted(_PROBE_KEYS),
     }
 
 
@@ -811,8 +819,63 @@ def probe_args(goal: dict) -> dict:
     return {"search": search, "suggest": suggest, "pick": pick,
             "mutate": mutate, "follow": follow, "expect": expect or None,
             "click": clicks or None,
+            "do": perform_do(goal) or None,
             "open_native_controls": any(a["do"] == "select" for a in actions),
-            "discover": bool((goal.get("probe") or {}).get("discover"))}
+            "discover": bool((goal.get("probe") or {}).get("discover")),
+            "perform": bool((goal.get("probe") or {}).get("perform"))}
+
+
+# NOOD_0208 — how many post-gate actions the probe will perform. Bounded
+# because each one is a real click on a real app: a runaway chain would drive
+# an unbounded transaction against someone's production site.
+_PERFORM_CAP = 8
+
+
+def perform_do(goal: dict) -> list[str]:
+    """NOOD_0208 — the goal's post-gate actions as probe `do` strings, or [].
+
+    Opt-in only (`probe: {perform: true}`). The probe deliberately stops at
+    the first state-writing action, so every page beyond it — the confirmation
+    the test asserts on — was never snapshotted, and the first authored
+    wording was a GUESS. That cost one red run per flow even after NOOD_0207
+    attached the exact repair to it.
+
+    Turning it on hands those same actions to the existing `--do` transaction
+    (NOOD_0144), which performs each one, settles, and diff-snapshots the
+    result. Two things fall out for free: the destination page becomes real
+    evidence (so the assertion is proven, not guessed), and a click that only
+    NAVIGATED instead of mutating is visible as its own delta — the
+    navigation-CTA trap.
+
+    This PERFORMS MUTATIONS on the target app. That is why it is opt-in and
+    capped, and why nothing turns it on by default."""
+    if not (goal.get("probe") or {}).get("perform"):
+        return []
+    actions = [a for a in (goal.get("actions") or []) if isinstance(a, dict)]
+    gate = _evidence_gate(actions)
+    if gate is None:
+        return []
+    out = []
+    for a in actions[gate:]:
+        do, target = a.get("do"), a.get("target")
+        if do == "add_to":
+            # the mutation control resolves at evidence time, not here — the
+            # destination word is what the probe already takes as `mutate`.
+            continue
+        if do == "click" and target:
+            out.append(f"click {target}")
+        elif do == "enter" and target:
+            out.append(f"enter {a.get('value', '')} in {target}")
+        elif do == "select" and target:
+            out.append(f"select {a.get('option', '')} from {target}")
+        else:
+            # An action the do-grammar can't express ends the chain: the
+            # states after it were never reached, and pretending otherwise
+            # would claim evidence for a page the probe never saw.
+            break
+        if len(out) >= _PERFORM_CAP:
+            break
+    return out
 
 
 def _evidence_gate(actions: list) -> int | None:
@@ -877,14 +940,22 @@ def _runtime_gate(actions: list) -> int | None:
 _PROBE_FOLLOWS = ("search", "suggest", "pick", "hover")
 
 
-def _beyond_probe_reach(actions: list) -> bool:
+def _beyond_probe_reach(actions: list, performed: bool = False) -> bool:
     """True when the goal's actions carry the page past the last state the
     probe snapshotted — so an END-state check has no probe evidence at all and
     belongs to the run, not to `blocking` and not to `proven`.
 
     Domain-agnostic by construction: it reads the action grammar only. A goal
     that just searches (or follows a suggestion, or picks a result) keeps its
-    pre-run verification untouched — the probe really did land on that page."""
+    pre-run verification untouched — the probe really did land on that page.
+
+    NOOD_0208 — `performed` (probe.perform) makes this false by construction:
+    the probe executed those very actions and snapshotted where they landed,
+    so there is no "past the probe's reach" left to route around. Without this
+    the opt-in would collect the destination evidence and then decline to use
+    it, which is the whole lap it exists to remove."""
+    if performed:
+        return False
     gate = _runtime_gate(actions)
     if gate is None:
         return False
@@ -970,6 +1041,27 @@ def _mutating_name(name: str) -> bool:
     return _is_mutating(name)
 
 
+def navigation_shaped(c: dict) -> bool:
+    """NOOD_0208 — this control qualified as a mutation ONLY by its name, and
+    it is a plain link to somewhere else.
+
+    The trap: a landing page carries a CTA literally named "add to <dest>"
+    that merely NAVIGATES to the page where you add it. `mutation_control`
+    accepts it (the name matches the mutating-verb gate), the compiler emits
+    the click, and the run fails one step later on an item that was never
+    added — with the blame landing on the next control.
+
+    Deliberately advisory, never a block on its own: plenty of real
+    mutate-controls are anchors that POST server-side, and NOOD_0207's lesson
+    is that a heuristic must not turn a working green into a refusal. It
+    demotes such a candidate behind any button/submit sibling, and names the
+    risk plus the opt-in (`probe: {perform: true}`) that settles it by
+    clicking."""
+    href = str(c.get("href") or "").strip()
+    return (c.get("kind") == "link" and not c.get("submit")
+            and bool(href) and not href.startswith(("#", "javascript:")))
+
+
 def mutation_control(controls: list[dict], destination: str,
                      scoped: bool = False) \
         -> tuple[dict | None, str | None]:
@@ -996,6 +1088,11 @@ def mutation_control(controls: list[dict], destination: str,
     if not cands:
         return None, (f"no probed control mutates into {destination!r} "
                       "(nothing names the destination beyond opening it)")
+    # NOOD_0208 — a button/submit sibling outranks a navigation-shaped link
+    # naming the same thing. Order only: when the link is the ONLY candidate
+    # it still wins, and evidence() warns instead of refusing.
+    if any(not navigation_shaped(c) for c in cands):
+        cands = [c for c in cands if not navigation_shaped(c)]
     names = {_norm(c.get("name")) for c in cands}
     if len(names) > 1:
         # NOOD_0207 — a label that STARTS with the destination word names it
@@ -1066,13 +1163,22 @@ def _block_texts(blk: dict) -> list[str]:
 def _page_blocks(pg: dict) -> list[tuple[dict, str, str | None]]:
     """Provenance-tagged blocks of one probed page: (block, phase, trigger).
 
-    phase is 'initial' | 'reveal' | 'discovered' | 'search'. A revealed block
-    the probe reached by AUTOMATIC discovery (auto/discovered) is 'discovered'
-    — its controls are never reachable without an explicit goal click that
-    opens them. An explicitly-clicked reveal keeps phase 'reveal' and carries
-    the trigger name so the compiler can require that click first."""
+    phase is 'initial' | 'reveal' | 'discovered' | 'performed' | 'search'. A
+    revealed block the probe reached by AUTOMATIC discovery (auto/discovered)
+    is 'discovered' — its controls are never reachable without an explicit
+    goal click that opens them. An explicitly-clicked reveal keeps phase
+    'reveal' and carries the trigger name so the compiler can require that
+    click first.
+
+    NOOD_0208 — 'performed' is the state the probe WALKED to by executing the
+    goal's own post-gate actions (probe.perform). It carries no trigger: it is
+    reachable because those actions are in the test, so requiring a reveal
+    click for it would block the very flow that produced it."""
     blocks: list[tuple[dict, str, str | None]] = [(pg, "initial", None)]
     for rev in pg.get("revealed", []):
+        if rev.get("performed"):
+            blocks.append((rev, "performed", None))
+            continue
         phase = "discovered" if (rev.get("discovered") or rev.get("auto"))\
             else "reveal"
         blocks.append((rev, phase, rev.get("revealed_by")))
@@ -1357,7 +1463,8 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                 "popups_closed": 0, "results_summary": None, "controls": {},
                 "bound_targets": {}, "resolved_controls": {},
                 "mutation_plans": {}, "navigation_health": [],
-                "revealed_headings": {}, "headings": [], "narrowed": []}
+                "revealed_headings": {}, "headings": [], "narrowed": [],
+                "warnings": []}
 
     pages = probe_result.get("pages") or []
     if not pages:
@@ -1414,7 +1521,12 @@ def evidence(goal: dict, probe_result: dict) -> dict:
             continue
         for c in blk.get("controls", []):
             controls.setdefault(_norm(c.get("name")), c)
-    initial_scope = [blk for blk, ph, _ in blocks if ph in ("initial", "reveal")]
+    # NOOD_0208 — 'performed' joins the check scope, and that IS the point of
+    # the opt-in: those blocks are the pages the flow walks to AFTER the
+    # mutation, so a check on the confirmation wording is proven here instead
+    # of guessed and paid for with a red run.
+    initial_scope = [blk for blk, ph, _ in blocks
+                     if ph in ("initial", "reveal", "performed")]
     search_scope = [blk for blk, ph, _ in blocks if ph == "search"]
     picked_blk = next((blk for blk, ph, _ in blocks if ph == "picked"), None)
     # NOOD_0195 — the probe's --expect verdicts: an exact full-text search of
@@ -1427,6 +1539,7 @@ def evidence(goal: dict, probe_result: dict) -> dict:
     searched = any(a["do"] in ("search", "suggest") for a in actions)
 
     blocking, proven, runtime, bound, resolved = [], {}, [], {}, {}
+    warnings: list[str] = []       # NOOD_0208 — real but unproven risks
     # NOOD_0200 — provenance per proven CHECK: which probe phase's page the
     # match came from (initial / search). Recording it is the structural
     # guard against the end-state false positive: a check whose compiled
@@ -1477,6 +1590,30 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                         "identifies that item"
                         + _near_miss(scope, blocks, "text"))
                     continue
+                # NOOD_0208 — with probe.perform the control was CLICKED, so
+                # "does it mutate or merely navigate" is answered instead of
+                # assumed. A click that neither changed the page nor produced
+                # a delta did nothing: compiling it would fail one step later
+                # on an item that was never added, blaming the next control.
+                proof = pg.get("mutation_proof") or {}
+                if proof and not proof.get("delta") \
+                        and not proof.get("navigated"):
+                    blocking.append(
+                        f'add_to "{a["destination"]}": the probe clicked '
+                        f'"{proof.get("control")}" and the page did not '
+                        "change at all — that control does not perform the "
+                        "mutation; name the control that does, or add the "
+                        "step that opens it first")
+                    continue
+                if not proof and navigation_shaped(ctrl):
+                    # unproven and navigation-shaped: say so, never refuse —
+                    # plenty of real mutate-controls are anchors that POST.
+                    warnings.append(
+                        f'add_to "{a["destination"]}": "{ctrl["name"]}" is a '
+                        "link to another page, and qualified as the mutation "
+                        "control by its NAME alone — if it only navigates, "
+                        "this run fails at the next step. Prove it with "
+                        "probe: {perform: true}.")
                 mplans[aid] = {"prerequisite": None, "control": ctrl,
                                "within": scope,
                                "evidence": "mutation control observed on the "
@@ -1674,7 +1811,14 @@ def evidence(goal: dict, probe_result: dict) -> dict:
                 "evidence is blocked; change the term or fix the search flow "
                 "first")
     gate = _runtime_gate(actions)
-    beyond_reach = _beyond_probe_reach(actions)
+    # NOOD_0208 — when the probe PERFORMED the flow, the pages past the gate
+    # are snapshotted, so the checks on them get proven here rather than
+    # deferred. `performed` is read off the evidence, not the goal: the flag
+    # is a request, a performed block is the proof it was honoured.
+    performed = any(ph == "performed" for _, ph, _ in blocks)
+    beyond_reach = _beyond_probe_reach(actions, performed)
+    if performed:
+        gate = None
     captions = {k: v["caption"] for k, v in bound.items()}
     for i, c in enumerate(goal.get("checks") or []):
         if "status" in c or "response_contains" in c or "json" in c:
@@ -1836,7 +1980,12 @@ def evidence(goal: dict, probe_result: dict) -> dict:
             "bound_targets": bound, "resolved_controls": resolved,
             "mutation_plans": mplans, "navigation_health": nav_health,
             "revealed_headings": revealed_headings, "headings": headings,
-            "narrowed": narrowed}
+            "narrowed": narrowed,
+            # NOOD_0208 — risks that are real but unproven. A block would be a
+            # heuristic refusing a working flow (NOOD_0207's lesson); silence
+            # would be the diagnose-without-repair defect. This is the third
+            # option: say it, ship it, name the opt-in that settles it.
+            "warnings": warnings}
 
 
 # --- automatic postcondition synthesis (NOOD_0156) ---------------------------

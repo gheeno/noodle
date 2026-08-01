@@ -489,7 +489,11 @@ def test_probe_args_scope_to_the_goal_only():
                     # NOOD_0195 — the literals the checks name, handed to the
                     # probe's exact full-text --expect verdict.
                     "expect": ["Weekly Flyer", "Hot Wheels", "Die Cast"],
-                    "open_native_controls": False, "discover": False}
+                    "open_native_controls": False, "discover": False,
+                    # NOOD_0208 — both OFF unless the goal opts in: `perform`
+                    # writes state on the target app, so nothing may turn it
+                    # on implicitly, and `do` is the chain it would perform.
+                    "do": None, "perform": False}
     g = _goal(actions=[{"do": "select", "target": "store", "option": "64",
                         "id": "sel"}],
               checks=[], probe={"discover": True})

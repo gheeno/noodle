@@ -134,7 +134,17 @@ def _case(prompt: dict, workspace: str) -> dict:
                         and (prompt.get("mode") == "feature_content"
                              or author.get("intent_verified") is True),
             "feature": author.get("feature"),
-            "error": res.get("error") or run.get("skipped")}
+            # NOOD_0208 — the FIRST blocker, ahead of the generic skip reason.
+            # A blocked author reports `run.skipped: "authoring not ready — no
+            # run browser launched"`, which says nothing about why; the
+            # actionable line ("run: playwright install chromium", or the
+            # control that wouldn't resolve) sat unread in author.blocking.
+            # A reader of this table saw REGRESSED and started bisecting the
+            # engine — the same diagnose-without-repair defect NOOD_0207 fixed
+            # everywhere else, still live in the tool that measures it.
+            "error": (res.get("error") or next(iter(author.get("blocking")
+                                                    or []), None)
+                      or run.get("skipped"))}
 
 
 def execute(workspace: str) -> dict:
@@ -236,7 +246,12 @@ def score(results: dict, workspace: str | None = None) -> dict:
         if tc.get("corrections") is not None and tc["corrections"] > b["max_corrections"]:
             fails.append(f"inaccurate: {tc['corrections']} corrections > {b['max_corrections']:.0f}")
         if tc.get("green") is False:
-            fails.append("final run not green")
+            # NOOD_0208 — carry the cause, not just the verdict. "final run
+            # not green" is a restatement of the column the reader is already
+            # looking at; the engine knew why and this dropped it on the floor.
+            why = str(tc.get("error") or "").strip().splitlines()
+            fails.append("final run not green"
+                         + (f" — {why[0][:200]}" if why else ""))
         elif tc.get("verified") is False:
             fails.append("passed but unverified (healing/lenient matches behind the pass)")
         tcs.append({"id": tc.get("id", f"tc{i + 1}"), "pass": not fails, "failures": fails,

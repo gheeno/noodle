@@ -4,6 +4,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a24] — 2026-07-31
+
+**NOOD_0208** — fix: the probe can walk the flow it is authoring, and the
+benchmark names its own cause.
+
+The three follow-ups NOOD_0207 left open, all one defect wearing three hats:
+the engine knew something and didn't say it.
+
+- **`probe: {perform: true}` — the destination page becomes evidence.** The
+  probe deliberately stops at the first state-writing action, so the page the
+  test *asserts on* was never snapshotted and the first authored wording was a
+  guess. NOOD_0207 attached the exact repair to the resulting red run, which
+  turned a misdiagnosis into one cheap lap — but the lap was still there. The
+  opt-in hands those actions to the `--do` transaction (NOOD_0144) that has
+  always been able to perform them: it clicks, settles and diff-snapshots each
+  one, and the resulting `performed` blocks join the check scope, so the
+  confirmation wording is proven instead of guessed. Off by default and capped
+  at 8 actions — it writes state on the target app, so nothing turns it on
+  implicitly, and the chain stops at the first action the do-grammar can't
+  express rather than claiming evidence for a page never reached.
+- **A `performed` block is reachable, not a hidden panel.** A `reveal` block
+  needs an explicit opening click before its controls count as reachable; a
+  `performed` block is a state the flow itself walked to, so requiring one
+  would block the very actions that produced it.
+- **The navigation CTA that reads like a mutation.** A landing page can carry a
+  control literally named "add to <dest>" that merely *navigates* to the page
+  where you add it. It qualified as the mutation control by name, the compiler
+  emitted the click, and the run failed one step later on an item that was
+  never added — with the blame landing on the next control. A button/submit
+  sibling now outranks it; when it is the only candidate the risk is **named**
+  rather than refused (plenty of real mutate-controls are anchors that POST,
+  and NOOD_0207's lesson is that a heuristic must not turn a working green into
+  a block); and under `perform: true` the probe clicks it, so a control that
+  changed nothing at all blocks with what it actually did.
+- **The benchmark names its own cause.** `noodle feature-regression` printed
+  `final run not green` — a restatement of the column the reader is already
+  looking at — while the actionable line (`run: playwright install chromium`)
+  sat unread in the payload. That is the same diagnose-without-repair defect,
+  live in the tool that measures it, and it cost a full engine bisect on a
+  one-command environment problem. The failure line now carries the first
+  blocker.
+
+22 browser-free tests in `unit_tests/test_nood_0208.py`.
+
 ## [1.0.0a23] — 2026-07-31
 
 **NOOD_0207** — fix: a repeated control can be scoped to one instance, and
