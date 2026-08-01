@@ -80,7 +80,7 @@ _RUN_MODE_PHRASE = re.compile(
 _WEBSITE_REF = re.compile(
     r"^(?:the\s+)?(?:base\s+|start(?:ing)?\s+|target\s+)?"
     r"(?:web\s?site|site|page|app(?:lication)?|url|"
-    r"home\s?page|browser)$", re.I)
+    r"home\s?page|browser|ui|front\s?-?end|web\s?app)$", re.I)
 _PAREN = re.compile(r"\(([^()]{3,})\)")
 _CONJ = re.compile(r"\s+(?:and(?:\s+then)?|then)\s+", re.I)
 
@@ -133,6 +133,21 @@ _META_LABEL = re.compile(
     r"|config|shell\s+commands[^:]*|environments?|browsers?|device|"
     r"test\s+name|title|tags?|acceptance\s+criteria|ac|objective|summary|"
     r"purpose|context)\s*:\s*", re.I)
+# NOOD_0209 — the only URL in a brief often lives on its metadata line
+# ("App: Demo · UI `https://demo.example`"). _META_LABEL keeps that line out
+# of the step flow (NOOD_0207), but discarding it whole took the URL with it,
+# and authoring then refused with "no URL in the prompt". Harvested here,
+# spent as the base_url fallback BEFORE that refusal, stated in assumptions.
+# Scheme'd (or www.) only — a schemeless dotted token in prose ("e.g.") is
+# not evidence of a URL.
+_URL_IN_TEXT = re.compile(r"(?:https?://|www\.)[^\s`'\"()<>]+")
+
+
+def _harvest_urls(raw: str) -> list[str]:
+    return [_normalize_url(u.rstrip(".,;:")) for u in
+            _URL_IN_TEXT.findall(raw or "")]
+
+
 # a bracketed template placeholder is punctuation around the value
 _BRACKETED = re.compile(r"^\[\s*(.*?)\s*\]$")
 # NOOD_0199 — ordering words that open a sentence in prose ("After that, …").
@@ -246,6 +261,21 @@ _VERBS = [
         r"^(?:close|dismiss|accept|handle)s?\b.*\b"
         r"(pop\s*-?\s*ups?|cookies?|banners?|modals?|overlays?|consent|"
         r"location|geolocation|notifications?)", re.I)),
+    # NOOD_0209 — result selection is a first-class action: `pick` existed
+    # in the goal schema (NOOD_0156) but NO prompt phrasing reached it, so
+    # 'open the "X" result' authored a click on a target no probed control
+    # carries. Two shapes: a quoted title + result noun (or "from the
+    # results"), and the ordinal "first result". MUST precede `nav` and
+    # `click`, both of which would swallow these. "link"/"button" nouns are
+    # deliberately absent — 'click the "Contact" link' is a plain click.
+    ("pick_result", re.compile(
+        r"^(?:pick|open|select|choose|click|tap|press)s?\s+(?:on\s+)?"
+        r"(?:the\s+)?"
+        r"(?:first\s+(?:search\s+)?(?:result|item|entry|match|article)"
+        r"|([\"'])(?P<item>(?:(?!\1).)+?)\1\s*"
+        r"(?:(?:search\s+)?(?:result|article|item|entry|match)"
+        r"|\s+from\s+(?:the\s+)?(?:search\s+)?results?(?:\s+list)?))"
+        r"$", re.I)),
     ("nav", re.compile(
         r"^(?:go(?:es)?\s+to|open(?:s)?|visit(?:s)?|navigate(?:s)?\s+to|"
         r"launch(?:es)?|then)\s+(.+)$", re.I)),
@@ -322,7 +352,8 @@ _IS_IN = re.compile(
 
 # Flow-node kinds that count as siblings for the dataflow window; navigation,
 # dismissals and run-mode notes are setup metadata, never flow context.
-_FLOW_KINDS = ("search", "click", "enter", "select", "add_to", "verify")
+_FLOW_KINDS = ("search", "click", "enter", "select", "add_to", "verify",
+               "pick_result")
 _WINDOW = 2
 
 # NOOD_0201 — the optional tail of an api clause: a quoted body template
@@ -352,6 +383,30 @@ def _api_tail(node: dict, tail: str) -> bool:
 
 def _clean(term: str) -> str:
     return _ARTICLE.sub("", term.strip().strip("\"'")).strip()
+
+
+# NOOD_0209 — quote characters intended as DELIMITERS survived into action
+# targets as literal content ('click the "Sign in" button' → target
+# '"Sign in" button'), which no probed control name can ever carry; the
+# check side of the same bug is the verify-split fix above. Reduced only
+# when the target is
+# exactly ONE quoted member plus an optional trailing control noun — 'click
+# "Save" then confirm' and '"A" next to "B"' stay whole, and quoted CONTENT
+# is data whose spelling is never touched.
+_TARGET_NOUN = (
+    r"button|link|tab|field|input|box|result|article|item|option|icon|menu|"
+    r"page|entry|control|checkbox|drop-?down|row|card")
+_QUOTED_TARGET = re.compile(
+    rf"^([\"'])(?P<content>(?:(?!\1).)+?)\1(?:\s+(?:{_TARGET_NOUN}))?$", re.I)
+
+
+def _target_clean(term: str) -> str:
+    # article-strip only, BEFORE the quote test: _clean's edge-quote strip
+    # would take the leading delimiter and hide the pair from the pattern.
+    t = _ARTICLE.sub("", (term or "").strip()).strip()
+    if m := _QUOTED_TARGET.match(t):
+        return m.group("content").strip()
+    return _clean(term)
 
 
 def _tokens(s: str) -> set:
@@ -613,6 +668,12 @@ _VERIFY_FILLER = re.compile(
 # rejection teaches the fix instead of dumping the whole grammar and walking
 # away. Keyword → the grammar template it most likely wanted; first hit wins.
 _SUGGEST_RULES = (
+    # NOOD_0209 — a result-SELECTION clause must be offered the action, not a
+    # verify: the old advice silently replaced navigation with an assertion
+    # and the rest of the flow ran on the wrong page.
+    (re.compile(r"^(?:pick|select|choose|open|click|tap)\b.{0,60}?"
+                r"\b(?:results?|articles?)\b", re.I),
+     'pick the "<title>" result (after a search step)'),
     (re.compile(r"result|found with|titled?", re.I),
      'verify at least 1 result with title "<A>" or "<B>"'),
     (re.compile(r"search", re.I), 'search for "<term>"'),
@@ -715,26 +776,30 @@ def _parse_clause(c: dict) -> dict:
                 # (or caller's) URL, never a click target
                 node["kind"] = "nav_ref"
             else:                    # "go to the cart" — navigation by click
-                node.update(kind="click", target=target)
+                node.update(kind="click", target=_target_clean(m.group(1)))
         elif kind == "search":
             node["term"] = _quoted_or_whole(m.group(1))
+        elif kind == "pick_result":
+            item = m.groupdict().get("item")
+            node["item"] = _clean(item) if item else None
         elif kind == "enter":
-            node["value"], node["target"] = m.group(1), _clean(m.group(2))
+            node["value"], node["target"] = \
+                m.group(1), _target_clean(m.group(2))
         elif kind == "select":
             node["option"], node["target"] = \
-                _clean(m.group(1)), _clean(m.group(2))
+                _clean(m.group(1)), _target_clean(m.group(2))
         elif kind == "add_to":
             node["item"], node["destination"] = \
                 _clean(m.group(1)), _clean(m.group(2))
         # NOOD_0188 — the form/navigation verbs.
         elif kind in ("check", "uncheck", "hover"):
-            node["target"] = _clean(m.group(1))
+            node["target"] = _target_clean(m.group(1))
         elif kind == "upload":
             node["file"], node["target"] = \
-                _clean(m.group(1)), _clean(m.group(2))
+                _clean(m.group(1)), _target_clean(m.group(2))
         elif kind == "pick_date":
             node["date"], node["target"] = \
-                _clean(m.group(1)), _clean(m.group(2))
+                _clean(m.group(1)), _target_clean(m.group(2))
         elif kind == "press_key":
             raw = re.sub(r"\s+", "", m.group(1)).casefold()
             node["key"] = _KEY_CANON.get(raw, m.group(1).strip().title())
@@ -743,7 +808,7 @@ def _parse_clause(c: dict) -> dict:
         elif kind == "verify":
             node["rest"] = m.group(1).strip()
         elif kind == "click":
-            node["target"] = _clean(m.group(1))
+            node["target"] = _target_clean(m.group(1))
         return node
     return node
 
@@ -796,6 +861,48 @@ _VERIFY_LEAD = re.compile(
 _VERIFY_NO_SPLIT = re.compile(
     r"[\"']|\bor\b|\bany of\b|\bat least\b|\bresults? with\b", re.I)
 _VALUE_TAIL = re.compile(r"\s*,\s*(?:and\s+)?|\s+and\s+", re.I)
+# NOOD_0209 — the QUOTED half of B2. The verify verb's greedy capture kept
+# quote DELIMITERS as literal content, so 'verify "A", "B" and "C"' compiled
+# to ONE literal no page renders ('A", "B" and "C'): the flow ran perfectly
+# and green was impossible. _split_conjuncts returns the members only when
+# the text is ENTIRELY quoted members joined by comma/and separators — prose
+# between members, a single member, or any top-level "or" (a disjunction is
+# ONE any_of step, never narrowed) leaves the clause untouched. Quoted
+# content is DATA: delimiters are stripped, spelling never is.
+_QUOTED_MEMBER = re.compile(r"([\"'])(?P<content>(?:(?!\1).)+?)\1")
+_CONJ_SEP = re.compile(r"\s*(?:,\s*(?:and\s+)?|\s+and\s+)\s*", re.I)
+# presence phrasing AROUND one quoted member: '"Acme" logo is present'
+# asserted the literal '"Acme" logo'. Deliberately narrow: exactly one
+# quoted member, at most a short noun run, and a presence verb at the end —
+# a state assertion ('"Add to cart" button is disabled') keeps its whole
+# text, and prose after the verb ('"A" appears next to "B"') never matches.
+_PRESENCE_RESIDUE = re.compile(
+    r"^(?:the\s+|a\s+|an\s+)?([\"'])(?P<content>(?:(?!\1).)+?)\1"
+    # the noun run must never eat a copula or a NEGATION — '"Error" is not
+    # visible' must stay a not_see, never invert into a presence check
+    r"(?:\s+(?!(?:not|no|never|is|are|isn|aren)\b)[\w-]+){0,3}?"
+    r"(?:\s+(?:is|are))?\s+(?:present|visible|shown|displayed|appears?)$",
+    re.I)
+
+
+def _split_conjuncts(body: str) -> list[str]:
+    body = (body or "").strip()
+    if re.search(r"\bor\b", body, re.I):
+        return []
+    members, pos = [], 0
+    while pos < len(body):
+        m = _QUOTED_MEMBER.match(body, pos)
+        if not m:
+            return []
+        members.append(m.group("content"))
+        pos = m.end()
+        if pos >= len(body):
+            break
+        sep = _CONJ_SEP.match(body, pos)
+        if not sep:
+            return []
+        pos = sep.end()
+    return members if len(members) > 1 else []
 # B3 — a short terminal imperative IS the control's label ("place the order").
 _BARE_CLICK = re.compile(
     r"^(?:proceed|continue|submit|confirm|checkout|check\s+out|place|pay|"
@@ -820,16 +927,31 @@ def _rewrite_asks(clauses: list[dict]) -> list[dict]:
                     _emit(c, f'enter "{p.group("value").strip()}" in '
                              f'{p.group("label").strip()}')
                 continue
-        if (m := _VERIFY_LEAD.match(t)) \
-                and not _VERIFY_NO_SPLIT.search(m.group("body")):
-            parts = [p.strip() for p in _VALUE_TAIL.split(m.group("body"))
-                     if p.strip()]
-            if len(parts) > 1:
-                # as ONE clause this became a single literal no page renders:
-                # green was impossible and the failure named the wrong thing.
-                for p in parts:
-                    _emit(c, f"verify {p}")
+        if m := _VERIFY_LEAD.match(t):
+            body = m.group("body").strip()
+            # NOOD_0209 — quoted conjunction: one check per member. A claim
+            # lead the grammar already reads ('the article shows "A", "B"
+            # and "C"') is phrasing; the quoted members are the assertion.
+            conj = _split_conjuncts(body)
+            if not conj and (h := _HAS.match(body)):
+                conj = _split_conjuncts(h.group(2))
+            if conj:
+                for p in conj:
+                    _emit(c, f'verify "{p}"')
                 continue
+            if pr := _PRESENCE_RESIDUE.match(body):
+                _emit(c, f'verify "{pr.group("content")}"')
+                continue
+            if not _VERIFY_NO_SPLIT.search(body):
+                parts = [p.strip() for p in _VALUE_TAIL.split(body)
+                         if p.strip()]
+                if len(parts) > 1:
+                    # as ONE clause this became a single literal no page
+                    # renders: green was impossible and the failure named the
+                    # wrong thing.
+                    for p in parts:
+                        _emit(c, f"verify {p}")
+                    continue
         if _BARE_CLICK.match(t) and len(t.split()) <= 6 \
                 and not any(rx.match(t) for _, rx in _VERBS):
             _emit(c, f"click {t}")
@@ -863,6 +985,7 @@ def expand(text: str, base_url: str | None = None) -> dict:
     consumed: set[str] = set()          # search ids already feeding a pick
     pre_action_checks: list[dict] = []  # NOOD_0199 — checks written first
     api_calls: list[dict] = []          # NOOD_0192 — in prompt order
+    meta_urls: list[str] = []           # NOOD_0209 — URLs on metadata lines
     counters = {"search": 0, "pick": 0, "add": 0, "api": 0}
     pending_evidence = False
 
@@ -931,6 +1054,10 @@ def expand(text: str, base_url: str | None = None) -> dict:
             _cover(n, "metadata")
             continue
         if n["kind"] == "metadata":
+            # NOOD_0209 — harvest, never discard: the brief's "App: … · UI
+            # `<url>`" line may carry the only URL in the whole prompt.
+            meta_urls.extend(u for u in _harvest_urls(n["raw"])
+                             if u not in meta_urls)
             # NOOD_0199 — a labelled brief field. Named, never silent, and
             # never a blocker: refusing them made PROMPT_TEMPLATE.md, the
             # thing users paste, unusable at the `--prompt` door.
@@ -946,7 +1073,7 @@ def expand(text: str, base_url: str | None = None) -> dict:
             _cover(n, "metadata")
             continue
         if n["kind"] == "nav_ref":
-            if not urls and not base_url and not any(
+            if not urls and not base_url and not meta_urls and not any(
                     x.get("url") for x in nodes):
                 _refuse(n, "no URL in the prompt to open — add an "
                             "'open url <url>' step or pass base_url")
@@ -1002,6 +1129,38 @@ def expand(text: str, base_url: str | None = None) -> dict:
             searches[i] = act
             actions.append(act)
             _cover(n, "action", [act["id"]])
+        elif n["kind"] == "pick_result":
+            # NOOD_0209 — 'open the "X" result' binds to the nearest earlier
+            # search as a first-class pick; with no search to bind to, a
+            # NAMED title is still a control the page may carry (a click),
+            # while a bare "first result" has nothing to be first OF.
+            back = [(j, s) for j, s in sorted(searches.items())
+                    if j < i and s["do"] == "search"
+                    and s["id"] not in consumed]
+            if back:
+                j, src = back[-1]
+                pick = {"do": "pick", "id": _mint("pick"), "from": src["id"]}
+                if n.get("item"):
+                    pick["target"] = n["item"]
+                else:
+                    pick["strategy"] = "first_actionable"
+                consumed.add(src["id"])
+                picks[i] = pick
+                actions.append(pick)
+                assumptions.append(
+                    f"step {no} '{n['raw']}': picking "
+                    + (f"'{n['item']}'" if n.get("item")
+                       else "the first actionable result")
+                    + f" from step {_step_no(nodes[j])}'s search "
+                      f"'{src['term']}' results")
+                _cover(n, "action", [pick["id"]])
+            elif n.get("item"):
+                actions.append({"do": "click", "target": n["item"]})
+                _cover(n, "action")
+            else:
+                _refuse(n, "picking the first result needs a search step "
+                            "before it", conflict=True)
+                continue
         elif n["kind"] == "click":
             # NOOD_0185 — "click the suggestion X" after a search is the
             # typeahead flow, benchmark-proven unreachable by prompt before
@@ -1402,6 +1561,12 @@ def expand(text: str, base_url: str | None = None) -> dict:
         # filled by author_test's localhost discovery before this runs).
         base_url = next((a["url"] for a in api_calls
                          if str(a["url"]).startswith("http")), None)
+    if not first_url and not base_url and meta_urls:
+        # NOOD_0209 — the brief's metadata line held the only URL; spend it
+        # rather than refusing a prompt that plainly named its app.
+        base_url = meta_urls[0]
+        assumptions.append(
+            f"base URL taken from the brief's metadata line: {base_url}")
     if not first_url and not base_url:
         return {"ok": False,
                 "error": "no URL in the prompt and no base_url given — "
@@ -1475,7 +1640,16 @@ def expand(text: str, base_url: str | None = None) -> dict:
             labels.append(f"verify {c['item_in_destination']}")
         elif "status" in c:
             labels.append(f"status {c['status']}")
-    scenario = ", ".join(labels)[:80] or "prompt flow"
+    # NOOD_0209 — a hard [:80] cut mid-label left Feature: titles truncated
+    # mid-quote and unbalanced, and the filename slugged from that fragment.
+    # Truncate at a label boundary, and never leave a dangling quote.
+    scenario = ", ".join(labels)
+    if len(scenario) > 80:
+        cut = scenario[:80]
+        scenario = cut.rsplit(", ", 1)[0] if ", " in cut else cut
+    if scenario.count("'") % 2:
+        scenario = re.sub(r"\s*'[^']*$", "", scenario).strip(" ,")
+    scenario = scenario or "prompt flow"
 
     goal = {"scenario": scenario, "dismissals": dismissals,
             "actions": actions, "checks": checks}

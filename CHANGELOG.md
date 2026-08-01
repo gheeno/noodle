@@ -4,6 +4,83 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a25] — 2026-08-01
+
+**NOOD_0209** — fix: authoring lap waste — a blocked lap writes nothing, and
+the defects that caused the laps.
+
+One reviewed request burned 9 authoring laps and left 4 feature files + 2 POM
+files where one of each was wanted. The engine makes zero model calls, so
+every lap re-pays the calling agent's whole transcript: fewer laps is the
+only cost lever. (Part of this work was first implemented on another machine
+and lost on an unpushed local branch; it is re-implemented here from the
+handoff register, together with that register's Phase 1.)
+
+- **A blocked goal lap rolls back its feature/POM** (D3, the file
+  multiplier). `blocking` was computed after the writes "so the caller can
+  fix in place" — so every blocked lap minted files that outlived the lap
+  that finally passed. Goal mode owns its artifacts: a blocked lap now leaves
+  zero files (the compiled text still rides the payload in `compiled`).
+  env/secrets stay — app-level, idempotent, and supplied credentials must not
+  be re-asked. Hand-authored `feature_content` keeps write-always.
+- **A brief's metadata URL is harvested, never discarded** (D1).
+  "App: Demo · UI `https://…`" was swallowed whole by the metadata filter —
+  taking the only URL in the prompt with it — and authoring then refused with
+  "no URL in the prompt". The URL is spent as the base_url fallback and
+  stated in assumptions. "Go to UI / the front end / web app" is contextual
+  navigation, never a click on "UI" (D2).
+- **Multi-part quoted assertions compile to real checks.**
+  `verify "A", "B" and "C"` compiled to ONE literal no page renders — the
+  flow ran perfectly and green was impossible, at the cost of a full browser
+  run. Entirely-quoted conjunctions now split one check per member; presence
+  phrasing around a single quoted member (`"Acme" logo is present`) asserts
+  the member. Conservative by construction: an `or` stays ONE `any_of`,
+  `verify "Hello, world"` stays one literal, `"…" button is disabled` keeps
+  its whole text, and negations never invert.
+- **Action targets shed their quote delimiters** (D8). `click the "Sign in"
+  button` produced target `"Sign in" button`, which no probed control name
+  can carry; it now reduces to `Sign in`. Only exactly one quoted member plus
+  an optional control noun is reduced — quoted content is data and is never
+  respelled.
+- **The substring matcher is guarded** (D9). Bare bidirectional containment
+  let a control named "e" match nearly every target and "edit" match
+  "credit", so ambiguity blockers named controls with nothing to do with the
+  request — each one an unactionable message and a wasted lap. Containment
+  now requires a 3+ character name and a word boundary (both directions, so
+  "cart" still meets "add to cart"); exact-name matching stays ungated.
+  Candidate lists in blockers and near-miss hints are ranked closest-first
+  before truncation.
+- **`pick` is reachable from prompt mode** (D10). `Pick/Open/Select the "X"
+  result`, `Pick "X" from the results` and `Open the first result` compile
+  to the schema's `{do: pick}` bound to the nearest earlier search — they
+  used to refuse, or worse, silently compile a click on an impossible
+  target. A named selection with no search degrades to a click; an ordinal
+  one is refused by name. The rewrite advice for selection-shaped clauses
+  now offers the action instead of misdirecting to a `verify`.
+
+- **A blocked target is never best-effort bound** (D6). The compiler's
+  fallback (`_find_control`, unguarded) still bound a target the evidence
+  pass had just blocked — the observed artifact tied an enter target named
+  "-" to a quantity stepper, a file an operator could hand-run. A blocked
+  target keeps the author's own wording and mints no POM entry.
+- **Scoping advice tells per-card families from page-level twins** (D5). The
+  repeated-control blocker always advised `within: "<row/card text>"`; on
+  structurally different controls sharing a label (a page-level control plus
+  per-section ones — distinct selector shapes) that advice authored
+  `ready: true` and the run died with "No row containing … found". The
+  per-item family keeps the row-anchor advice; structural twins get honest
+  disambiguation advice instead.
+- **One URL, one env key** (D7). A navigation URL equal to the app's base
+  URL reused to mint a second key (`<APP>_HOME` next to `<APP>` —
+  systematic); it now reuses the app's own key.
+- **Stable, balanced titles** (D4). The scenario title truncates at a label
+  boundary instead of a hard 80-character cut, and never leaves an
+  unbalanced quote in the `Feature:` line or the filename slug.
+
+Still open from the register: probe depth for multi-page transactions
+(Phase 2's last item — the largest remaining source of red-run laps,
+deserves its own ticket).
+
 ## [1.0.0a24] — 2026-07-31
 
 **NOOD_0208** — fix: the probe can walk the flow it is authoring, and the

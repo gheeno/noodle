@@ -157,7 +157,9 @@ def test_ambiguity_names_the_candidate_it_refuses_to_guess():
     blocks = [({"controls": controls, "headings": []}, "initial", None)]
     _, _, _, note = _locate("toy", blocks)
     assert "ambiguous" in note
-    assert 'if you meant "toy blaster"' in note
+    # NOOD_0209 — candidates are ranked closest-first now, not listed in
+    # probe order; the note must still LEAD with a concrete candidate.
+    assert 'if you meant "toy rocket"' in note
 
 
 # --- Fix 6 — compiled POM is pinned to its own feature, never folder-global
