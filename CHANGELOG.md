@@ -4,6 +4,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a31] — 2026-08-02
+
+**NOOD_0216** — feature: the api wok encapsulated and matured. The wok's
+grammar lived inside the web pattern table and its client under
+`agents/web/` — the last trace of the pre-NOOD_0191 "API is a corner of web"
+mislabelling — and three of the seven things a mature API practice needs
+(spec import, evidence, non-JSON messages) didn't exist.
+
+- **Encapsulation — the api wok owns its table and its engine.** The 20 REST
+  pattern rows moved out of `patterns.py` into `resolver/api_patterns.py`
+  (the wok idiom: perf and desktop already had their own tables), consulted
+  BEFORE web in every priority order — REST grammar is namespaced, and the
+  rows historically sat ahead of web's compare catch-alls, which would
+  otherwise steal `the response json 'x' should equal 'y'`. The engine moved
+  to `noodle/agents/api/` (`rest_client.py` transport + `actions.py`
+  protocol logic); `agents/web/rest_client.py` stays as a shim. The runner
+  dispatches `rest_*` through `_execute_rest` beside the other browserless
+  wok families. Session-state contract unchanged.
+- **A spec is an answer: OpenAPI import + suite generation.** `noodle
+  api-scan` / `probe_api` accept an OpenAPI document directly (local
+  `openapi.yaml`/`.json` path or spec URL) — no live server needed — and
+  `--suite` / `suite=True` (`--out FILE` to write) generates a runnable
+  `@api` feature: one scenario per documented operation, expected status
+  from the spec's responses, body hints from its schemas, visible
+  `<placeholders>` + `questions` for whatever the spec doesn't say. This is
+  the "developer sends the spec, Noodle writes the tests" door.
+- **The api log — evidence that was claimed but never written.** The wok
+  registry said evidence is "the recorded request/response pair on the
+  Allure step"; no code wrote it and `@api` scenarios attached nothing. The
+  runner now records every REST call (method, URL, status, bodies capped at
+  2 KB, 200 calls per scenario) and `after_scenario` attaches the transcript
+  as the `api log` — value-scrubbed like the web network log.
+- **Every message shape.** `with form body 'a=1&b=2'` (form-encoded, that
+  call only), `uploading the file 'f.png' as 'photo'` (real
+  multipart/form-data via a stdlib encoder), `performs a graphql query at
+  '/graphql':` + docstring (wrapped into `{"query": ...}`) with `the
+  response should have no graphql errors` as the gate a 200-with-errors
+  response walks past, and a per-scenario per-host cookie jar filled from
+  Set-Cookie automatically (Postman behaviour; `clears the rest cookies`
+  resets; an explicit Cookie header wins). Docstring bodies can store the
+  response — also the escape hatch for payloads containing a single quote.
+- **Goal parity.** The goal `api` action takes `timeout` ("within N
+  seconds") and `wait_until: {status, contains?}` — compiles to the
+  `rest_wait_until` polling step, and the wait IS the assertion — and
+  checks take `schema: 'schemas/x.json'` (`rest_assert_schema`). Async
+  endpoints and contract checks no longer force hand-written
+  `feature_content`.
+- **The workspace scaffolds the api wok.** `noodle init` ships
+  `sample_api/features/api_smoke.feature` (chaining + typed-JSON template,
+  pointer to spec-driven generation) and a per-app
+  `resources/environments.yaml` — a fresh workspace previously carried zero
+  API artifacts.
+
 ## [1.0.0a30] — 2026-08-01
 
 **NOOD_0215** — fix: observability is noodle commands only, and the engine

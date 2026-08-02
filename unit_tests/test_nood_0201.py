@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from noodle.orchestrator import runner
-from noodle.resolver import patterns
+from noodle.resolver import api_patterns as patterns
 
 
 class _Row:
@@ -36,7 +36,7 @@ def _ctx(table=None, text=None):
 
 def _fake_rest(monkeypatch, reply=(201, '{"ok": true}', {})):
     """Record every outgoing call; return a fixed reply (or a callable)."""
-    from noodle.agents.web import rest_client
+    from noodle.agents.api import rest_client
     calls = []
 
     def fake(method, url, body=None, headers=None, timeout=None):
@@ -66,7 +66,8 @@ def test_batch_patterns_match():
                               "body": '{"n":"Row {i}"}', "count": 20,
                               "expect": 201, "timeout": None})
     assert patterns.match("performs a POST call at '/g' with this body:") == \
-        ("rest_call_doc", {"method": "POST", "path": "/g", "timeout": None})
+        ("rest_call_doc", {"method": "POST", "path": "/g", "var": None,
+                           "timeout": None})
     # per-step budget still composes (NOOD_0182)
     assert patterns.match(
         "performs a GET call at '/slow' repeated 3 times within 90 seconds") == \
@@ -246,7 +247,7 @@ SPEC = {
 def _fake_server(monkeypatch, spec=SPEC, root_ctype="application/json",
                  server="test-server"):
     from noodle import api_probe
-    from noodle.agents.web import rest_client
+    from noodle.agents.api import rest_client
 
     def fake(method, url, body=None, headers=None, timeout=None):
         if url.endswith("/v3/api-docs") and spec is not None:
@@ -284,7 +285,7 @@ def test_probe_without_spec_asks_instead_of_guessing(monkeypatch):
 
 def test_probe_dead_host_is_an_error(monkeypatch):
     from noodle import api_probe
-    from noodle.agents.web import rest_client
+    from noodle.agents.api import rest_client
     monkeypatch.setattr(rest_client, "rest_call",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("refused")))
     out = api_probe.probe("http://127.0.0.1:8080")
@@ -311,7 +312,7 @@ def test_discover_nothing_listening_asks(monkeypatch):
 
 def test_discover_filters_airplay_and_flags_ambiguity(monkeypatch):
     from noodle import api_probe
-    from noodle.agents.web import rest_client
+    from noodle.agents.api import rest_client
 
     def fake(method, url, body=None, headers=None, timeout=None):
         if ":5000" in url:
@@ -574,7 +575,8 @@ def test_wait_until_returns_on_the_first_satisfying_response(monkeypatch):
     calls = _fake_rest(monkeypatch,
                        reply=lambda n: (200, '{"state":"done"}', {})
                        if n >= 3 else (404, "not yet", {}))
-    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+    from noodle.agents.api import actions as api_actions
+    monkeypatch.setattr(api_actions.time, "sleep", lambda s: None)
     ctx = _ctx()
     runner.execute_step(
         "waits until a GET call at 'http://api/jobs/1' returns status 200 "
@@ -585,7 +587,8 @@ def test_wait_until_returns_on_the_first_satisfying_response(monkeypatch):
 
 def test_wait_until_gives_up_with_the_budget_named(monkeypatch):
     _fake_rest(monkeypatch, reply=(503, "unavailable", {}))
-    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+    from noodle.agents.api import actions as api_actions
+    monkeypatch.setattr(api_actions.time, "sleep", lambda s: None)
     with pytest.raises(AssertionError,
                        match=r"never returned status 200 within 2s.*"
                              r"Last: 503"):

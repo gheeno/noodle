@@ -190,7 +190,7 @@ def test_web_step_without_browser_fails_clearly():
 
 
 def test_rest_step_without_browser_is_allowed(monkeypatch):
-    from noodle.agents.web import rest_client
+    from noodle.agents.api import rest_client
     monkeypatch.setattr(rest_client, "rest_call",
                         lambda m, u, b=None, h=None, t=None: (200, '{"ok": true}', {}))
     ctx = _api_ctx()
@@ -210,13 +210,15 @@ def test_api_before_scenario_skips_browser(monkeypatch):
 # --- REST auth ------------------------------------------------------------------
 
 def test_auth_patterns():
-    assert patterns.match("sets the bearer token to 'tok123'") == \
+    # NOOD_0216 — the REST grammar lives in the api wok's own table now.
+    from noodle.resolver import api_patterns
+    assert api_patterns.match("sets the bearer token to 'tok123'") == \
         ("rest_set_auth", {"scheme": "bearer", "token": "tok123"})
-    assert patterns.match("uses basic auth with 'bob' and 'pw'") == \
+    assert api_patterns.match("uses basic auth with 'bob' and 'pw'") == \
         ("rest_set_auth", {"scheme": "basic", "user": "bob", "password": "pw"})
-    assert patterns.match("sets the api key header 'X-Api-Key' to 'k1'") == \
+    assert api_patterns.match("sets the api key header 'X-Api-Key' to 'k1'") == \
         ("rest_set_header", {"name": "X-Api-Key", "value": "k1"})
-    assert patterns.match(
+    assert api_patterns.match(
         "fetches an oauth2 token from 'https://auth/token' with client 'id1' and secret 's1'") == \
         ("rest_oauth2", {"url": "https://auth/token", "client_id": "id1",
                          "client_secret": "s1"})
@@ -232,7 +234,7 @@ def test_bearer_and_basic_auth_set_authorization_header():
 
 
 def test_oauth2_fetch_and_401_refresh_retry(monkeypatch):
-    from noodle.agents.web import rest_client
+    from noodle.agents.api import rest_client
     log = []
 
     def fake_rest_call(method, url, body=None, headers=None, timeout=None):

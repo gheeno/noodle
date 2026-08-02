@@ -65,17 +65,19 @@ def test_mobile_emulation_precedence_agrees_with_appium_platform():
 
 
 def test_pattern_priority_is_tag_aware():
-    # The scenario's wok gets first claim on its own step grammar; no tags →
-    # web-first best guess (the pre-wok behavior).
-    assert wok.pattern_priority(None) == ("web", "performance", "desktop")
-    assert wok.pattern_priority([]) == ("web", "performance", "desktop")
-    assert wok.pattern_priority(["web", "smoke"]) == ("web", "performance", "desktop")
-    assert wok.pattern_priority(["perf"]) == ("performance", "web", "desktop")
-    assert wok.pattern_priority(["windows"]) == ("desktop", "web", "performance")
-    assert wok.pattern_priority(["mac"]) == ("desktop", "web", "performance")
-    # Mobile scenarios keep web-first — the Appium step family resolves via
+    # The scenario's wok gets first claim on its own step grammar. NOOD_0216:
+    # the api table precedes web in EVERY order — REST grammar is namespaced
+    # and historically sat mid-web-table, before web's compare catch-alls.
+    assert wok.pattern_priority(None) == ("api", "web", "performance", "desktop")
+    assert wok.pattern_priority([]) == ("api", "web", "performance", "desktop")
+    assert wok.pattern_priority(["web", "smoke"]) == ("api", "web", "performance", "desktop")
+    assert wok.pattern_priority(["api"]) == ("api", "web", "performance", "desktop")
+    assert wok.pattern_priority(["perf"]) == ("performance", "api", "web", "desktop")
+    assert wok.pattern_priority(["windows"]) == ("desktop", "api", "web", "performance")
+    assert wok.pattern_priority(["mac"]) == ("desktop", "api", "web", "performance")
+    # Mobile scenarios keep web-next — the Appium step family resolves via
     # the web table's verbs (click/fill/swipe...), it has no table of its own.
-    assert wok.pattern_priority(["appium", "android"]) == ("web", "performance", "desktop")
+    assert wok.pattern_priority(["appium", "android"]) == ("api", "web", "performance", "desktop")
 
 
 def test_installed_probe_never_imports():

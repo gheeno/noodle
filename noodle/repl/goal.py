@@ -103,9 +103,14 @@ _ACTION_KEYS = {"search": {"do", "id", "term"},
                 # used to drop to hand-written feature_content: a protected
                 # endpoint, a content type, and chaining an id from one
                 # response into the next call's URL.
+                # NOOD_0216 — `timeout` ("within N seconds"), and `wait_until`
+                # ({status, contains?}): the action compiles to the polling
+                # step alone (rest_wait_until issues the calls itself), which
+                # closes the async-endpoint gap goals used to drop to
+                # feature_content for.
                 "api": {"do", "id", "method", "url", "body",
                         "rows", "repeat", "expect_status",
-                        "headers", "auth", "store"}}
+                        "headers", "auth", "store", "timeout", "wait_until"}}
 _ACTION_REQUIRED = {"search": {"term"}, "suggest": {"term", "option"},
                     "pick": set(), "click": {"target"},
                     # NOOD_0207 — `item_from` left the required set: it is one
@@ -149,7 +154,7 @@ _TARGETED_ACTIONS = ("click", "enter", "select", "check", "uncheck",
 _CHECK_KEYS = {"see", "count", "any_of", "field", "value", "min", "name",
                "after", "item_in_destination", "expected_from", "evidence",
                "not_see", "url_contains", "status", "response_contains",
-               "json", "equals", "contains", "items",
+               "json", "equals", "contains", "items", "schema",
                # NOOD_0211 — the PAGE's own HTTP status (web), as distinct
                # from "status" which is the REST wok's last-call status.
                "page_status"}
@@ -159,9 +164,11 @@ _CHECK_KEYS = {"see", "count", "any_of", "field", "value", "min", "name",
 # NOOD_0201 — "json": a typed assertion on the response body ({json: <dotted
 # path>} plus exactly one of equals/contains/items) — substring checks can't
 # tell "count": 20 from "count": 200.
+# NOOD_0216 — "schema": the whole response validated against a JSON Schema
+# file in the app's resources/ (rest_assert_schema — shape, not substrings).
 _CHECK_KINDS = ("see", "not_see", "count", "any_of", "field",
                 "item_in_destination", "url_contains", "status",
-                "response_contains", "json", "page_status")
+                "response_contains", "json", "page_status", "schema")
 # NOOD_0163 — the landing-page anchor. NOOD_0158 made an unanchored check
 # observe the END state, which is right for the outcome but left a check on
 # text the LANDING page shows with nowhere to go: it compiled after the
@@ -360,7 +367,8 @@ def normalize(goal) -> tuple[dict, list[str]]:
                 continue
             c = dict(c)
             # NOOD_0192 — bind the api assertion to the sole api call.
-            if ("status" in c or "response_contains" in c or "json" in c) \
+            if ("status" in c or "response_contains" in c or "json" in c
+                    or "schema" in c) \
                     and c.get("after") is None and api_id:
                 c["after"] = api_id
                 notes.append(f"api check anchored after {api_id!r} (the "
@@ -578,6 +586,32 @@ def validate(goal) -> list[str]:
                         or not 100 <= es <= 599:
                     errs.append(f"actions[{i}] (api): expect_status must be "
                                 "an HTTP status code (an integer, 100-599)")
+            # NOOD_0216 — per-call budget and polling.
+            to = a.get("timeout")
+            if to is not None and (isinstance(to, bool)
+                                   or not isinstance(to, (int, float))
+                                   or not 0 < to <= 3600):
+                errs.append(f"actions[{i}] (api): timeout must be seconds "
+                            "(a number, 0 < t <= 3600)")
+            wu = a.get("wait_until")
+            if wu is not None:
+                if any(a.get(k) is not None for k in
+                       ("body", "rows", "repeat", "expect_status", "store")):
+                    errs.append(f"actions[{i}] (api): wait_until is the whole "
+                                "action (it polls the url itself) — drop "
+                                "body/rows/repeat/expect_status/store")
+                elif not isinstance(wu, dict) or set(wu) - {"status", "contains"} \
+                        or "status" not in wu:
+                    errs.append(f"actions[{i}] (api): wait_until must be "
+                                "{status: <code>, contains?: '<text>'}")
+                elif not isinstance(wu["status"], int) \
+                        or isinstance(wu["status"], bool) \
+                        or not 100 <= wu["status"] <= 599:
+                    errs.append(f"actions[{i}] (api): wait_until.status must "
+                                "be an HTTP status code (an integer, 100-599)")
+                elif "contains" in wu and not _clean_val(wu["contains"]):
+                    errs.append(f"actions[{i}] (api): wait_until.contains "
+                                "must be a string free of single quotes")
         aid = a.get("id")
         if aid is not None:
             if aid in ids:
@@ -659,13 +693,20 @@ def validate(goal) -> list[str]:
             errs.append(f"checks[{i}]: expected_from only applies to "
                         "item_in_destination checks — a count/see check "
                         "cannot claim item identity")
-        if kind in ("status", "response_contains", "json") and \
+        if kind in ("status", "response_contains", "json", "schema") and \
                 not any(isinstance(a, dict) and a.get("do") == "api"
                         for a in actions):
             # NOOD_0192 — an api assertion with no api action asserts against
             # whatever response happened to be last, which is nothing.
             errs.append(f"checks[{i}]: {kind} needs an api action in the "
                         "goal — there is no response to assert against")
+        if kind == "schema" and (not isinstance(c["schema"], str)
+                                 or not c["schema"].strip()
+                                 or "'" in c["schema"]):
+            # NOOD_0216 — a path into the app's resources/, single-quote free
+            # (it delimits the compiled step).
+            errs.append(f"checks[{i}]: schema must be a file path in the "
+                        "app's resources/ (e.g. 'schemas/review.json')")
         if kind == "json":
             # NOOD_0201 — exactly one comparator per json check.
             ops = [k for k in ("equals", "contains", "items") if k in c]
@@ -761,7 +802,7 @@ def needs_browser(goal: dict) -> bool:
     return (not actions
             or bool(goal.get("navigation"))
             or any(a.get("do") != "api" for a in actions)
-            or any(not ({"status", "response_contains", "json"} & set(c))
+            or any(not ({"status", "response_contains", "json", "schema"} & set(c))
                    for c in checks))
 
 
@@ -2086,9 +2127,11 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
         gate = None
     captions = {k: v["caption"] for k, v in bound.items()}
     for i, c in enumerate(goal.get("checks") or []):
-        if "status" in c or "response_contains" in c or "json" in c:
+        if "status" in c or "response_contains" in c or "json" in c \
+                or "schema" in c:
             # NOOD_0192 — same reason as the api action: runtime-proven by
-            # the REST client, never by the page probe (json: NOOD_0201).
+            # the REST client, never by the page probe (json: NOOD_0201,
+            # schema: NOOD_0216).
             runtime.append(_check_step(c)[0])
             continue
         if "item_in_destination" in c:
@@ -2410,8 +2453,11 @@ def infer_postcondition(goal: dict, ev: dict) -> dict:
 
     if do == "api":
         # NOOD_0201 — a batch with expect_status asserts EVERY call already;
-        # nothing to generate, nothing to block.
+        # nothing to generate, nothing to block. NOOD_0216 — wait_until IS
+        # the assertion (the polling step fails if the condition never holds).
         if (last.get("rows") or last.get("repeat")) and last.get("expect_status"):
+            return out
+        if last.get("wait_until"):
             return out
         # NOOD_0192 — an unasserted API call proves nothing: a 500 with a
         # body is still "a call that happened". The postcondition is the
@@ -2603,10 +2649,10 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
         elif kind == "item_in_destination":
             cap = bound.get(c.get("expected_from", ""), {}).get("caption", "")
             ok = bool(cap) and any(cap in s for s in runtime)
-        elif kind in ("status", "response_contains", "json"):
+        elif kind in ("status", "response_contains", "json", "schema"):
             # NOOD_0192 — proven by the REST client at run time; it must
             # appear verbatim in the runtime-asserted list (json: NOOD_0201,
-            # keyed on its path).
+            # keyed on its path; schema: NOOD_0216, keyed on its file).
             ok = any(str(c[kind]) in s for s in runtime)
         else:
             ok = f"any_of[{i}]" in proven or bool(runtime)
@@ -2619,7 +2665,7 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
                  "terms": terms,
                  "evidence": (("runtime:rest-client"
                                if kind in ("status", "response_contains",
-                                           "json")
+                                           "json", "schema")
                                else "probe+runtime") if ok else "missing"),
                  "ok": bool(ok)}
         if c.get("evidence") == "screenshot":
@@ -2723,6 +2769,10 @@ def _check_step(c: dict, captions: dict | None = None) -> tuple[str, str | None]
             body = (f"the response json '{c['json']}' should equal "
                     f"'{c['equals']}'")
         pom = None
+    elif "schema" in c:
+        # NOOD_0216 — the whole response validated against a JSON Schema file
+        # in the app's resources/ (rest_assert_schema).
+        body, pom = f"the response should match the schema '{c['schema']}'", None
     elif "page_status" in c:
         # NOOD_0211 — "assert the UI page returns 200", a routine AC that used
         # to compile to a literal-text assertion on the sentence itself
@@ -2812,6 +2862,18 @@ def _action_step(a: dict, target: str) -> str:
     if do == "go_back":
         return "User goes back"
     if do == "api":
+        # NOOD_0216 — "within N seconds" rides any REST step (NOODLE_REST_TIMEOUT
+        # otherwise), and wait_until IS the whole action: rest_wait_until polls
+        # the url itself, so no separate call step is emitted.
+        within = (f" within {a['timeout']:g} seconds" if a.get("timeout")
+                  else "")
+        wu = a.get("wait_until")
+        if wu:
+            contains = (f" and the body contains '{wu['contains']}'"
+                        if wu.get("contains") else "")
+            return (f"waits until a {str(a.get('method', 'GET')).upper()} "
+                    f"call at '{a['url']}' returns status {wu['status']}"
+                    + contains + within)
         # NOOD_0192 — rest_call. The url may be absolute or a path relative to
         # {var:REST_BASE_URL}; both are the same step.
         step = (f"performs a {str(a.get('method', 'GET')).upper()} call at "
@@ -2823,10 +2885,10 @@ def _action_step(a: dict, target: str) -> str:
         expect = (f" expecting status {a['expect_status']}"
                   if a.get("expect_status") else "")
         if a.get("rows"):
-            return step + " for each row" + expect + ":"
+            return step + " for each row" + expect + within + ":"
         if a.get("repeat"):
-            return step + f" repeated {a['repeat']} times" + expect
-        return step
+            return step + f" repeated {a['repeat']} times" + expect + within
+        return step + within
     raise ValueError(
         f"_action_step has no branch for do={do!r} — add one (a silent "
         "fallthrough would compile a wrong-but-matching step)")

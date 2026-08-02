@@ -5,6 +5,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from .api_patterns import match as api_match
 from .desktop_patterns import match as desktop_match
 from .patterns import match as pattern_match
 from .patterns import normalize_phrasing, normalize_subject
@@ -225,6 +226,8 @@ VALID_TYPES = frozenset({
     'rest_wait_until', 'rest_assert_schema',
     # NOOD_0007 — REST auth sugar + OAuth2 client-credentials
     'rest_set_auth', 'rest_oauth2',
+    # NOOD_0216 — api wok: GraphQL sugar, multipart upload, cookie-jar reset
+    'rest_graphql', 'rest_assert_graphql', 'rest_upload', 'rest_clear_cookies',
     # NOOD_0008 — JS dialogs, upload/download, multi-value select
     'arm_dialog', 'assert_dialog_text', 'upload', 'assert_download',
     'select_multi',
@@ -303,14 +306,17 @@ VALID_TYPES = frozenset({
 LLM_FORBIDDEN_TYPES = frozenset({'run_command', 'run_script', 'call_function'})
 
 
-# NOOD_0155 — the three pattern tables that share execute_step's dispatch,
-# keyed by wok name. wok.pattern_priority(tags) orders them per scenario: the
+# NOOD_0155 — the pattern tables that share execute_step's dispatch, keyed by
+# wok name. wok.pattern_priority(tags) orders them per scenario: the
 # scenario's own wok gets first claim on its grammar; with no routing tags
 # the best guess is web-first (the pre-wok behavior, and what a bare
 # `resolve(text)` call still does). @visual is a separate table/runner and
-# never consults these.
+# never consults these. NOOD_0216 — the api wok's table joined; it sits right
+# after web in every non-@api order, so REST steps stay resolvable in every
+# scenario (plain I/O, the wok's founding contract).
 _TABLES = {
     'web': pattern_match,
+    'api': api_match,
     'performance': perf_match,
     'desktop': desktop_match,
 }

@@ -1400,94 +1400,9 @@ PATTERNS = [
     (r'^the ["\']?(.+?)["\']?(?: (?:button|field|input|box|link|checkbox|element|icon|dropdown|menu|banner|label|heading))? should have (?:the )?(?:css|style) ["\'](.+?)["\'] (?:of|=|equal to|as|with value) ["\'](.+?)["\']$',
                                                    'assert_css',      lambda m: {'locator': _q(m.group(1)), 'prop': _q(m.group(2)), 'value': _q(m.group(3))}),
 
-    # --- REST testing (NOOD_0029) — proper HTTP client assertions --------------
-    # Set a per-session request header (stored in _REST_HEADERS var).
-    (r"^sets? (?:a |an )?request header '([^']+)' to '([^']+)'$",
-                                                   'rest_set_header',        lambda m: {'name': m.group(1), 'value': m.group(2)}),
-    # Auth sugar (NOOD_0007) — best-practice auth without hand-building headers.
-    # Values come through '[VAR]' substitution so secrets stay out of features;
-    # Authorization is never logged (runner logs only method/url/status).
-    (r"^sets? the bearer token to '([^']+)'$",
-                                                   'rest_set_auth',          lambda m: {'scheme': 'bearer', 'token': m.group(1)}),
-    (r"^uses? basic auth with '([^']+)' and '([^']+)'$",
-                                                   'rest_set_auth',          lambda m: {'scheme': 'basic', 'user': m.group(1), 'password': m.group(2)}),
-    (r"^sets? the api key header '([^']+)' to '([^']+)'$",
-                                                   'rest_set_header',        lambda m: {'name': m.group(1), 'value': m.group(2)}),
-    (r"^fetch(?:es)? an oauth2 token from '([^']+)' with client '([^']+)' and secret '([^']+)'$",
-                                                   'rest_oauth2',            lambda m: {'url': m.group(1), 'client_id': m.group(2), 'client_secret': m.group(3)}),
-    # HTTP call: method + path (required) + optional body + optional var store.
-    # Path can be absolute (http...) or relative (prepends REST_BASE_URL).
-    (r"^performs? (?:a |an )?(GET|POST|PUT|PATCH|DELETE) (?:call|request) "
-     r"(?:at|to|on) '([^']+)'"
-     r"(?: with (?:request )?body '([^']+)')?"
-     r"(?: (?:and )?stor(?:e|es|ing) (?:the )?(?:response )?(?:as|in) [\[`]([^\]`]+)[\]`])?"
-     + _WITHIN + r"$",
-                                                   'rest_call',              lambda m: {'method': m.group(1).upper(), 'path': m.group(2), 'body': m.group(3), 'var': m.group(4), 'timeout': _secs(m.group(5))}),
-    # NOOD_0201 — batch calls: one step, N requests. Seeding 20 rows is one
-    # table step (or one `repeated N times` line), never 20 pasted calls —
-    # and `expecting status` asserts EVERY call, where a trailing status
-    # assertion only ever saw the last one. Table headings name the {placeholder}
-    # tokens substituted into the path and body per row.
-    (r"^performs? (?:a |an )?(GET|POST|PUT|PATCH|DELETE) (?:call|request)s? "
-     r"(?:at|to|on) '([^']+)'"
-     r"(?: with (?:request )?body '([^']+)')?"
-     r" for each row(?: expecting status (\d+))?"
-     + _WITHIN + r":?$",
-                                                   'rest_call_each',         lambda m: {'method': m.group(1).upper(), 'path': m.group(2), 'body': m.group(3), 'expect': int(m.group(4)) if m.group(4) else None, 'timeout': _secs(m.group(5))}),
-    (r"^performs? (?:a |an )?(GET|POST|PUT|PATCH|DELETE) (?:call|request)s? "
-     r"(?:at|to|on) '([^']+)'"
-     r"(?: with (?:request )?body '([^']+)')?"
-     r" repeated (\d+) times(?: expecting status (\d+))?"
-     + _WITHIN + r"$",
-                                                   'rest_call_repeat',       lambda m: {'method': m.group(1).upper(), 'path': m.group(2), 'body': m.group(3), 'count': int(m.group(4)), 'expect': int(m.group(5)) if m.group(5) else None, 'timeout': _secs(m.group(6))}),
-    # NOOD_0201 — a payload that doesn't fit on one line reads as a docstring.
-    (r"^performs? (?:a |an )?(GET|POST|PUT|PATCH|DELETE) (?:call|request) "
-     r"(?:at|to|on) '([^']+)' with this (?:request )?body"
-     + _WITHIN + r":?$",
-                                                   'rest_call_doc',          lambda m: {'method': m.group(1).upper(), 'path': m.group(2), 'timeout': _secs(m.group(3))}),
-    # NOOD_0201 — polling. An async backend answers 202 and finishes the write
-    # later, so the very next assertion raced it and the suite went flaky. This
-    # is the REST twin of the web wok's smart wait: retry the call until the
-    # condition holds or the budget expires (the budget is a ceiling, not a
-    # sleep — it returns the instant the condition is met).
-    (r"^waits? until (?:a |an )?(?:(GET|POST|PUT|PATCH|DELETE) )?"
-     r"(?:(?:call|request)s? )?(?:(?:at|to|on) )?'([^']+)' returns? status (\d+)"
-     r"(?: and (?:the )?(?:response )?body contains '([^']+)')?"
-     + _WITHIN + r"$",
-                                                   'rest_wait_until',        lambda m: {'method': (m.group(1) or 'GET').upper(), 'path': m.group(2), 'expected': int(m.group(3)), 'needle': m.group(4), 'timeout': _secs(m.group(5))}),
-    # Status code assertion.
-    (r'^the response status(?: code)? should (?:be|equal) (\d+)$',
-                                                   'rest_assert_status',     lambda m: {'expected': int(m.group(1))}),
-    # NOOD_0201 — contract assertion: the response SHAPE, not one value. A
-    # field that silently changed type or vanished passes every substring
-    # check ever written; a schema file catches it in one step.
-    (r"^the response (?:body )?should match (?:the )?schema '([^']+)'$",
-                                                   'rest_assert_schema',     lambda m: {'file': m.group(1)}),
-    # Extract a JSON key from the latest response body into a named variable.
-    (r"^extracts? (?:json )?(?:key )?'([^']+)' from (?:the )?(?:response|REST_BODY)(?: body)? "
-     r"(?:and )?stor(?:e|es|ing) (?:it )?(?:as|in) [\[`]([^\]`]+)[\]`]$",
-                                                   'rest_extract_json',  lambda m: {'key': m.group(1), 'var': m.group(2)}),
-    # Body contains a single string (key or value).
-    (r"^the response body should contain '([^']+)'$",
-                                                   'rest_assert_body',       lambda m: {'needle': m.group(1)}),
-    # NOOD_0201 — typed JSON assertions: substring checks can't tell
-    # "count": 20 from "count": 200, or the string "true" from the boolean.
-    # Path is the rest_extract_json dotted/indexed walk; '$' means the root.
-    (r"^the response json '([^']*)' should (?:be|equal) '([^']*)'$",
-                                                   'rest_assert_json',       lambda m: {'path': m.group(1), 'op': 'equal', 'expected': m.group(2)}),
-    (r"^the response json '([^']*)' should contain '([^']+)'$",
-                                                   'rest_assert_json',       lambda m: {'path': m.group(1), 'op': 'contain', 'expected': m.group(2)}),
-    (r"^the response json '([^']*)' should have (\d+) items?$",
-                                                   'rest_assert_json_count', lambda m: {'path': m.group(1), 'count': int(m.group(2))}),
-    # Body contains — table driven (Key / Value rows; empty Value = key-exists check).
-    (r'^the response body should contain:?$',
-                                                   'rest_assert_body_table', lambda m: {}),
-    # Single header assertion.
-    (r"^the response header '([^']+)' should (?:be|equal|contain) '([^']+)'$",
-                                                   'rest_assert_header',     lambda m: {'name': m.group(1), 'value': m.group(2)}),
-    # Headers — table driven (Header / Value rows).
-    (r'^the response headers? should contain:?$',
-                                                   'rest_assert_header_table', lambda m: {}),
+    # NOOD_0216 — the REST step family moved to its own wok table:
+    # resolver/api_patterns.py (consulted right after this one everywhere,
+    # first inside @api — wok.pattern_priority).
 
     # --- Phase M (F8) — console & network error visibility --------------------
     (r'^no console errors? should (?:be logged|occur|appear)$',

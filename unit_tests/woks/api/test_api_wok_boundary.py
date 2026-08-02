@@ -44,7 +44,7 @@ def test_rest_steps_carry_no_playwright_import():
     """A browserless suite must be installable without browsers."""
     import inspect
 
-    from noodle.agents.web import rest_client
+    from noodle.agents.api import rest_client
     assert "playwright" not in inspect.getsource(rest_client).lower()
 
 

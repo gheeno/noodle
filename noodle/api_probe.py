@@ -28,7 +28,7 @@ import re
 import socket
 from pathlib import Path
 
-from noodle.agents.web import rest_client
+from noodle.agents.api import rest_client
 from noodle.repo_scan import _ignored_dirs, _iter_files, _read, endpoints_from_doc
 
 # Where dev servers actually live: node (3000/5173/4200), flask (5000),
@@ -117,9 +117,127 @@ def _suggested_steps(base: str, doc: dict) -> list[str]:
     return steps[:_CAP + 5]
 
 
-def probe(base_url: str) -> dict:
+def _spec_from_source(source: str):
+    """NOOD_0216 — (label, doc) when `source` IS an OpenAPI document: a local
+    openapi.json/.yaml path, or a URL that answers with the document itself.
+    This is the "developer sends the spec" door — no live server required."""
+    p = Path(source)
+    if p.is_file():
+        doc = _parse_spec(p.name, p.read_text(encoding="utf-8"))
+        if isinstance(doc, dict) and ("openapi" in doc or "swagger" in doc):
+            return str(p), doc
+        return None
+    if source.startswith("http"):
+        r = _get(source)
+        if r and r[0] == 200:
+            doc = _parse_spec(source.split("?")[0], r[1])
+            if isinstance(doc, dict) and ("openapi" in doc or "swagger" in doc):
+                return source, doc
+    return None
+
+
+def _base_from_doc(doc: dict) -> str:
+    """The spec's own idea of where it is served, if absolute."""
+    servers = doc.get("servers")
+    if isinstance(servers, list) and servers:
+        url = str((servers[0] or {}).get("url") or "")
+        if url.startswith("http"):
+            return url.rstrip("/")
+    host = doc.get("host")                      # swagger 2.0
+    if host:
+        scheme = (doc.get("schemes") or ["http"])[0]
+        return f"{scheme}://{host}{doc.get('basePath', '')}".rstrip("/")
+    return ""
+
+
+def _expected_status(op: dict) -> int:
+    """The op's first documented 2xx, else 200."""
+    for code in sorted(str(k) for k in (op.get("responses") or {})):
+        if code.startswith("2") and code.isdigit():
+            return int(code)
+    return 200
+
+
+_SUITE_CAP = 25                 # scenarios per generated feature (payload budget)
+_PLACEHOLDER = re.compile(r"<[a-z_][a-z0-9_]*>|<value>", re.IGNORECASE)
+
+
+def suite_from_doc(doc: dict, base: str = "") -> tuple[str, int, list[str]]:
+    """NOOD_0216 — a runnable @api feature from an OpenAPI document: one
+    scenario per operation, expected status from the spec's responses, body
+    hints from its schemas. Returns (feature_content, omitted, questions).
+
+    Nothing is guessed: path params become <param> placeholders and body
+    hints keep their <type> markers — both come back as `questions`, the
+    same visible-placeholder convention as ticket authoring (NOOD_0201)."""
+    ops = []
+    for route, item in (doc.get("paths") or {}).items():
+        if not isinstance(item, dict):
+            continue
+        for method, op in item.items():
+            m = str(method).upper()
+            if m not in ("GET", "POST", "PUT", "PATCH", "DELETE") \
+                    or not isinstance(op, dict):
+                continue
+            ops.append((m, route, _expected_status(op),
+                        _body_hint(doc, op), str(op.get("summary") or "")))
+    omitted = max(0, len(ops) - _SUITE_CAP)
+    ops = ops[:_SUITE_CAP]
+    title = str((doc.get("info") or {}).get("title") or "API")
+    base_line = (f"Given sets {{var:REST_BASE_URL}} to '{base}'" if base else
+                 "Given sets {var:REST_BASE_URL} to '{env:API_BASE_URL}'")
+    lines = ["@api", f"Feature: {title} — generated from the OpenAPI document",
+             "", "  Background:", f"    {base_line}", ""]
+    needs_values = []
+    for m, route, status, hint, summary in ops:
+        path = re.sub(r"\{([^}]+)\}", r"<\1>", route)   # {id} → <id>: a visible ask
+        body = f" with body '{hint}'" if hint and m in ("POST", "PUT", "PATCH") else ""
+        name = f"{m} {route}" + (f" — {summary}" if summary else "")
+        if _PLACEHOLDER.search(path + (hint or "")):
+            needs_values.append(f"{m} {route}")
+        lines += [f"  Scenario: {name}",
+                  f"    When performs a {m} call at '{path}'{body}",
+                  f"    Then the response status should be {status}", ""]
+    questions = []
+    if not base:
+        questions.append("the spec names no absolute server URL — set "
+                         "API_BASE_URL (environments.yaml/.env) or pass the "
+                         "base URL")
+    if needs_values:
+        questions.append(
+            f"{len(needs_values)} scenario(s) carry <placeholders> the spec "
+            f"didn't exemplify (path params / request bodies) — fill them "
+            f"before running: {', '.join(needs_values[:_CAP])}")
+    return "\n".join(lines), omitted, questions
+
+
+def probe(base_url: str, suite: bool = False) -> dict:
     """One server, fully interrogated: liveness, spec, endpoints, copy-ready
-    steps. `questions` carries whatever discovery could not settle."""
+    steps. `questions` carries whatever discovery could not settle.
+
+    NOOD_0216 — `base_url` may also be an OpenAPI document itself (a local
+    file path or a direct URL to one): the same report comes straight off
+    the spec, no live server needed. `suite=True` adds `feature_content`,
+    a runnable @api feature covering the documented operations."""
+    direct = _spec_from_source(base_url)
+    if direct:
+        label, doc = direct
+        base = _base_from_doc(doc)
+        eps = endpoints_from_doc(doc)
+        out = {"ok": True, "base_url": base or None, "spec_url": label,
+               "title": str((doc.get("info") or {}).get("title") or ""),
+               "endpoints": eps[:_CAP * 4], "endpoints_total": len(eps),
+               "suggested_steps": _suggested_steps(base, doc) if base else [],
+               "questions": []}
+        if not base:
+            out["questions"].append(
+                "the spec names no absolute server URL — which base URL "
+                "should the tests target?")
+        if suite:
+            content, omitted, qs = suite_from_doc(doc, base)
+            out.update(feature_content=content, suite_omitted=omitted)
+            out["questions"] += qs
+        return out
     base = base_url.rstrip("/")
     root = _get(base + "/")
     if root is None:
@@ -139,6 +257,10 @@ def probe(base_url: str) -> dict:
                    endpoints_total=len(eps),
                    title=str((doc.get("info") or {}).get("title") or ""),
                    suggested_steps=_suggested_steps(base, doc))
+        if suite:
+            content, omitted, qs = suite_from_doc(doc, base)
+            out.update(feature_content=content, suite_omitted=omitted)
+            out["questions"] += qs
     else:
         out["questions"].append(
             f"no OpenAPI document answered on {base} (tried "

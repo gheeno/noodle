@@ -1942,7 +1942,7 @@
     "/api/tools/probe_api": {
       "post": {
         "summary": "NOOD_0201 \u2014 live API discovery, the api wok's probe_page.",
-        "description": "NOOD_0201 \u2014 live API discovery, the api wok's probe_page.\n\nWith base_url: interrogate ONE server \u2014 liveness, its OpenAPI document\nfrom the well-known routes (/openapi.json, /v3/api-docs, ...), the REAL\nendpoint list (the fix for authoring POST /greeting when the app serves\n/greeting/new), request-body hints from the schema, and copy-ready steps.\n\nWithout base_url: sweep the well-known localhost ports (plus any the\nworkspace repo's own config names \u2014 server.port, compose mappings, PORT=)\nand report every live HTTP server with an api-shaped verdict. Exactly one\napi candidate is an answer author_test adopts automatically; anything\nelse comes back in `questions`. Loopback only; nothing is guessed.\n\nCall it when an API test request arrives with little or no context: the\nendpoints and base URL it returns ARE the missing context.",
+        "description": "NOOD_0201 \u2014 live API discovery, the api wok's probe_page.\n\nWith base_url: interrogate ONE server \u2014 liveness, its OpenAPI document\nfrom the well-known routes (/openapi.json, /v3/api-docs, ...), the REAL\nendpoint list (the fix for authoring POST /greeting when the app serves\n/greeting/new), request-body hints from the schema, and copy-ready steps.\nbase_url may also be an OpenAPI document itself \u2014 a file path or spec\nURL a developer handed over \u2014 no live server needed (NOOD_0216); add\nsuite=True for feature_content, a runnable @api feature per documented\noperation (write it with write_feature / author_test).\n\nWithout base_url: sweep the well-known localhost ports (plus any the\nworkspace repo's own config names \u2014 server.port, compose mappings, PORT=)\nand report every live HTTP server with an api-shaped verdict. Exactly one\napi candidate is an answer author_test adopts automatically; anything\nelse comes back in `questions`. Loopback only; nothing is guessed.\n\nCall it when an API test request arrives with little or no context: the\nendpoints and base URL it returns ARE the missing context.",
         "operationId": "probe_api",
         "tags": [
           "tools"
@@ -1991,6 +1991,11 @@
                     ],
                     "default": null,
                     "title": "Workspace"
+                  },
+                  "suite": {
+                    "default": false,
+                    "title": "Suite",
+                    "type": "boolean"
                   }
                 },
                 "title": "probe_apiArguments",

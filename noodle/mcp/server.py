@@ -628,13 +628,18 @@ def scan_repo(path: str | None = None) -> dict:
 @_tool()
 def probe_api(base_url: str | None = None,
               ports: list[int] | None = None,
-              workspace: str | None = None) -> dict:
+              workspace: str | None = None,
+              suite: bool = False) -> dict:
     """NOOD_0201 — live API discovery, the api wok's probe_page.
 
     With base_url: interrogate ONE server — liveness, its OpenAPI document
     from the well-known routes (/openapi.json, /v3/api-docs, ...), the REAL
     endpoint list (the fix for authoring POST /greeting when the app serves
     /greeting/new), request-body hints from the schema, and copy-ready steps.
+    base_url may also be an OpenAPI document itself — a file path or spec
+    URL a developer handed over — no live server needed (NOOD_0216); add
+    suite=True for feature_content, a runnable @api feature per documented
+    operation (write it with write_feature / author_test).
 
     Without base_url: sweep the well-known localhost ports (plus any the
     workspace repo's own config names — server.port, compose mappings, PORT=)
@@ -646,7 +651,7 @@ def probe_api(base_url: str | None = None,
     endpoints and base URL it returns ARE the missing context."""
     from noodle import api_probe
     if base_url:
-        return api_probe.probe(base_url)
+        return api_probe.probe(base_url, suite=suite)
     return api_probe.discover(ports=ports, repo_root=_ws(workspace))
 
 

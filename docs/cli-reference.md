@@ -587,7 +587,7 @@ Live API discovery (NOOD_0201) — the api wok's counterpart to the page probe.
 what it *serves* right now.
 
 ```
-noodle api-scan [base_url] [--port N ...] [--repo PATH]
+noodle api-scan [base_url | spec-file | spec-url] [--port N ...] [--repo PATH] [--suite] [--out FILE]
 ```
 
 - **No URL** — sweep the well-known localhost dev ports (plus any the repo's
@@ -599,9 +599,19 @@ noodle api-scan [base_url] [--port N ...] [--repo PATH]
   routes (`/openapi.json`, `/v3/api-docs`, `/swagger.json`, …) and print the
   REAL endpoint list with request-body hints and copy-ready steps. One fetch
   settles `/greeting` vs `/greeting/new` before the test is written.
+- **With an OpenAPI document itself (NOOD_0216)** — a local
+  `openapi.yaml`/`.json` path or a direct spec URL: the same report straight
+  off the document, no live server needed (base URL from the spec's
+  `servers`, or a question when it names none).
+- **`--suite`** — also emit `feature_content`: a runnable `@api` feature, one
+  scenario per documented operation (expected status from the spec's
+  responses, body hints from its schemas; path params and unexemplified
+  bodies stay visible `<placeholders>` + `questions`, never guesses).
+  **`--out FILE`** writes it and implies `--suite`.
 
-Available over MCP as `probe_api`. Every request goes through the same
-target policy as any other Noodle call; nothing is guessed.
+Available over MCP as `probe_api` (`suite=True` for the generated feature).
+Every request goes through the same target policy as any other Noodle call;
+nothing is guessed.
 
 ## noodle ticket
 

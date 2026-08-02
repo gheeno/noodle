@@ -1096,6 +1096,49 @@ Feature: Sample — login
     # Then User should see 'Products'
 """
 
+_SAMPLE_API_FEATURE = """\
+# sample api_smoke.feature — a template to copy, auto-created by `noodle init`.
+# PURPOSE: shows the api wok's step vocabulary (NOOD_0216). Browserless: @api
+# scenarios never start a browser, so this runs on a CI image with no
+# Playwright install. Copy sample_api/ to noodle_tests/<your-api>/ and adapt.
+# YOU EDIT: yes — or delete once you have real tests.
+#
+# Have an OpenAPI document? Generate a suite from it instead of typing:
+#   noodle api-scan path/to/openapi.yaml --out noodle_tests/<your-api>/features/contract.feature
+# Full step reference: docs/steps_dictionary.md § REST API Testing.
+#
+# The steps below are commented out so a fresh workspace runs green —
+# set API_BASE_URL in this app's resources/environments.yaml, then uncomment.
+@api
+Feature: Sample — API smoke
+  Template showing the api wok's step vocabulary. Not a real test yet.
+
+  Background:
+    # Given sets {var:REST_BASE_URL} to '{env:API_BASE_URL}'
+
+  Scenario: The API answers and the payload has the right shape
+    # When performs a GET call at '/objects'
+    # Then the response status should be 200
+    # And the response body should contain 'id'
+    # And the response json '[0].name' should contain 'a'
+
+  Scenario: Create, verify, and chain the id into the next call
+    # When performs a POST call at '/objects' with body '{"name": "Widget"}'
+    # Then the response status should be 200
+    # When extracts 'id' from the response storing in {var:NEW_ID}
+    # And performs a GET call at '/objects/{var:NEW_ID}'
+    # Then the response json 'name' should equal 'Widget'
+"""
+
+_SAMPLE_API_ENVIRONMENTS = """\
+# Base URLs for this app package only — safe to commit, no secrets here.
+# Secrets go in a gitignored secrets.env next to this file.
+# The sample feature reads {env:API_BASE_URL}; point it at your service
+# (a public no-auth sandbox to try it out: https://api.restful-api.dev).
+#
+# api_base_url: http://localhost:8080
+"""
+
 _GLOBAL_POM = """\
 # Global POM — applies to ALL feature files, auto-created by `noodle init`.
 # PURPOSE: elements shared across pages/features (nav bars, cookie banners…).
@@ -1463,6 +1506,7 @@ def _template_files(root: Path) -> dict:
     Shared by `init` (writes/refreshes) and `doctor` (read-only staleness check)
     so the two can't drift on which files they consider (NOOD_0128)."""
     sample = root / "noodle_tests" / "sample_app"
+    sample_api = root / "noodle_tests" / "sample_api"
     return {
         root / "README.md": _WORKSPACE_README,
         root / "AGENTS.md": _AGENTS_MD,
@@ -1475,6 +1519,10 @@ def _template_files(root: Path) -> dict:
         root / "azure-pipelines" / "azure-pipelines.yml": _AZURE_PIPELINE,
         sample / "features" / "login.feature": _SAMPLE_FEATURE,
         sample / "resources" / "pageobjects" / "login_pom.yaml": _SAMPLE_POM,
+        # NOOD_0216 — the api wok scaffolds too: a fresh workspace shipped
+        # zero API artifacts, so "write an API test" started from nothing.
+        sample_api / "features" / "api_smoke.feature": _SAMPLE_API_FEATURE,
+        sample_api / "resources" / "environments.yaml": _SAMPLE_API_ENVIRONMENTS,
     }
 
 
@@ -2086,22 +2134,32 @@ def scan(
 
 @app.command("api-scan")
 def api_scan(
-    base_url: str = typer.Argument(None, help="Probe ONE server: liveness, OpenAPI document, real endpoint list, copy-ready steps. Omit to sweep localhost."),
+    base_url: str = typer.Argument(None, help="Probe ONE server — or an OpenAPI document itself (file path or URL): liveness, spec, real endpoint list, copy-ready steps. Omit to sweep localhost."),
     port: list[int] = typer.Option(None, "--port", "-p", help="Extra port(s) for the localhost sweep"),
     repo: str = typer.Option(".", "--repo", help="Repo whose config hints extra ports (server.port, compose mappings, PORT=)"),
+    suite: bool = typer.Option(False, "--suite", help="Also emit feature_content: a runnable @api feature covering the spec's operations (NOOD_0216)"),
+    out: str = typer.Option(None, "--out", help="Write the generated feature to this .feature file (implies --suite)"),
 ):
     """NOOD_0201 — live API discovery, the api wok's `noodle probe`.
 
     With a URL: fetch the app's OpenAPI document from the well-known routes
     (/openapi.json, /v3/api-docs, ...) and print the REAL endpoints — the fix
-    for authoring POST /greeting when the app serves /greeting/new. Without
-    one: sweep the well-known localhost ports for live HTTP servers (the dev
-    loop already hosts the app under test). Loopback only; nothing guessed —
-    ambiguity comes back as questions."""
+    for authoring POST /greeting when the app serves /greeting/new. With a
+    spec FILE or spec URL (NOOD_0216): the same report straight off the
+    document, no live server needed — add --suite/--out for a runnable
+    feature per documented operation. Without an argument: sweep the
+    well-known localhost ports for live HTTP servers (the dev loop already
+    hosts the app under test). Loopback only; nothing guessed — ambiguity
+    comes back as questions."""
     from noodle import api_probe
-    rep = api_probe.probe(base_url) if base_url \
+    rep = api_probe.probe(base_url, suite=suite or bool(out)) if base_url \
         else api_probe.discover(ports=list(port) if port else None,
                                 repo_root=repo)
+    if out and rep.get("feature_content"):
+        target = Path(out)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(rep["feature_content"] + "\n", encoding="utf-8")
+        rep["written"] = str(target)
     _json_out(rep)
     raise typer.Exit(0 if rep.get("ok") else 1)
 
