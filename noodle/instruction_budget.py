@@ -131,6 +131,24 @@ Ceiling accounting (moved verbatim from the retired test asserts):
   surface is for. The check-KIND list was deliberately left out: no measured
   session ever got a check kind wrong, and vocabulary() already ships them
   on rejection.
+- NOOD_0214: _AGENTS_MD 5632 → 6144, mcp-instructions 2432 → 2688, claude
+  skill card 7168 → 7680, copilot 7296 → 7808 (5402 / 2536 / 7401 / 7564 B
+  used at the bump). Three clauses, from a reviewed session that spent ~49
+  AIC authoring a 7-action test — 4 of its 18 calls did real work. (a) A
+  `blocking` list IS probe evidence: every unmatched-target entry quotes the
+  control names _near_miss read off the live page. The session read the first
+  one as an error and re-bought those exact names over eight standalone
+  probes — the single largest cost. (b) Never read the app's source: it
+  reached for `find … *.jsx` for field names the NEXT author call returned,
+  and source-derived selectors are implementation-coupled, so the damage
+  outlives the tokens. (c) Identical payload twice → change the mechanism,
+  not the wording (four rephrasings of one `--do`, byte-identical output).
+  All three are the NOOD_0179 rule at its strongest — decision rules that
+  fire mid-lap, with no round trip to intercept. A doc section cannot reach
+  an agent that has already stopped consulting docs; §7.6 of the playbook
+  carries the substance and these clauses route to it. (a) also lands in the
+  payload itself (core.BLOCKING_IS_EVIDENCE on `next`) — the surface frames
+  the expectation, the payload confirms it at the moment it matters.
 """
 from __future__ import annotations
 
@@ -140,11 +158,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 CEILINGS: dict[str, int] = {
-    "agents-md (cli._AGENTS_MD)": 5632,
+    "agents-md (cli._AGENTS_MD)": 6144,
     "prompt-template (cli._PROMPT_TEMPLATE)": 1024,
-    "mcp-instructions (server._INSTRUCTIONS)": 2432,
-    "claude-skill-card (.claude/skills/noodle/SKILL.md)": 7168,
-    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 7296,
+    "mcp-instructions (server._INSTRUCTIONS)": 2688,
+    "claude-skill-card (.claude/skills/noodle/SKILL.md)": 7680,
+    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 7808,
     "copilot-digest (.github/copilot-instructions.md)": 7424,
     "hot-tool-docstrings (probe/author/run_and_report/run)": 6400,
     "cli-help (noodle probe --help)": 6400,

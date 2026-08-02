@@ -62,7 +62,9 @@ Three operations make the whole pipeline — add nothing between them:
 2. author_test(...) — ready=true already IS validation (Gherkin parsed,
    steps matched, POM scoped, {env:} refs resolved): calling
    validate_feature or preflight after it is waste. ready=false: repair
-   what `blocking` lists, re-author with overwrite=true. Cheapest:
+   what `blocking` lists, re-author with overwrite=true — `blocking` IS
+   probe evidence (it quotes names read off the live page), never probe
+   to confirm one, and never read the app's source. Cheapest:
    goal={...} + run_after_author=true — the engine probes, compiles
    feature/POM itself, runs once and serves, in this one call.
 3. run_and_report(headless=True, retries=0, serve_reports=True) — runs,
@@ -347,8 +349,10 @@ def author_test(app_name: str | None = None, base_url: str | None = None,
     Returns paths, warnings, missing_secret_keys, base_url_key (use that
     exact {env:} key), and ready+blocking. ready=true = static authoring
     checks — never validate/preflight separately; run next. ready=false:
-    fix `blocking`, re-author with overwrite=true. workspace overrides
-    the server default."""
+    fix `blocking`, re-author with overwrite=true; the list quotes the
+    control names this lap's own probe read off the live page, so a
+    probe_page to confirm one re-buys evidence you hold (`next` says so
+    in the payload). workspace overrides the server default."""
     return core.author_test(
         app_name=app_name, base_url=base_url, feature_path=feature_path,
         feature_content=feature_content, pom_content=pom_content,

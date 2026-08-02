@@ -4,6 +4,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a29] — 2026-08-01
+
+**NOOD_0214** — fix: the lap waste a reviewed authoring session measured. The
+test it produced was correct; the path to it was 18 calls of which 4 did real
+work — 9 standalone probes and 6 author calls for a 7-action test, ~49 AIC
+where the cheap path was 3 calls and ~8. Two engine gaps and three rules that
+had no home on any always-on surface.
+
+- **A `--do` payload says how much of the chain actually ran.** The
+  transaction reports the page it ENDED on, which reads identically whether
+  every action landed or it stopped two in — the session sent the same `--do`
+  request in four phrasings to tell those apart, and got byte-identical output
+  each time. Every `--do` probe now emits `do: 2/4 actions completed` (with
+  "the controls below are the state the chain STOPPED in" when N < M) plus
+  structured `do_requested`/`do_completed`; `4/4` is the confirmation that
+  makes a re-probe pointless. A setup URL that `act_on="last"` made
+  snapshot-only now says `do_skipped` instead of looking like a transaction
+  that found nothing.
+- **A blocked authoring payload says that `blocking` is evidence, not an
+  error.** Each unmatched-target blocker already quotes the control names
+  `_near_miss` read off the live page — the session read the first one as a
+  failure, pivoted to manual probing, and re-bought those exact names over
+  eight more calls. `core.BLOCKING_IS_EVIDENCE` now rides every blocked lap on
+  `next`, at all three doors: the `author_test` payload, the `noodle task`
+  envelope, and a `→` line under the blockers on the plain CLI.
+- **The repl router stops reporting a blocked lap as `ok: true`.** The atomic
+  (`--run`) path already returned `ok: false` + `run: skipped`; the plain path
+  returned `ok: true` beside `ready: false`, so the envelope never reached its
+  own `need: [fix_blocking]` / `next` branch.
+- **Three rules reach the always-on surfaces** (AGENTS.md, both skill cards,
+  the MCP connect-time instructions): `blocking` is probe evidence — never
+  probe to confirm one; **never read the app's source** (Noodle is black-box,
+  and source-derived selectors are implementation-coupled — that damage
+  outlives the tokens); identical payload twice means change the mechanism,
+  not the wording. Ceilings raised to fund them, with the accounting in
+  `noodle/instruction_budget.py`: `_AGENTS_MD` 5632 → 6144, mcp-instructions
+  2432 → 2688, claude skill card 7168 → 7680, copilot 7296 → 7808.
+- **docs/agent-playbook.md §7.6 — "Lap waste"** carries the substance the
+  surfaces only route to: the five habits, the compounding-cost arithmetic
+  (input grew 26.9k → 50.2k tokens in one turn, so cost is
+  `n_calls × mean_context`), the reflex → correct-call table, and the hard
+  budget — on probe #3 with no new controls, stop.
+- **`--run` takes the `repair.goal` lap itself.** A brief ending
+  `Verify: Suggestion search works` names the flow, not page text, so the goal
+  blocks and NOOD_0213's `repair.goal` made the retry a copy-paste — but still
+  a whole round trip. With `run_after_author`, the engine now applies that
+  repair in the same call. NOOD_0212's guard is intact: this does not read the
+  sentence, it reads the probe, and it fires only where `repair_goal` already
+  agreed (unprovable see-checks are the ONLY blockers, ≥1 check survives). The
+  drop is never silent — it leads `warnings`, rides the payload as
+  `dropped_checks`, and forces `intent_verified: false`. Without `--run`,
+  nothing changes.
+- **A labelled URL is a URL under any label.** `Web Test UI : https://…` lost
+  its URL because `_URL_LABEL` is `^`-anchored and could not see past the
+  section header, and the brief's own `go to UI` back-reference then refused
+  too — two clause-1 refusals from one missing prefix. Any `<label> : <bare
+  URL>` line is now a navigation, guarded so it cannot eat a step: the value
+  must be a URL end to end, and a label carrying a verb
+  (`click the link : https://…`) keeps its meaning.
+- Unit tests: `unit_tests/test_nood_0214.py` (27), covering the count line at
+  every arity, the `do_requested` denominator surviving a halt at action 1,
+  the compact payload keeping `do_completed: 0` explicitly, the evidence
+  sentence at all three doors, the surface clauses pinned
+  whitespace-normalized so a re-wrap cannot silently drop one, the auto-repair
+  including its three refusal paths, and the labelled-URL rule including the
+  verb guard.
+
 ## [1.0.0a28] — 2026-08-01
 
 **NOOD_0213** — fix: the three frictions the 1.0.0a27 agent-regression drill

@@ -138,6 +138,20 @@ _INSTRUMENT = re.compile(
 _URL_LABEL = re.compile(
     r"^(?:(?:base|target|start(?:ing)?|site|app)?\s*url|ui|uri|site|website)"
     r"\s*:\s*", re.I)
+# NOOD_0214 — the same rule, whatever the label happens to read. A brief that
+# opens "Web Test UI : https://…" is naming its target exactly as "Base URL:"
+# does, but _URL_LABEL is ^-anchored and could not see past the section header
+# in front of it — so the URL was lost, the clause refused, and the brief's own
+# "go to UI" back-reference then refused too (drill TC3: two clause-1 refusals
+# from one missing prefix). Guarded so it can never eat a step: the value must
+# be a bare URL end to end (prose wrapped around one stays with _URL_LABEL's
+# handling above), and the label must carry no verb of its own — "click the
+# link : https://x" is a click, not a navigation.
+_LABELLED_URL = re.compile(r"^(?P<label>[^:\n]{1,40}):\s*(?P<url>\S+)\s*$")
+_LABEL_VERB = re.compile(
+    r"\b(?:go|open|visit|navigate|search|look|click|tap|enter|type|fill|"
+    r"select|choose|verify|check|confirm|ensure|assert|close|dismiss|"
+    r"accept|add|press|hover|upload|scroll|wait)\b", re.I)
 # NB: `Verify:` is NOT here — it is grammar (the verify verb reads its own
 # label), and stripping it would turn an assertion into an unknown clause.
 _GOAL_LABEL = re.compile(
@@ -587,6 +601,9 @@ def _depreamble(ln: str) -> str:
         if not _URLISH.match(value) and (u := _URL_IN_TEXT.search(value)):
             value = u.group(0)
         ln = f"go to {value}"
+    elif (m := _LABELLED_URL.match(ln)) and _URLISH.match(m.group("url")) \
+            and not _LABEL_VERB.search(m.group("label")):
+        ln = f"go to {m.group('url')}"      # NOOD_0214 — any label, bare URL
     else:
         ln = _GOAL_LABEL.sub("", ln)
         if b := _BRACKETED.match(ln):

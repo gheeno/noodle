@@ -1105,7 +1105,11 @@ def _do(page, pg: dict, actions: list[tuple], timeout_ms: int):
         h |= set(headings)
         return s, h
 
-    pg["do_completed"] = 0
+    # NOOD_0214 — how many were ASKED for, beside how many landed. A chain that
+    # walked a page transition returns the new page's controls, which read as
+    # "the whole flow ran" whether it did or not; the reviewed session rewrote
+    # the same --do prose four times to tell those apart. N/M is the answer.
+    pg["do_requested"], pg["do_completed"] = len(actions), 0
     for i, (verb, target, value) in enumerate(actions):
         label = _do_label(verb, target)
         sel = None
@@ -2787,6 +2791,13 @@ def probe(urls: list[str], timeout_ms: int = 15000,
                         _perform_mutation(page, pg, mutate, timeout_ms)
                     if do_actions and acting and not search:
                         page = _do(page, pg, do_actions, timeout_ms)
+                    elif do_actions and not acting:
+                        # NOOD_0214 — a setup url of an ordered contract is
+                        # snapshot-only; saying so beats a payload that looks
+                        # like the transaction ran and found nothing.
+                        pg["do_requested"] = len(do_actions)
+                        pg["do_skipped"] = ("act_on=last — the transaction "
+                                            "runs only on the final url")
                     if discover and acting:
                         _discover(page, pg, timeout_ms)
                     if open_native_controls and acting:
@@ -3196,6 +3207,16 @@ def _do_lines(pg: dict, indent: str = "  ") -> list[str]:
     from both human and compact output, so every later action ran against an
     invalid state and the agent only ever saw the final expectation misses."""
     out = [f"{indent}⚠ {w}" for w in pg.get("do_warnings", [])]
+    # NOOD_0214 — the completion count, always, not only on failure: "did the
+    # rest of my chain run?" was costing whole re-probes to answer.
+    if pg.get("do_skipped"):
+        out.append(f'{indent}⚠ do: 0/{pg["do_requested"]} actions performed '
+                   f'on this page — {pg["do_skipped"]}')
+    elif pg.get("do_requested"):
+        done, req = pg.get("do_completed", 0), pg["do_requested"]
+        out.append(f"{indent}do: {done}/{req} actions completed" + (
+            "" if done == req else " — the controls below are the state the "
+            "chain STOPPED in, not the requested end state"))
     if pg.get("tab_switches"):     # NOOD_0178 — evidence even with no delta
         out.append(f"{indent}tab switches performed: "
                    + ", ".join(pg["tab_switches"]))
@@ -3613,6 +3634,8 @@ def _compact_page(pg: dict, max_controls: int, brief: bool = False) -> dict:
                 # NOOD_0145 — failed transaction actions must survive compact
                 # output; hiding them was the reviewed session's P0
                 "do_warnings", "do_failed",
+                # NOOD_0214 — the N/M completion count, structured
+                "do_requested", "do_skipped",
                 # NOOD_0156 follow-up — the no-delta note on a do-reveal
                 "note",
                 "search_warning", "click_warnings",
@@ -3627,6 +3650,11 @@ def _compact_page(pg: dict, max_controls: int, brief: bool = False) -> dict:
                 "popups_closed", "permission_prompts"):
         if pg.get(key):
             out[key] = pg[key]
+    # NOOD_0214 — explicit, not truthiness: 0/4 completed is the single most
+    # important number a --do payload carries and it must not fall out for
+    # being falsy.
+    if pg.get("do_requested"):
+        out["do_completed"] = pg.get("do_completed", 0)
     # author_ready=False is the load-bearing value — a truthiness passthrough
     # would silently drop exactly the flag that must never be dropped.
     # NOOD_0137 — compact-scoped: only an ambiguous selector this payload

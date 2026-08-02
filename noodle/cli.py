@@ -1353,7 +1353,9 @@ can't": read the wok.
    feature_content only on a named goal blocker. `ready: true` =
    parsed, matched, POM scoped, `{env:}` resolved — do not validate/
    preflight separately; run next. `ready: false`? Fix `blocking`,
-   re-author — no bypass, no guessed action. Base URL →
+   re-author — no bypass, no guessed action. `blocking` IS probe
+   evidence: it quotes the names read off the live page, so never
+   probe to confirm one. Base URL →
    `resources/environments.yaml` (`base_url_key`). Steps: probe
    output or `search_step` (`noodle steps <kw>…` — all words, ONE
    call); `use_llm=True` last; `append_to` appends a scenario
@@ -1398,6 +1400,9 @@ Hand-edited? `validate_feature` before re-running. Wrong element
 - Payloads are pre-bounded: read as returned, no jq/grep/sed/head
   pipes; URLs pre-checked (no curl); schema: `noodle author
   --vocabulary`; workspace map: `noodle list`, not find/ls sweeps.
+  NEVER read the app's source — Noodle is black-box, and
+  source-derived selectors are implementation-coupled. Identical
+  payload twice? Change the mechanism, not the wording (§7.6).
 - Progress updates: max 2 sentences of current intent (e.g. "Serving
   the reports now"); quote only failing steps/errors. "do not output
   the shell command"? Then echo no command line.
@@ -1994,6 +1999,8 @@ def author(
         typer.echo(f"  {'✓' if a.get('ready') else '✗'} authored {a.get('feature')}")
         for b in a.get("blocking", []):
             typer.echo(f"    {b}")
+        if a.get("next"):      # NOOD_0214 — blocking is evidence, say so here
+            typer.echo(f"  → {a['next']}")
         if r.get("skipped"):
             typer.echo(f"  ✗ run skipped: {r['skipped']}")
         else:
@@ -2023,6 +2030,8 @@ def author(
         typer.echo("  ✗ NOT READY — fix before running (no separate validate needed):")
         for b in result["blocking"]:
             typer.echo(f"    {b}")
+        if result.get("next"):  # NOOD_0214 — blocking is evidence, say so here
+            typer.echo(f"  → {result['next']}")
         raise typer.Exit(1)
     raise typer.Exit(0)
 

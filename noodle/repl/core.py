@@ -27,6 +27,18 @@ from noodle import config, counters
 from noodle import target_policy as _target_policy
 from noodle.reporting import paths as _paths
 
+# NOOD_0214 — the one sentence every blocked authoring payload carries, at
+# every door (core, the repl router, the CLI). `blocking` is not an error log:
+# each unmatched-target entry quotes the control/heading names this lap's own
+# probe read off the live page, so the repair is a one-word edit to the goal.
+# The reviewed session read it as a failure and spent nine standalone probes
+# re-buying those names.
+BLOCKING_IS_EVIDENCE = (
+    "`blocking` IS this lap's probe evidence — the quoted 'probed … here' "
+    "names came off the live page. Edit the goal to those names and re-author "
+    "with overwrite=true. Do NOT probe to confirm what a blocker already "
+    "told you.")
+
 # --- persistent state --------------------------------------------------------
 
 # Only durable facts persist. Transient flow control (autoran_feature — "skip
@@ -835,6 +847,9 @@ def author_test(*, prompt: str | None = None,
     result = _author_test_impl(app_name=app_name, base_url=base_url,
                                feature_path=feature_path, goal=goal,
                                feature_content=feature_content, **kw)
+    if kw.get("run_after_author"):
+        result = _auto_repair(result, app_name=app_name, base_url=base_url,
+                              feature_path=feature_path, kw=kw)
     if discovery is not None and isinstance(result, dict) and base_url:
         # provenance: this URL was discovered, not user-supplied
         result["discovered_base_url"] = base_url
@@ -843,6 +858,61 @@ def author_test(*, prompt: str | None = None,
         if result.get("author") or result.get("blocking") is not None:
             result["planner"] = _planner_verdict(result, model_calls)
     return result
+
+
+def _auto_repair(result: dict, *, app_name: str, base_url: str,
+                 feature_path: str, kw: dict) -> dict:
+    """NOOD_0214 — `run_after_author` asks for a finished outcome in ONE call,
+    so the engine takes the retry it would otherwise hand back.
+
+    Only the zero-ambiguity repair qualifies, and `repair_goal` (NOOD_0213) is
+    what decides: unprovable see-check(s) are the goal's ONLY blockers and at
+    least one check survives. That is the drill's TC1 — a brief ending
+    "Verify: Suggestion search works", which is the author naming the flow, not
+    naming text on a page; the two product names they DID list are the
+    assertions, and they were proven.
+
+    NOOD_0212's guard is intact, because this does not guess from wording — the
+    reverted rule read the sentence, this reads the probe. What it drops is a
+    check the probe proved is not on the page, and the drop is never silent:
+    it leads `warnings`, rides the payload as `dropped_checks`, and forces
+    `intent_verified: false` — the test proves less than the brief asked, and
+    the contract says so. Without `run_after_author` nothing changes: a caller
+    composing laps keeps the block and the `repair` field.
+
+    ponytail: the retry re-probes (the probe cache is opt-in, TTL 0 by
+    default), so this trades ~one page load for one whole agent round trip —
+    the expensive half. Thread the first lap's evidence through if that page
+    load ever shows up in a measurement.
+    """
+    if not isinstance(result, dict):
+        return result
+    author = result.get("author") if isinstance(result.get("author"), dict) \
+        else result
+    rep = author.get("repair")
+    if not rep or author.get("ready"):
+        return result
+    retry = _author_test_impl(app_name=app_name, base_url=base_url,
+                              feature_path=feature_path, goal=rep["goal"],
+                              **{**kw, "overwrite": True})
+    r_author = retry.get("author") if isinstance(retry.get("author"), dict) \
+        else retry
+    if not r_author.get("ready"):
+        # The repaired goal blocks for its own reasons — the ORIGINAL payload
+        # named the real fix, so return that rather than a second-order one.
+        return result
+    dropped = rep.get("dropped_checks") or []
+    r_author["dropped_checks"] = dropped
+    r_author["intent_verified"] = False
+    r_author["warnings"] = [
+        f"{len(dropped)} asked-for check(s) dropped to finish this call in one "
+        "lap — the probe found no text on the page matching: "
+        + "; ".join(f'"{d}"' for d in dropped)
+        + ". intent_verified is false: the test proves the surviving checks, "
+        "not this wording. Re-author without run_after_author to keep the "
+        "block, or reword the check to probed evidence."] + list(
+            r_author.get("warnings") or [])
+    return retry
 
 
 def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
@@ -1448,6 +1518,12 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         state["intent_contracts"] = contracts
         save_state(state, workspace)
     if blocking:
+        # NOOD_0214 — a blocked lap READS like a failure and IS a probe
+        # result: every unmatched-target blocker quotes the control names
+        # _near_miss pulled off the live page. The reviewed session read the
+        # first one as an error, pivoted to nine standalone probes, and
+        # re-bought exactly those names. One sentence says which it is.
+        result["next"] = BLOCKING_IS_EVIDENCE
         # NOOD_0200 — a blocked author used to go silent at exactly the
         # moment the operator most needs a written explanation ("it didn't
         # even generate the report"): no run means no artifacts. Write the
