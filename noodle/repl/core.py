@@ -902,17 +902,91 @@ def _auto_repair(result: dict, *, app_name: str, base_url: str,
         # named the real fix, so return that rather than a second-order one.
         return result
     dropped = rep.get("dropped_checks") or []
+    rewritten = rep.get("rewritten_checks") or []
+    warnings = []
+    # NOOD_0218 — three repair shapes, each named for what it changed. Only a
+    # DROP weakens the contract (intent_verified false); a navigation fix or
+    # a near-miss reword keeps every asked-for assertion, in probed wording.
+    if rep.get("navigation_added"):
+        warnings.append(
+            "navigation repaired to finish this call in one lap: the blocked "
+            f"targets resolve on {rep['navigation_added']} (probe evidence — "
+            "the repair lap navigates there first)")
+    if rewritten:
+        warnings.append(
+            f"{len(rewritten)} asked-for check(s) reworded to the near-miss "
+            "the probe found: "
+            + "; ".join(f'"{r["from"]}" → "{r["to"]}"' for r in rewritten)
+            + " — the test asserts the page's wording, not the brief's")
+        r_author["rewritten_checks"] = rewritten
     r_author["dropped_checks"] = dropped
-    r_author["intent_verified"] = False
-    r_author["warnings"] = [
-        f"{len(dropped)} asked-for check(s) dropped to finish this call in one "
-        "lap — the probe found no text on the page matching: "
-        + "; ".join(f'"{d}"' for d in dropped)
-        + ". intent_verified is false: the test proves the surviving checks, "
-        "not this wording. Re-author without run_after_author to keep the "
-        "block, or reword the check to probed evidence."] + list(
-            r_author.get("warnings") or [])
+    if dropped:
+        r_author["intent_verified"] = False
+        warnings.append(
+            f"{len(dropped)} asked-for check(s) dropped to finish this call "
+            "in one lap — the probe found no text on the page matching: "
+            + "; ".join(f'"{d}"' for d in dropped)
+            + ". intent_verified is false: the test proves the surviving "
+            "checks, not this wording. Re-author without run_after_author to "
+            "keep the block, or reword the check to probed evidence.")
+    r_author["warnings"] = warnings + list(r_author.get("warnings") or [])
     return retry
+
+
+def _route_repair(goal: dict, goal_ev: dict, probe_result: dict,
+                  pinned, base_url: str | None) -> dict | None:
+    """NOOD_0218 — when every blocker says the target simply isn't on the
+    probed page, the controls usually live one same-origin link away (the
+    /menu, /catalog, /order-status page behind a landing page) — and the probe
+    already harvested those links as `next_pages`. Light-probe up to 4
+    unprobed candidates in ONE call and score each with the SAME evidence
+    pass that blocked: the first page where every unrouted target resolves
+    becomes a ready-to-send repair.goal with that navigation appended, which
+    `_auto_repair` then takes in the same call under run_after_author.
+    Nothing is guessed — a candidate wins only by probe evidence, a broken
+    candidate (HTTP ≥ 400) never competes, and no winner means no repair.
+
+    ponytail: candidates in document order, cap 4 — ranking by URL wording
+    loses on the very case that motivated this (a /menu page whose URL names
+    nothing the goal says); raise the cap if a real page hides its flow past
+    the fourth link."""
+    from noodle.repl import goal as goal_mod
+    blocking = goal_ev.get("blocking") or []
+    misses = goal_mod.unrouted_targets(blocking)
+    # only when a navigation fix can cure EVERYTHING: a repair that still
+    # blocks is returned unused by _auto_repair and just cost page loads.
+    if not misses or len(misses) != len(blocking):
+        return None
+    pages = probe_result.get("pages") or []
+    if not pages:
+        return None
+    probed = {str(p.get("url", "")).rstrip("/") for p in pages}
+    cands = [u for u in (pages[-1].get("next_pages") or [])
+             if str(u).rstrip("/") not in probed]
+    if not cands:
+        return None
+    light = probe_page(" ".join(cands[:4]), act_on="each")
+    for pg2 in light.get("pages") or []:
+        u, status = pg2.get("url"), pg2.get("http_status")
+        if not u or (isinstance(status, int) and status >= 400):
+            continue
+        ev2 = goal_mod.evidence({**goal, "navigation": [u]},
+                                {"pages": [pg2]}, pinned)
+        if goal_mod.unrouted_targets(ev2.get("blocking") or []):
+            continue
+        nav = goal_mod.navigation_urls(goal) \
+            or ([base_url] if base_url else [])
+        nav = [x for x in nav if str(x).rstrip("/") != str(u).rstrip("/")]
+        return {"goal": {**goal, "navigation": nav + [u]},
+                "navigation_added": u,
+                "note": ("the blocked target(s) are not on "
+                         f"{pages[-1].get('url')} but resolve on {u} "
+                         "(same-origin, one link away) — re-author with "
+                         "repair.goal (overwrite=true); run_after_author=true "
+                         "takes this lap itself"
+                         + (f"; {len(cands) - 4} more linked page(s) were "
+                            "not probed" if len(cands) > 4 else ""))}
+    return None
 
 
 # NOOD_0217 — on a green result these keys are failure-diagnosis provenance:
@@ -1454,6 +1528,12 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     # field, not a hand-rebuilt goal (the drill's TC1 lap).
     if goal is not None and goal_ev is not None and blocking:
         if rep := goal_mod.repair_goal(goal, goal_ev.get("blocking") or []):
+            result["repair"] = rep
+        # NOOD_0218 — the other repairable family: the targets aren't on the
+        # probed page but live one same-origin link away (next_pages).
+        elif not browserless and probe_result and \
+                (rep := _route_repair(goal, goal_ev, probe_result, pinned,
+                                      base_url)):
             result["repair"] = rep
     # NOOD_0156 follow-up — every lenient-input rewrite, echoed back so the
     # caller sees exactly what the engine understood.

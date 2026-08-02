@@ -4,6 +4,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a33] — 2026-08-02
+
+**NOOD_0218** — fix: the engine finds the page the flow lives on, and a
+near-miss becomes a reword instead of a drop. A 16-lap checkout-flow session
+(add item → checkout → confirm) reduced to three causes, all engine gaps:
+the action page was one link past the landing page, unprovable checks could
+only be dropped, and "<label> should be <value>" compiled to a sentence no
+page renders.
+
+- **Route discovery repair.** When every blocker says the target simply
+  isn't on the probed page ("no probed control matches that name" / "no
+  probed text … identifies that row/card/item" / "no probed control mutates
+  into"), the same-origin links the probe already harvested (`next_pages`)
+  are light-probed — up to 4 candidates, one call, HTTP ≥ 400 never
+  competes — and each is scored with the SAME evidence pass that blocked.
+  The first page where every target resolves becomes `repair.goal` with the
+  navigation appended; under `run_after_author` the engine takes that lap
+  itself (`_auto_repair`), so "controls live on /menu, not /" costs one
+  call instead of ~10 agent laps. No winner = no repair; nothing is guessed.
+- **repair_goal rewords before it drops.** An unprovable see-check whose
+  blocking line carries the probe's near-miss ("did you mean X?") is
+  REWORDED to X — the page provably renders that text — and rides
+  `rewritten_checks`; only checks with no near-miss are dropped. A reword
+  keeps `intent_verified` (the assertion survives, in the page's own
+  wording, and the warning says so); a drop still forces it false.
+- **"<label> should be <value>" splits.** The prompt expander compiles it
+  to two see-checks (label, value) instead of one unrenderable literal;
+  "X should be visible/present/…" asserts X; "the url should be /path"
+  becomes `url_contains`. The evidence marker rides the value check (the
+  last assertion), per the evidence rule.
+- **Runtime near-miss reads both ways.** `_rendered_near_miss` strips
+  sentence filler ("should be", articles) and also matches short rendered
+  lines contained IN the expectation, so a red run on "subtotal should be
+  $18.99" now reports: the page renders 'Subtotal'; '$18.99'.
+- **"take AN evidence screenshot" strips clean.** The `_EVIDENCE` span
+  covered "take a" but not "take an", leaving "- take an" behind as literal
+  assertion text.
+
 ## [1.0.0a32] — 2026-08-02
 
 **NOOD_0217** — fix: cut the agent cost of authoring, kill the wasted repair

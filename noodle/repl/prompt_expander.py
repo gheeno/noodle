@@ -71,7 +71,9 @@ _EVIDENCE = re.compile(
     # NOOD_0212 — "…, with a screenshot as evidence" left "with a" behind once
     # the noun was lifted out, and that residue compiled into an assertion on
     # the literal text "with a". The lead-in has to go with the phrase.
-    r"(?:\s*[-–—,]\s*)?(?:\band\s+)?(?:\bwith\s+(?:an?\s+)?)?(?:take\s+(?:a\s+)?)?"
+    r"(?:\s*[-–—,]\s*)?(?:\band\s+)?(?:\bwith\s+(?:an?\s+)?)?"
+    # NOOD_0218 — "take AN evidence screenshot" left "- take an" behind
+    r"(?:take\s+(?:an?\s+)?)?"
     r"(?:\bevidence\b\s*[:-]?\s*)?"
     r"(?:\bscreenshots?\b|\bcaptures?\b(?:\s+(?:the\s+)?(?:screen|page))?)"
     r"(?:\s+for\s+verification)?"
@@ -862,6 +864,12 @@ _VERIFY_FILLER = re.compile(
     r"(?:(?:you|we|i|the\s+user)\s+(?:can|could|should)?\s*"
     r"(?:see|sees|view|find)\s+)?"
     r"(?:that\s+)?(?:there\s+(?:is|are)\s+)?", re.I)
+
+# NOOD_0218 — "X should be <one of these>" is a presence claim on X itself,
+# never on the tail word.
+_PRESENCE_TAILS = frozenset(
+    ("visible", "present", "shown", "displayed", "there", "correct",
+     "working", "ok"))
 
 
 # NOOD_0197 — one concrete rewrite per still-unresolved clause, so a partial
@@ -1989,6 +1997,52 @@ def expand(text: str, base_url: str | None = None) -> dict:
                     assumptions.append(
                         f"step {no} '{n['raw']}': asserting any of "
                         + " / ".join(alts) + " is visible")
+                elif sb := re.match(
+                        r"^(?P<subj>.{1,60}?)\s+should\s+"
+                        r"(?:be|show|display|read|say|equal|contain)s?\s+"
+                        r"(?P<val>.+)$", text, re.I):
+                    # NOOD_0218 — "<label> should be <value>" is a label+value
+                    # claim; as ONE literal it asserts a sentence no page
+                    # renders ("subtotal should be $18.99" — the page says
+                    # 'Subtotal' and '$18.99'). The label and the value are
+                    # each real page text: two see-checks, said out loud.
+                    subj = _ARTICLE.sub(
+                        "", _clean(sb.group("subj")).strip("\"'"))
+                    val = _clean(sb.group("val")).strip("\"'").rstrip(".")
+                    if val.casefold() in _PRESENCE_TAILS:
+                        # "X should be visible" is a presence claim on X, not
+                        # on the word "visible"
+                        check = {"see": subj}
+                        assumptions.append(
+                            f"step {no} '{n['raw']}': asserting the literal "
+                            f"text '{subj}' is visible")
+                    elif re.match(r"^(?:the\s+)?(?:url|address|link)$",
+                                  subj, re.I):
+                        check = {"url_contains": val}
+                        assumptions.append(
+                            f"step {no} '{n['raw']}': asserting the URL "
+                            f"contains '{val}'")
+                    elif _WEBSITE_REF.match(subj):
+                        # "the page should contain X" names WHERE to look;
+                        # only X is the assertion — a `see "page"` check
+                        # would assert a word no page renders as content
+                        # (checked AFTER the url arm: _WEBSITE_REF matches
+                        # "url" too, and that one is an address claim)
+                        check = {"see": val}
+                        assumptions.append(
+                            f"step {no} '{n['raw']}': asserting the literal "
+                            f"text '{val}' is visible")
+                    else:
+                        extra = {"see": subj}
+                        if not actions:
+                            pre_action_checks.append(extra)
+                        checks.append(extra)
+                        check = {"see": val}
+                        assumptions.append(
+                            f"step {no} '{n['raw']}': split into two "
+                            f"visibility checks — '{subj}' (label) and "
+                            f"'{val}' (value); no page renders the sentence "
+                            "itself")
                 else:
                     # NOOD_0197 — "the Weekly Flyer is shown": the positive
                     # visibility tail and the leading article are phrasing,

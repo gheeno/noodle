@@ -663,6 +663,12 @@ def assert_any_visible(page: Page, alternatives: list[str],
         f"(NOODLE_FIND_TIMEOUT={_find_timeout_ms()}ms).\nURL: {page.url}")
 
 
+# NOOD_0218 — words that belong to the SENTENCE, not the page: stripped
+# before token-containment matching in _rendered_near_miss.
+_NEAR_FILLER = frozenset(
+    "should must be is are was were the a an to of and".split())
+
+
 def _rendered_near_miss(page, text: str) -> str:
     """NOOD_0207 — ' [near-miss] the page renders: …', or ''.
 
@@ -680,10 +686,18 @@ def _rendered_near_miss(page, text: str) -> str:
     near = difflib.get_close_matches(text or "", lines, 2, 0.6)
     if not near:
         # short expected text vs a long rendered line: containment by words,
-        # which difflib's whole-string ratio scores far too low.
-        toks = set(want.split())
+        # which difflib's whole-string ratio scores far too low. NOOD_0218 —
+        # filler ("should be", articles) is phrasing, not page text, and the
+        # containment runs BOTH ways: a sentence-shaped expectation
+        # ("subtotal should be $18.99") names several short rendered lines
+        # ('Subtotal', '$18.99') that each deserve to be surfaced.
+        toks = set(want.split()) - _NEAR_FILLER
         near = [ln for ln in lines
                 if toks and toks <= set(ln.casefold().split())][:2]
+        if not near:
+            near = [ln for ln in lines
+                    if (lt := set(ln.casefold().split()) - _NEAR_FILLER)
+                    and lt <= toks][:2]
     return (" [near-miss] the page renders: "
             + "; ".join(repr(n) for n in near)) if near else ""
 
