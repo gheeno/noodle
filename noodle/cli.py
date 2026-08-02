@@ -2038,6 +2038,9 @@ def author(
             # autonomous agents must never set it.
             allow_unverified_intent=bool(data.get("allow_unverified_intent", False)),
             workspace=workspace)
+    # NOOD_0217 — green atomic results collapse to the verdict + pointers;
+    # the full envelope is on disk at `full_payload`. Red keeps everything.
+    result = core.collapse_green(result, workspace=workspace)
     if as_json:
         _json_out(result)
         raise typer.Exit(0 if result["ok"] else 1)

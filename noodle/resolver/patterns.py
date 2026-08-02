@@ -21,6 +21,14 @@ def _alternatives(raw: str) -> list[str]:
     return re.findall(r'["\']([^"\']+)["\']', raw)
 
 
+# NOOD_0217 — THE control-noun list, single definition. The step grammar
+# below strips these trailing nouns from a locator ('the "Save" button' → the
+# element named Save); prompt_expander imports this same list to strip a
+# LEADING noun before a quoted claim ('the textbox "Email"' → "Email"). A
+# unit test guards that every inline alternation in this file matches this
+# constant — edit them together or the two grammars drift.
+CONTROL_NOUNS = "button|field|input|box|link|checkbox|element|icon|dropdown|menu"
+
 # NOOD_0182 — per-step REST budget: "... within 90 seconds" on any step that
 # waits on a backend (REST call, API call, response wait). Optional; without it
 # the run-wide NOODLE_REST_TIMEOUT applies.

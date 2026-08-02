@@ -38,8 +38,14 @@ import json
 import re
 from urllib.parse import urlsplit
 
+from noodle.resolver.patterns import CONTROL_NOUNS
+
 _MAX_CLAUSE_LEN = 600   # NOOD_0177 — a prompt clause is a sentence; bounds backtracking
 _BULLET = re.compile(r"^\s*(?:\d+\s*[.)]\s*|[-*•—–>]\s+)")   # NOOD_0199: — – >
+# NOOD_0217 — digit bullets only: numbered lines are steps by convention,
+# while dash/star bullets routinely carry brief metadata ("- base url: …"),
+# so only the numbered kind may demote a goal label to a title.
+_NUMBERED = re.compile(r"\s*\d+\s*[.)]\s")
 _INLINE_NUM = re.compile(r"\s+\d+\s*[.)]\s+")
 # NOOD_0188 — an explicit scheme accepts ANY host (dotless + port), so a local
 # dev server works: `go to the url http://localhost:3333`. Without a scheme a
@@ -756,6 +762,20 @@ def _clauses(text: str) -> list[dict]:
     # second, bogus search ahead of the numbered steps that follow it.
     titled = any(_SECTION_HEADER.match(_BULLET.sub("", s).strip())
                  for _, s in sentences)
+    # NOOD_0217 — numbered steps ARE the flow even when no "Steps:" header
+    # announces them. The 0217 benchmark fed the PROMPT_TEMPLATE shape minus
+    # its "Steps a human would take:" line, and the goal summary minted a
+    # second search action: one CONTRACT_BLOCKED lap, then a probe lap where
+    # the summary's term swallowed the suggest binding. A goal label beside
+    # numbered steps is a title; only a brief with no numbered steps still
+    # reads its flow off the goal line (the one-line `Goal: search for
+    # shoes` door, which must keep working).
+    # (checked on LINES, not sentences — the sentence splitter severs the
+    # "1." marker from its step, so the numbering is only visible here)
+    if not titled:
+        titled = any(_NUMBERED.match(ln)
+                     and not _GOAL_LABEL.match(_BULLET.sub("", ln).strip())
+                     for _, ln in lines)
     for line_no, ln in sentences:
         # NOOD_0177 — collapse whitespace runs BEFORE any clause regex sees the
         # line. The clause patterns use (.+?) straddling two independent \s+
@@ -1091,6 +1111,42 @@ _VERIFY_NO_SPLIT_HARD = re.compile(
 _VALUE_TAIL = re.compile(r"\s*,\s*(?:and\s+)?|\s+and\s+", re.I)
 _POSSESSIVE = re.compile(r"^(?:his|her|their|its|your|my|our)\s+", re.I)
 
+# NOOD_0217 — the claim grammar lacked the control-noun stripping the step
+# grammar has had since NOOD_0109: `verify you see the textbox "Please enter
+# your email address"` compiled to an assertion on the LITERAL 'textbox
+# "Please enter..."' — text no page renders — and cost a full red-run +
+# re-author lap on phrasing a human considers normal. The noun names the
+# instrument; the quoted string is the claim. Same noun list as patterns.py
+# (imported — one definition, or the two grammars drift), plus text-
+# compounds, plurals, an optional count word and an optional linking word.
+_NOUN_RUN = (rf"(?:(?:the|a|an|one|two|three|both|all)\s+){{0,2}}"
+             rf"(?:(?:text\s?)?(?:{CONTROL_NOUNS})(?:e?s)?\s+)+"
+             rf"(?:(?:with|labell?ed(?:\s+as)?|named|showing|reading|"
+             rf"saying|containing|for)\s+)?")
+# The tight shape: optional see-lead, noun run, ONE quoted member, at most a
+# presence tail. Anchored both ends so a state assertion ('the checkbox "I
+# agree" is checked') never matches — its tail is not a presence verb, and
+# rewriting it would turn a clean refusal into a wrong literal.
+_NOUN_CLAIM = re.compile(
+    rf"^(?:(?:you|we|i|the\s+user)\s+(?:can\s+|should\s+|will\s+)?sees?\s+)?"
+    rf"{_NOUN_RUN}"
+    rf"([\"'])(?P<content>(?:(?!\1).)+?)\1"
+    rf"(?:\s+(?:is|are)\s+(?:present|visible|shown|displayed)|\s+appears?)?"
+    rf"\s*$", re.I)
+# The loose helper for retrying the OTHER claim shapes (conjunctions,
+# containment verbs) with the noun run lifted out. Substitutes only OUTSIDE
+# quotes — quoted content is data, never rewritten — and its result is used
+# only when one of the existing tightly-shaped handlers matches it.
+_NOUN_BEFORE_QUOTE = re.compile(rf"\b{_NOUN_RUN}(?=[\"'])", re.I)
+
+
+def _strip_control_nouns(body: str) -> str:
+    def repl(m):
+        outside = (body.count('"', 0, m.start()) % 2 == 0
+                   and body.count("'", 0, m.start()) % 2 == 0)
+        return "" if outside else m.group(0)
+    return _NOUN_BEFORE_QUOTE.sub(repl, body)
+
 
 def _split_top_level(body: str) -> list[str]:
     """NOOD_0212 — split on `,` / ` and ` that sit OUTSIDE any quoted run.
@@ -1260,8 +1316,10 @@ def _drop_shared_noun(parts: list[str]) -> list[str]:
     return out
 
 
-def _rewrite_asks(clauses: list[dict]) -> list[dict]:
+def _rewrite_asks(clauses: list[dict],
+                  assumptions: list[str] | None = None) -> list[dict]:
     out: list[dict] = []
+    assumptions = assumptions if assumptions is not None else []
 
     def _emit(src: dict, text: str):
         out.append({**src, "id": f"clause-{len(out) + 1}", "text": text})
@@ -1280,10 +1338,22 @@ def _rewrite_asks(clauses: list[dict]) -> list[dict]:
                 continue
         if m := _VERIFY_LEAD.match(t):
             body = m.group("body").strip()
+            # NOOD_0217 — the same body with any control-noun run before a
+            # quote lifted out; each handler below retries on it when the
+            # noun-carrying original refuses. Used only via those
+            # tightly-shaped handlers, so a state assertion never rewrites.
+            bare = _strip_control_nouns(body)
+
+            def _noun_note():
+                assumptions.append(
+                    f"read '{body}' as a claim on the quoted text — the "
+                    "control noun names the instrument, not page text")
             # NOOD_0209 — quoted conjunction: one check per member. A claim
             # lead the grammar already reads ('the article shows "A", "B"
             # and "C"') is phrasing; the quoted members are the assertion.
             conj = _split_conjuncts(body)
+            if not conj and bare != body and (conj := _split_conjuncts(bare)):
+                _noun_note()
             if not conj and (h := _HAS.match(body)):
                 conj = _split_conjuncts(h.group(2))
             if conj:
@@ -1296,10 +1366,17 @@ def _rewrite_asks(clauses: list[dict]) -> list[dict]:
             if ps := _PAGE_STATUS.match(body):
                 _emit(c, f'verify page status {ps.group("code")}')
                 continue
+            if nc := _NOUN_CLAIM.match(body):
+                _noun_note()
+                _emit(c, f'verify "{nc.group("content")}"')
+                continue
             if pr := _PRESENCE_RESIDUE.match(body):
                 _emit(c, f'verify "{pr.group("content")}"')
                 continue
-            if cq := _CONTAINS_QUOTED.match(body):
+            cq = _CONTAINS_QUOTED.match(body)
+            if not cq and bare != body and (cq := _CONTAINS_QUOTED.match(bare)):
+                _noun_note()
+            if cq:
                 _emit(c, f'verify "{cq.group("content")}"')
                 continue
             # NOOD_0212 — a MIXED list ('the page contains "Steve Jobs", his
@@ -1341,14 +1418,15 @@ def expand(text: str, base_url: str | None = None) -> dict:
     yields byte-identical output. `unresolved` names clauses outside the
     grammar (model_fallback may translate those); `conflicts` names typed
     contradictions the flow itself contains (no model may guess past them)."""
-    clauses = _rewrite_asks(_clauses(text))
+    assumptions: list[str] = []
+    clauses = _rewrite_asks(_clauses(text), assumptions)
     if not clauses:
         return {"ok": False, "error": "empty prompt", "assumptions": [],
                 "unrecognized": [], "unresolved": [], "conflicts": [],
                 "goal": None}
     nodes = [_parse_clause(c) for c in clauses]
     fi = _flow_index(nodes)
-    assumptions, unrecognized = [], []
+    unrecognized: list[str] = []
     unresolved, conflicts, inferences, coverage = [], [], [], []
     urls, dismissals, actions, checks = [], [], [], []
     searches: dict[int, dict] = {}      # node index → search action

@@ -30,10 +30,15 @@ took and where the rest lives.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 
 DEFAULT_BUDGET_BYTES = 8_000
+
+# NOOD_0217 — never trimmed, at any depth: `blocking` is the repair path's
+# whole evidence, and a trimmed blocker list reads as "that was all of them".
+_NEVER_TRIM = {"blocking"}
 
 
 def budget_bytes() -> int:
@@ -53,41 +58,59 @@ def size(payload, indent: int | None = None) -> int:
     return len(json.dumps(payload, default=str, indent=indent))
 
 
+def _candidates(node, path=()):
+    """Every trimmable leaf — a list (len > 1) or long string — at ANY depth,
+    as (key-path, value) pairs. NOOD_0217: the authoring envelope's weight is
+    in nested dicts (`author`, `run`), which the old top-level-only scan could
+    never see, so every authoring call overflowed with "nothing is trimmable".
+    Dicts are walked, never cut themselves — keys are never shed."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k in _NEVER_TRIM:
+                continue
+            yield from _candidates(v, path + (k,))
+    elif (isinstance(node, list) and len(node) > 1) \
+            or (isinstance(node, str) and len(node) > 200):
+        yield path, node
+
+
 def bound(payload, budget: int | None = None, hint: str = "",
           indent: int | None = None) -> dict:
     """`payload` trimmed to fit `budget` serialized bytes, with a
     `payload_note` naming what was cut and `hint` saying where the rest is.
 
     Only dicts are trimmed (every tool returns one); anything else passes
-    through untouched. The largest list/string value is cut each pass, so a
-    payload dominated by one runaway list loses only that list — the small
-    keys an author actually reads (`ready`, `blocking`, `author_ready`,
-    verdicts, paths, URLs) are never the largest value and survive whole."""
+    through untouched. The largest list/string value — at any depth — is cut
+    each pass, so a payload dominated by one runaway value loses only that
+    value; keys are never dropped, and the small keys an author actually
+    reads (`ready`, `blocking`, `author_ready`, verdicts, paths, URLs) are
+    never the largest value and survive whole."""
     budget = budget_bytes() if budget is None else budget
     if not isinstance(payload, dict) or size(payload, indent) <= budget:
         return payload
 
     # Trim to leave room for the note itself — otherwise the explanation of
     # the trim is what puts the payload back over the line.
-    out, trimmed, room = dict(payload), [], max(1, budget - 400)
+    out, trimmed, room = copy.deepcopy(payload), [], max(1, budget - 400)
     while size(out, indent) > room:
-        shrinkable = {k: v for k, v in out.items()
-                      if (isinstance(v, list) and len(v) > 1)
-                      or (isinstance(v, str) and len(v) > 200)}
+        shrinkable = list(_candidates(out))
         if not shrinkable:
             break
-        key = max(shrinkable, key=lambda k: size(out[k], indent))
+        path, value = max(shrinkable, key=lambda pv: size(pv[1], indent))
         # Cut what the payload is actually over by, priced at this value's own
         # bytes-per-element — halving would throw away a 60-feature index down
         # to 15, and a fixed ratio collapses a 200 KB string to nothing.
         # The -1 guarantees progress: a lap that cuts nothing loops forever,
         # and every lap re-serializes the whole payload.
-        value = out[key]
         per = max(1.0, size(value, indent) / len(value))
         keep = len(value) - int((size(out, indent) - room) / per) - 1
-        out[key] = value[:max(1, min(keep, len(value) - 1))]
-        if key not in trimmed:
-            trimmed.append(key)
+        node = out
+        for k in path[:-1]:
+            node = node[k]
+        node[path[-1]] = value[:max(1, min(keep, len(value) - 1))]
+        name = ".".join(path)
+        if name not in trimmed:
+            trimmed.append(name)
 
     if not trimmed:
         # Nothing left to halve and still over: hand it back whole rather than
