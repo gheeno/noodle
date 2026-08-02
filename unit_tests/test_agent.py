@@ -557,11 +557,16 @@ def test_step_vocabulary_matches_pattern_table():
     still resolve via the real pattern table. A line here that stops
     matching teaches the model step grammar the engine will fail on."""
     from noodle.repl import prompts
+    from noodle.resolver.api_patterns import match as api_match
     from noodle.resolver.patterns import match, normalize_phrasing, normalize_subject
 
     steps = [ln.strip() for ln in prompts.STEP_VOCABULARY.splitlines()]
     steps = [s for s in steps if s.split(" ", 1)[0] in ("Given", "When", "Then")]
     assert steps, "vocabulary parse found no example steps"
-    bad = [s for s in steps
-           if match(normalize_phrasing(normalize_subject(s.split(" ", 1)[1]))) is None]
+
+    def _resolves(text):        # NOOD_0216 — REST rows live in the api table
+        n = normalize_phrasing(normalize_subject(text))
+        return api_match(n) or match(n)
+
+    bad = [s for s in steps if _resolves(s.split(" ", 1)[1]) is None]
     assert not bad, "prompt vocabulary drifted from patterns.py:\n  " + "\n  ".join(bad)

@@ -1402,6 +1402,27 @@ def after_scenario(context, scenario):
         except Exception:
             pass
 
+    # NOOD_0216 — the api wok's evidence: the scenario's REST request/response
+    # transcript (runner._execute_rest records every call, bodies capped and
+    # value-scrubbed), attached exactly like the web wok's network log. This
+    # is what makes the wok registry's "recorded request/response pair on the
+    # Allure step" claim true instead of aspirational — @api scenarios never
+    # wire the browser listeners above, so without it they attached nothing.
+    rest_ev = ctx_get(context, "_rest_evidence", None)
+    if rest_ev:
+        try:
+            net_dir = _paths.network_dir()
+            os.makedirs(net_dir, exist_ok=True)
+            safe_name = scenario.name.replace(" ", "_").replace("/", "_")[:80]
+            api_path = net_dir / f"{safe_name}.api.json"
+            api_path.write_text(log.redact(json.dumps(rest_ev, indent=2)),
+                                encoding="utf-8")
+            ar_api = _allure_result(context)
+            if ar_api is not None:
+                ar_api.add_attachment("api log", str(api_path), "application/json")
+        except Exception:
+            pass
+
     # NOOD_0018 Phase 4 — visual baseline diff on PASSING web scenarios
     # (opt-in: NOODLE_VISUAL_BASELINE). Failures already get a screenshot +
     # classifier; this is the cheap detector for "passed but looks wrong".

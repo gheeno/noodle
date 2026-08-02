@@ -7,7 +7,7 @@
 #       - repository: noodle
 #         type: git                  # or 'github' + endpoint: <service connection>
 #         name: Tooling/noodle
-#         ref: refs/tags/1.0.0a30     # pin the engine — a moving ref is not a build
+#         ref: refs/tags/1.0.0a31     # pin the engine — a moving ref is not a build
 #
 #   jobs:
 #     - template: ci/azure/noodle-tests.yml@noodle

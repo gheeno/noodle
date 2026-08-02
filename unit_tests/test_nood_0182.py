@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 from noodle import config
-from noodle.agents.web import rest_client
+from noodle.agents.api import rest_client
 from noodle.resolver.step_resolver import resolve
 
 

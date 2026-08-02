@@ -4,9 +4,9 @@ import json
 import os
 import re
 import shlex
-import time
 
 from noodle import app_lifecycle, mfa
+from noodle.agents.api import actions as api_actions
 from noodle.agents.web import actions
 from noodle.log import logger
 from noodle.orchestrator import script_runner
@@ -511,224 +511,225 @@ def _use_named_context(context, name: str):
     logger.info(f"\n  👥 Acting as '{name}'")
 
 
-def _json_path(data, path: str):
-    """Walk a dotted path with optional [n] indexes ('data.items[0].id')
-    through parsed JSON. Raises AssertionError naming the part that missed."""
-    cur = data
-    for name, idx in re.findall(r'([^.\[\]]+)|\[(\d+)\]', path):
-        if name:
-            if not isinstance(cur, dict) or name not in cur:
-                raise AssertionError(f"Key '{name}' not found walking '{path}' in response JSON")
-            cur = cur[name]
-        else:
-            i = int(idx)
-            if not isinstance(cur, list) or i >= len(cur):
-                raise AssertionError(f"Index [{i}] out of range walking '{path}' in response JSON")
-            cur = cur[i]
-    return cur
-
-
-def _oauth2_fetch(context, url: str, client_id: str, client_secret: str):
-    """Client-credentials grant → Authorization: Bearer <token> in _REST_HEADERS.
-    Grant params are kept in _vars so a later 401 can refresh once (rest_call).
-    The token/secret are never logged."""
-    import urllib.parse
-
-    from noodle.agents.web import rest_client
-    form = urllib.parse.urlencode({
-        'grant_type': 'client_credentials',
-        'client_id': client_id,
-        'client_secret': client_secret,
-    })
-    status, resp, _ = rest_client.rest_call(
-        'POST', url, form, {'Content-Type': 'application/x-www-form-urlencoded'})
-    assert status == 200, f"OAuth2 token fetch failed: {status} {resp[:200]}"
-    try:
-        token = json.loads(resp).get('access_token')
-    except ValueError:
-        token = None
-    assert token, f"OAuth2 response has no access_token: {resp[:200]}"
-    hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
-    hdrs['Authorization'] = f"Bearer {token}"
-    context._vars['_REST_HEADERS'] = json.dumps(hdrs)
-    context._vars['_REST_OAUTH'] = json.dumps(
-        {'url': url, 'client_id': client_id, 'client_secret': client_secret})
-
-
-def _rest_one(context, method: str, path: str, body, timeout):
-    """One HTTP call with the session's headers, REST_BASE_URL join and the
-    single oauth2 401-refresh; records REST_STATUS/BODY/HEADERS. Shared by
-    rest_call and the NOOD_0201 batch steps so every call in a batch gets the
-    same auth semantics as a lone one. Returns (status, url, body)."""
-    from noodle.agents.web import rest_client
-    base = context._vars.get('REST_BASE_URL', '')
-    url = path if path.startswith('http') else base.rstrip('/') + '/' + path.lstrip('/')
-    hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
-    status, rbody, headers = rest_client.rest_call(method, url, body, hdrs, timeout)
-    if status == 401 and '_REST_OAUTH' in context._vars:
-        # Token likely expired — refresh once and retry once, never loop.
-        o = json.loads(context._vars['_REST_OAUTH'])
-        _oauth2_fetch(context, o['url'], o['client_id'], o['client_secret'])
-        hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
-        status, rbody, headers = rest_client.rest_call(method, url, body, hdrs, timeout)
-    context._vars['REST_STATUS'] = str(status)
-    context._vars['REST_BODY'] = rbody
-    context._vars['REST_HEADERS'] = json.dumps(dict(headers))
-    return status, url, rbody
-
-
-# NOOD_0201 — a batch step is still a functional test, not a load test; the
-# perf wok's loadgen owns volume. The cap catches a generated "repeated
-# 100000 times" before it hammers someone's laptop app.
-_REST_BATCH_CAP = 1000
-
-
-def _rest_batch(context, action, rows: list[dict]):
-    """N calls from one step (NOOD_0201): each row's {placeholder} tokens are
-    substituted into the path/body, and `expecting status` asserts EVERY call —
-    a trailing status assertion after N pasted calls only ever saw the last."""
-    total = len(rows)
-    assert total <= _REST_BATCH_CAP, (
-        f"{total} calls in one step exceeds the batch cap ({_REST_BATCH_CAP}). "
-        "Volume belongs to the perf wok: \"runs a load test on '<url>' with "
-        "N requests\".")
-    for n, subs in enumerate(rows, 1):
-        path, body = action['path'], action.get('body')
-        for k, v in subs.items():
-            path = path.replace('{%s}' % k, v)
-            if body:
-                body = body.replace('{%s}' % k, v)
-        status, url, rbody = _rest_one(
-            context, action['method'], path, body, action.get('timeout'))
-        if action.get('expect') is not None and status != action['expect']:
-            detail = ', '.join(f'{k}={v}' for k, v in subs.items())
-            raise AssertionError(
-                f"Call {n} of {total} ({detail}): {action['method']} {url} → "
-                f"expected status {action['expect']}, got {status}. "
-                f"Body: {rbody[:200]}")
-    logger.info(f"\n  🌐 {action['method']} ×{total} → "
-                + (f"all {action['expect']}" if action.get('expect') is not None
-                   else "done"))
-
-
-def _json_typed_eq(actual, expected: str) -> bool:
-    """NOOD_0201 — compare a parsed-JSON value against the step's quoted
-    string the way the JSON meant it: booleans and null by name, numbers by
-    value (so '20' ≠ 200 and '1.0' == 1), everything else as text."""
-    if isinstance(actual, bool):
-        return expected.strip().lower() == str(actual).lower()
-    if actual is None:
-        return expected.strip().lower() in ('null', 'none')
-    if isinstance(actual, (int, float)):
-        try:
-            return float(expected) == actual
-        except ValueError:
-            return False
-    return str(actual) == expected
-
-
-def _rest_poll(context, action):
-    """NOOD_0201 — call until the condition holds or the budget runs out.
-
-    The REST twin of the web wok's smart wait: an endpoint that answers 202 and
-    finishes the write asynchronously made the next assertion a race. Returns
-    on the first satisfying response (the budget is a ceiling, not a sleep),
-    and the last response stays in REST_STATUS/REST_BODY either way."""
-    from noodle.config import rest_timeout
-    budget = rest_timeout(action.get('timeout'))
-    deadline = time.monotonic() + budget
-    attempts, status, body = 0, None, ''
-    while True:
-        attempts += 1
-        # Each attempt gets what's left of the window, so one hung call can't
-        # outlive the budget the step was given.
-        left = max(0.5, deadline - time.monotonic())
-        status, url, body = _rest_one(context, action['method'], action['path'],
-                                     None, left)
-        ok = status == action['expected'] and \
-            (not action.get('needle') or action['needle'] in body)
-        if ok:
-            logger.info(f"\n  ⏳ {action['method']} {url} → {status} after "
-                        f"{attempts} attempt(s)")
-            return
-        if time.monotonic() >= deadline:
-            want = f"status {action['expected']}"
-            if action.get('needle'):
-                want += f" and body containing '{action['needle']}'"
-            raise AssertionError(
-                f"{action['method']} {url} never returned {want} within "
-                f"{budget:g}s ({attempts} attempts). Last: {status} "
-                f"{body[:200]}\n"
-                f"  → Endpoint slower than the budget? Append \"within "
-                f"{int(budget * 2)} seconds\" to this step, or raise "
-                f"NOODLE_REST_TIMEOUT.")
-        time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
-
-
-# NOOD_0201 — the JSON Schema subset an API response contract actually uses.
-# ponytail: type/required/properties/items/enum/bounds, hand-walked in ~40
-# lines instead of declaring the `jsonschema` package for the base install
-# (it is only ever present transitively today). Ceiling: no $ref, no
-# oneOf/allOf/not, no format. If a workspace needs those, declare jsonschema
-# and swap _schema_errors for its validator — the step contract stays.
-_JSON_TYPES = {'string': str, 'number': (int, float), 'integer': int,
-               'boolean': bool, 'object': dict, 'array': list,
-               'null': type(None)}
-
-
-def _type_ok(value, name: str) -> bool:
-    py = _JSON_TYPES.get(name)
-    if py is None:
-        return True                      # unknown keyword: not ours to police
-    if name in ('number', 'integer') and isinstance(value, bool):
-        return False                     # JSON booleans are not numbers
-    return isinstance(value, py)
-
-
-def _schema_errors(data, schema: dict, where: str = '$') -> list[str]:
-    """Every way `data` violates `schema`, each naming its own path."""
-    errs: list[str] = []
-    if not isinstance(schema, dict):
-        return errs
-    types = schema.get('type')
-    if types is not None:
-        names = types if isinstance(types, list) else [types]
-        if not any(_type_ok(data, n) for n in names):
-            got = 'null' if data is None else type(data).__name__
-            return [f"{where}: expected type {'|'.join(names)}, got {got}"]
-    if (enum := schema.get('enum')) is not None and data not in enum:
-        errs.append(f"{where}: {data!r} is not one of {enum}")
-    if isinstance(data, dict):
-        for key in schema.get('required') or []:
-            if key not in data:
-                errs.append(f"{where}: missing required property {key!r}")
-        for key, sub in (schema.get('properties') or {}).items():
-            if key in data:
-                errs += _schema_errors(data[key], sub, f"{where}.{key}")
-    if isinstance(data, list):
-        if (lo := schema.get('minItems')) is not None and len(data) < lo:
-            errs.append(f"{where}: {len(data)} items, minimum {lo}")
-        if (hi := schema.get('maxItems')) is not None and len(data) > hi:
-            errs.append(f"{where}: {len(data)} items, maximum {hi}")
-        if isinstance(schema.get('items'), dict):
-            for i, item in enumerate(data):
-                errs += _schema_errors(item, schema['items'], f"{where}[{i}]")
-    if isinstance(data, (int, float)) and not isinstance(data, bool):
-        if (lo := schema.get('minimum')) is not None and data < lo:
-            errs.append(f"{where}: {data} is below minimum {lo}")
-        if (hi := schema.get('maximum')) is not None and data > hi:
-            errs.append(f"{where}: {data} is above maximum {hi}")
-    return errs
+# NOOD_0216 — the REST protocol engine moved to noodle/agents/api/actions.py
+# (the api wok owns its engine like every other wok). These aliases keep the
+# runner's historical surface for callers and tests that reached the helpers
+# here; the session-state contract (_REST_HEADERS / _REST_COOKIES /
+# REST_STATUS / REST_BODY / REST_HEADERS in context._vars) is unchanged.
+_json_path = api_actions.json_path
+_json_typed_eq = api_actions.json_typed_eq
+_schema_errors = api_actions.schema_errors
+_REST_BATCH_CAP = api_actions.REST_BATCH_CAP
 
 
 def _rest_json(context, path: str):
-    """The latest response body parsed as JSON, walked to `path` ('$'/'' = root)."""
-    body = context._vars.get('REST_BODY', '')
-    try:
-        data = json.loads(body)
-    except ValueError as exc:
-        raise AssertionError(f"REST_BODY is not valid JSON: {body[:100]}") from exc
-    return data if path in ('', '$', '.') else _json_path(data, path)
+    return api_actions.rest_json(context._vars, path)
+
+
+def _rest_evidence(context) -> list:
+    """The scenario's request/response transcript (NOOD_0216) — written and
+    attached to Allure as "api log" by hooks.after_scenario, which is what
+    makes the wok registry's evidence claim true instead of aspirational."""
+    ev = ctx_get(context, '_rest_evidence', None)
+    if ev is None:
+        ev = context._rest_evidence = []
+    return ev
+
+
+def _execute_rest(context, action, step_text):
+    """NOOD_0216 — the api wok's dispatch, one branch per rest_* action type
+    (the wok idiom: _execute_perf, _execute_desktop, _execute_mobile — thin
+    branches, engine in agents/api/actions.py). Called before the browser
+    guard, so REST composes into every scenario, tag or no tag."""
+    t = action['type']
+    ev = _rest_evidence(context)
+    if t == 'rest_set_header':
+        hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
+        hdrs[action['name']] = action['value']
+        context._vars['_REST_HEADERS'] = json.dumps(hdrs)
+    elif t == 'rest_set_auth':
+        hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
+        if action['scheme'] == 'bearer':
+            hdrs['Authorization'] = f"Bearer {action['token']}"
+        else:                               # basic
+            import base64
+            if 'user' not in action or 'password' not in action:
+                raise AssertionError(
+                    f"rest_set_auth (basic) needs 'user' and 'password' — got: {action}"
+                )
+            cred = base64.b64encode(
+                f"{action['user']}:{action['password']}".encode()).decode()
+            hdrs['Authorization'] = f"Basic {cred}"
+        context._vars['_REST_HEADERS'] = json.dumps(hdrs)
+    elif t == 'rest_clear_cookies':
+        context._vars['_REST_COOKIES'] = '{}'
+    elif t == 'rest_oauth2':
+        api_actions.oauth2_fetch(context._vars, action['url'],
+                                 action['client_id'], action['client_secret'])
+    elif t == 'rest_call':
+        # NOOD_0216 — `with form body '...'` is the same call with a
+        # per-request content type; the session headers stay untouched.
+        extra = ({'Content-Type': 'application/x-www-form-urlencoded'}
+                 if action.get('form') else None)
+        status, url, body = api_actions.rest_one(
+            context._vars, action['method'], action['path'],
+            action.get('body'), action.get('timeout'), ev, extra)
+        if action.get('var'):
+            context._vars[action['var'].upper().replace(' ', '_')] = body
+        logger.info(f"\n  🌐 {action['method']} {url} → {status}")
+    elif t == 'rest_call_doc':
+        # NOOD_0201 — body from the step's docstring; {env:}/{var:} resolve
+        # inside it the same as in a quoted body.
+        doc = getattr(context, 'text', None)
+        if not doc:
+            raise AssertionError(
+                f"This step needs a docstring body under it: \"{step_text}\"\n"
+                '  → Indent a """ … """ block below the step')
+        status, url, body = api_actions.rest_one(
+            context._vars, action['method'], action['path'],
+            substitute(doc, context._vars), action.get('timeout'), ev)
+        if action.get('var'):
+            context._vars[action['var'].upper().replace(' ', '_')] = body
+        logger.info(f"\n  🌐 {action['method']} {url} → {status}")
+    elif t == 'rest_graphql':
+        doc = getattr(context, 'text', None)
+        if not doc:
+            raise AssertionError(
+                f"This step needs the GraphQL query as a docstring under it: "
+                f"\"{step_text}\"\n"
+                '  → Indent a """ … """ block below the step')
+        status, url, _body = api_actions.graphql_call(
+            context._vars, action['path'], substitute(doc, context._vars),
+            action.get('timeout'), ev)
+        logger.info(f"\n  🌐 GRAPHQL {url} → {status}")
+    elif t == 'rest_upload':
+        full = _resources_path(context, action['file'])
+        try:
+            with open(full, 'rb') as fh:
+                content = fh.read()
+        except OSError as exc:
+            raise AssertionError(
+                f"upload file not found: {action['file']} (looked in the "
+                f"app's resources/ → {full})") from exc
+        body, ctype = api_actions.rest_client.multipart_body(
+            action['field'], os.path.basename(full), content)
+        status, url, _body = api_actions.rest_one(
+            context._vars, action['method'], action['path'], body,
+            action.get('timeout'), ev, {'Content-Type': ctype})
+        logger.info(f"\n  🌐 {action['method']} {url} "
+                    f"(multipart {action['file']}) → {status}")
+    elif t == 'rest_call_each':
+        if getattr(context, 'table', None) is None:
+            raise AssertionError(
+                f"This step needs a Gherkin data table under it: \"{step_text}\"\n"
+                "  → Header row names the {placeholder} tokens, one call per data row")
+        rows = [{h.strip(): substitute(c, context._vars)
+                 for h, c in zip(context.table.headings, row.cells)}
+                for row in context.table]
+        api_actions.rest_batch(context._vars, action, rows, ev)
+    elif t == 'rest_call_repeat':
+        api_actions.rest_batch(context._vars, action,
+                               [{'i': str(n)} for n in range(1, action['count'] + 1)],
+                               ev)
+    elif t == 'rest_wait_until':
+        api_actions.rest_poll(context._vars, action, ev)
+    elif t == 'rest_assert_status':
+        actual = int(context._vars.get('REST_STATUS', 0))
+        assert actual == action['expected'], f"Expected status {action['expected']}, got {actual}"
+    elif t == 'rest_assert_schema':
+        full = _resources_path(context, action['file'])
+        try:
+            with open(full, encoding="utf-8") as fh:
+                schema = json.load(fh)
+        except OSError as exc:
+            raise AssertionError(
+                f"schema file not found: {action['file']} (looked in the app's "
+                f"resources/ → {full})") from exc
+        except ValueError as exc:
+            raise AssertionError(
+                f"schema file {action['file']} is not valid JSON: {exc}") from exc
+        errs = api_actions.schema_errors(_rest_json(context, ''), schema)
+        assert not errs, ("response does not match schema "
+                          f"'{action['file']}':\n    - "
+                          + "\n    - ".join(errs[:10]))
+    elif t == 'rest_extract_json':
+        body = context._vars.get('REST_BODY', '{}')
+        try:
+            data = json.loads(body)
+        except ValueError as exc:
+            raise AssertionError(f"REST_BODY is not valid JSON: {body[:100]}") from exc
+        key = action['key']
+        if '.' in key or '[' in key:        # NOOD_0007 — dotted/indexed path
+            value = api_actions.json_path(data, key)
+        else:                               # legacy flat key (first item of a list)
+            item = data[0] if isinstance(data, list) else data
+            if key not in item:
+                raise AssertionError(f"Key '{key}' not found in response JSON")
+            value = item[key]
+        target = action['var'].upper().replace(' ', '_')
+        context._vars[target] = str(value)
+        logger.info(f"\n  💾 Extracted '{key}' → `{target}` = "
+                    f"{_safe_repr(key + ' ' + target, context._vars[target])}")
+    elif t == 'rest_assert_body':
+        body = context._vars.get('REST_BODY', '')
+        assert action['needle'] in body, f"Response body does not contain '{action['needle']}'"
+    elif t == 'rest_assert_graphql':
+        # NOOD_0216 — a GraphQL server happily answers 200 with an errors
+        # array; a status assertion alone certifies a broken query.
+        data = api_actions.rest_json(context._vars, '')
+        errs = data.get('errors') if isinstance(data, dict) else None
+        assert not errs, (
+            "GraphQL response carries errors:\n    - "
+            + "\n    - ".join(str((e or {}).get('message', e))
+                              if isinstance(e, dict) else str(e)
+                              for e in errs[:5]))
+    elif t == 'rest_assert_json':
+        value = _rest_json(context, action['path'])
+        if action['op'] == 'contain':
+            assert action['expected'] in str(value), (
+                f"response json '{action['path']}' = {value!r} does not "
+                f"contain '{action['expected']}'")
+        else:
+            assert api_actions.json_typed_eq(value, action['expected']), (
+                f"response json '{action['path']}' = {value!r}, "
+                f"expected '{action['expected']}'")
+    elif t == 'rest_assert_json_count':
+        value = _rest_json(context, action['path'])
+        if not isinstance(value, (list, dict)):
+            raise AssertionError(
+                f"response json '{action['path']}' is {type(value).__name__}, "
+                f"not a list/object — nothing to count")
+        assert len(value) == action['count'], (
+            f"response json '{action['path']}' has {len(value)} items, "
+            f"expected {action['count']}")
+    elif t == 'rest_assert_body_table':
+        body = context._vars.get('REST_BODY', '')
+        for row in context.table:
+            key = _row_get(row, 'Key') or row.cells[0]
+            value = (_row_get(row, 'Value')
+                     or (row.cells[1] if len(row.cells) > 1 else '')).strip()
+            assert key in body, f"Response body does not contain key '{key}'"
+            if value:
+                assert value in body, f"Response body does not contain value '{value}' for key '{key}'"
+    elif t == 'rest_assert_header':
+        headers = json.loads(context._vars.get('REST_HEADERS', '{}'))
+        actual = next((v for k, v in headers.items() if k.lower() == action['name'].lower()), None)
+        assert actual is not None, f"Response header '{action['name']}' not found"
+        assert action['value'].lower() in actual.lower(), \
+            f"Header '{action['name']}': expected '{action['value']}', got '{actual}'"
+    elif t == 'rest_assert_header_table':
+        headers = json.loads(context._vars.get('REST_HEADERS', '{}'))
+        for row in context.table:
+            name = _row_get(row, 'Header') or row.cells[0]
+            expected = (_row_get(row, 'Value')
+                        or (row.cells[1] if len(row.cells) > 1 else '')).strip()
+            actual = next((v for k, v in headers.items() if k.lower() == name.lower()), None)
+            assert actual is not None, f"Response header '{name}' not found"
+            if expected:
+                assert expected.lower() in actual.lower(), \
+                    f"Header '{name}': expected '{expected}', got '{actual}'"
+    else:
+        raise AssertionError(f"Unknown REST action type {t!r} for: \"{step_text}\"")
 
 
 @functools.lru_cache(maxsize=1)
@@ -742,7 +743,7 @@ def _handler_names() -> dict:
     if) simply aren't in the map — the caller falls back to the action type.
     """
     try:
-        src = inspect.getsource(execute_step)
+        src = inspect.getsource(execute_step) + inspect.getsource(_execute_rest)
     except OSError:                     # zipped/frozen install — no source
         return {}
     return dict(re.findall(r"t == '(\w+)':\n(?:\s*#.*\n)*\s*(?:return\s+)?([\w.]+)\(", src))
@@ -848,6 +849,10 @@ def execute_step(step_text: str, context):
         return _execute_perf(context, action)
     if t in _DESKTOP_FILE_TYPES:
         return _execute_desktop(context, action)
+    # NOOD_0216 — the api wok dispatches here too, before the browser guard:
+    # REST is plain I/O, legal in a browserless @api scenario AND mid-@web.
+    if t.startswith('rest_'):
+        return _execute_rest(context, action, step_text)
 
     # @api/@appium scenarios run without a browser (hooks skips Playwright).
     # REST and non-UI steps work; a web step gets a clear error instead of a
@@ -1334,143 +1339,6 @@ def execute_step(step_text: str, context):
         page.set_viewport_size({'width': new[0], 'height': new[1]})
     elif t == 'assert_viewport':
         actions.assert_viewport(page, action['width'], action.get('height'))
-    # --- NOOD_0029: proper REST HTTP client ------------------------------------
-    elif t == 'rest_set_header':
-        hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
-        hdrs[action['name']] = action['value']
-        context._vars['_REST_HEADERS'] = json.dumps(hdrs)
-    elif t == 'rest_set_auth':
-        hdrs = json.loads(context._vars.get('_REST_HEADERS', '{}'))
-        if action['scheme'] == 'bearer':
-            hdrs['Authorization'] = f"Bearer {action['token']}"
-        else:                               # basic
-            import base64
-            if 'user' not in action or 'password' not in action:
-                raise AssertionError(
-                    f"rest_set_auth (basic) needs 'user' and 'password' — got: {action}"
-                )
-            cred = base64.b64encode(
-                f"{action['user']}:{action['password']}".encode()).decode()
-            hdrs['Authorization'] = f"Basic {cred}"
-        context._vars['_REST_HEADERS'] = json.dumps(hdrs)
-    elif t == 'rest_oauth2':
-        _oauth2_fetch(context, action['url'], action['client_id'], action['client_secret'])
-    elif t == 'rest_call':
-        status, url, body = _rest_one(context, action['method'], action['path'],
-                                      action.get('body'), action.get('timeout'))
-        if action.get('var'):
-            context._vars[action['var'].upper().replace(' ', '_')] = body
-        logger.info(f"\n  🌐 {action['method']} {url} → {status}")
-    elif t == 'rest_call_doc':
-        # NOOD_0201 — body from the step's docstring; {env:}/{var:} resolve
-        # inside it the same as in a quoted body.
-        doc = getattr(context, 'text', None)
-        if not doc:
-            raise AssertionError(
-                f"This step needs a docstring body under it: \"{step_text}\"\n"
-                '  → Indent a """ … """ block below the step')
-        status, url, _ = _rest_one(context, action['method'], action['path'],
-                                   substitute(doc, context._vars), action.get('timeout'))
-        logger.info(f"\n  🌐 {action['method']} {url} → {status}")
-    elif t == 'rest_call_each':
-        if getattr(context, 'table', None) is None:
-            raise AssertionError(
-                f"This step needs a Gherkin data table under it: \"{step_text}\"\n"
-                "  → Header row names the {placeholder} tokens, one call per data row")
-        rows = [{h.strip(): substitute(c, context._vars)
-                 for h, c in zip(context.table.headings, row.cells)}
-                for row in context.table]
-        _rest_batch(context, action, rows)
-    elif t == 'rest_call_repeat':
-        _rest_batch(context, action,
-                    [{'i': str(n)} for n in range(1, action['count'] + 1)])
-    elif t == 'rest_wait_until':
-        _rest_poll(context, action)
-    elif t == 'rest_assert_status':
-        actual = int(context._vars.get('REST_STATUS', 0))
-        assert actual == action['expected'], f"Expected status {action['expected']}, got {actual}"
-    elif t == 'rest_assert_schema':
-        full = _resources_path(context, action['file'])
-        try:
-            with open(full, encoding="utf-8") as fh:
-                schema = json.load(fh)
-        except OSError as exc:
-            raise AssertionError(
-                f"schema file not found: {action['file']} (looked in the app's "
-                f"resources/ → {full})") from exc
-        except ValueError as exc:
-            raise AssertionError(
-                f"schema file {action['file']} is not valid JSON: {exc}") from exc
-        errs = _schema_errors(_rest_json(context, ''), schema)
-        assert not errs, ("response does not match schema "
-                          f"'{action['file']}':\n    - "
-                          + "\n    - ".join(errs[:10]))
-    elif t == 'rest_extract_json':
-        body = context._vars.get('REST_BODY', '{}')
-        try:
-            data = json.loads(body)
-        except ValueError as exc:
-            raise AssertionError(f"REST_BODY is not valid JSON: {body[:100]}") from exc
-        key = action['key']
-        if '.' in key or '[' in key:        # NOOD_0007 — dotted/indexed path
-            value = _json_path(data, key)
-        else:                               # legacy flat key (first item of a list)
-            item = data[0] if isinstance(data, list) else data
-            if key not in item:
-                raise AssertionError(f"Key '{key}' not found in response JSON")
-            value = item[key]
-        target = action['var'].upper().replace(' ', '_')
-        context._vars[target] = str(value)
-        logger.info(f"\n  💾 Extracted '{key}' → `{target}` = "
-                    f"{_safe_repr(key + ' ' + target, context._vars[target])}")
-    elif t == 'rest_assert_body':
-        body = context._vars.get('REST_BODY', '')
-        assert action['needle'] in body, f"Response body does not contain '{action['needle']}'"
-    elif t == 'rest_assert_json':
-        value = _rest_json(context, action['path'])
-        if action['op'] == 'contain':
-            assert action['expected'] in str(value), (
-                f"response json '{action['path']}' = {value!r} does not "
-                f"contain '{action['expected']}'")
-        else:
-            assert _json_typed_eq(value, action['expected']), (
-                f"response json '{action['path']}' = {value!r}, "
-                f"expected '{action['expected']}'")
-    elif t == 'rest_assert_json_count':
-        value = _rest_json(context, action['path'])
-        if not isinstance(value, (list, dict)):
-            raise AssertionError(
-                f"response json '{action['path']}' is {type(value).__name__}, "
-                f"not a list/object — nothing to count")
-        assert len(value) == action['count'], (
-            f"response json '{action['path']}' has {len(value)} items, "
-            f"expected {action['count']}")
-    elif t == 'rest_assert_body_table':
-        body = context._vars.get('REST_BODY', '')
-        for row in context.table:
-            key = _row_get(row, 'Key') or row.cells[0]
-            value = (_row_get(row, 'Value')
-                     or (row.cells[1] if len(row.cells) > 1 else '')).strip()
-            assert key in body, f"Response body does not contain key '{key}'"
-            if value:
-                assert value in body, f"Response body does not contain value '{value}' for key '{key}'"
-    elif t == 'rest_assert_header':
-        headers = json.loads(context._vars.get('REST_HEADERS', '{}'))
-        actual = next((v for k, v in headers.items() if k.lower() == action['name'].lower()), None)
-        assert actual is not None, f"Response header '{action['name']}' not found"
-        assert action['value'].lower() in actual.lower(), \
-            f"Header '{action['name']}': expected '{action['value']}', got '{actual}'"
-    elif t == 'rest_assert_header_table':
-        headers = json.loads(context._vars.get('REST_HEADERS', '{}'))
-        for row in context.table:
-            name = _row_get(row, 'Header') or row.cells[0]
-            expected = (_row_get(row, 'Value')
-                        or (row.cells[1] if len(row.cells) > 1 else '')).strip()
-            actual = next((v for k, v in headers.items() if k.lower() == name.lower()), None)
-            assert actual is not None, f"Response header '{name}' not found"
-            if expected:
-                assert expected.lower() in actual.lower(), \
-                    f"Header '{name}': expected '{expected}', got '{actual}'"
     # --- Phases M–S (2026-07): console/network health, emulation, offline,
     # a11y, clipboard, websockets, print/PDF ---------------------------------
     elif t == 'assert_no_console_errors':

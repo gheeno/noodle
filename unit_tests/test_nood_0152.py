@@ -525,13 +525,15 @@ def test_every_pattern_action_is_dispatched():
     import re as _re
     from pathlib import Path
 
+    from noodle.resolver.api_patterns import PATTERNS as API_PATTERNS
     from noodle.resolver.desktop_patterns import PATTERNS as DESKTOP_PATTERNS
     from noodle.resolver.perf_patterns import PATTERNS as PERF_PATTERNS
 
-    # NOOD_0155 — the wok tables (perf, desktop) dispatch through the same
-    # execute_step, so the same structural guard spans them too.
+    # NOOD_0155 — the wok tables (api, perf, desktop) dispatch through the
+    # same execute_step, so the same structural guard spans them too.
     produced = {a for _, a, _ in PATTERNS if a != "_reject"}
     produced |= {a for _, a, _ in PERF_PATTERNS} | {a for _, a, _ in DESKTOP_PATTERNS}
+    produced |= {a for _, a, _ in API_PATTERNS}
     src = Path(runner.__file__).read_text(encoding="utf-8")
     dispatched = set(_re.findall(r"\bt == '([a-z0-9_]+)'", src))
     assert not (produced - dispatched), \

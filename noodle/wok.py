@@ -188,12 +188,17 @@ def pattern_priority(tags=None) -> tuple[str, ...]:
     the exact pre-NOOD_0155 behavior. @visual is absent on purpose: visual
     scenarios resolve against their own separate table, never these three.
     """
+    # NOOD_0216 — the api table precedes web in EVERY order, not just @api:
+    # its grammar is namespaced ("performs a GET call at", "the response
+    # json ..."), and the REST rows historically sat mid-web-table, BEFORE
+    # web's tail compare catch-alls — consulted after the whole web table,
+    # those catch-alls would steal "the response json 'x' should equal 'y'".
     w = wok_for_tags(tags or ())
     if w.name == "performance":
-        return ("performance", "web", "desktop")
+        return ("performance", "api", "web", "desktop")
     if w.name == "desktop":
-        return ("desktop", "web", "performance")
-    return ("web", "performance", "desktop")  # web, mobile, and untagged
+        return ("desktop", "api", "web", "performance")
+    return ("api", "web", "performance", "desktop")  # api, web, mobile, untagged
 
 
 def installed(wok: Wok) -> bool:

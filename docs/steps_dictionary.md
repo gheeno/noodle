@@ -1219,6 +1219,16 @@ Tag a scenario `@api` to run it **without a browser** — REST steps talk
 straight to the HTTP client, no Playwright launch, no browser binaries needed
 in CI. Web steps inside an `@api` scenario fail with a clear error.
 
+Have an OpenAPI document (a file a developer handed over, or a spec URL)?
+Generate a runnable suite from it instead of typing:
+`noodle api-scan path/to/openapi.yaml --out features/contract.feature`
+(MCP: `probe_api(base_url=<spec path or URL>, suite=True)`) — one scenario
+per documented operation, expected status from the spec, body hints from its
+schemas, `<placeholders>` and open questions for whatever the spec doesn't
+say (NOOD_0216). Every run also attaches the scenario's request/response
+transcript to its Allure result as the **api log** — bodies capped, secrets
+redacted.
+
 ### Setup
 
 ```gherkin
@@ -1322,6 +1332,57 @@ When performs a POST call at '/api/greeting' with this body:
     "channel": "regression"
   }
   """
+```
+
+It can store the response too (NOOD_0216) — and because the body is a
+docstring, this is also the escape hatch for a payload containing a single
+quote, which the inline `with body '...'` form cannot express:
+
+```gherkin
+When performs a POST call at '/api/notes' with this body storing the response in {var:CREATED}:
+  """
+  {"note": "it's got an apostrophe"}
+  """
+```
+
+### Form, multipart and GraphQL messages (NOOD_0216)
+
+Not every API speaks JSON. A form-encoded body is the same call step with
+`form body` (that one request goes out as
+`application/x-www-form-urlencoded`; session headers stay untouched), a file
+goes up as real `multipart/form-data` (the file path resolves against the
+app's `resources/`, like payloads), and a GraphQL query reads as a docstring
+— wrapped into `{"query": ...}` and POSTed through the same client, so auth,
+cookies and the response assertions all just work:
+
+```gherkin
+When performs a POST call at '/login' with form body 'user={env:API_USER}&pass={env:API_PASS}'
+When performs a POST call at '/upload' uploading the file 'fixtures/photo.png' as 'photo'
+
+When performs a graphql query at '/graphql':
+  """
+  query { hero { name } }
+  """
+Then the response should have no graphql errors
+And the response json 'data.hero.name' should equal 'R2-D2'
+```
+
+A GraphQL server happily answers `200` with an `errors` array — assert
+`no graphql errors`, never the status alone.
+
+### Cookies (NOOD_0216)
+
+Set-Cookie responses fill a per-scenario, per-host cookie jar automatically
+(Postman behaviour): a login call's session cookie rides every later call to
+the same host, and never walks to another one. A `Cookie` header you set
+yourself always wins over the jar.
+
+```gherkin
+When performs a POST call at '/login' with form body 'user=bob&pass=pw'
+# the login response's session cookie rides this next call automatically
+When performs a GET call at '/profile'
+# empty the jar to prove the endpoint rejects an unauthenticated call
+When clears the rest cookies
 ```
 
 ### Waiting for an endpoint (NOOD_0201)

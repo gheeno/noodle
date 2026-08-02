@@ -145,6 +145,16 @@ hosts the app locally:
 - **`scan_repo`** stays the static half: OpenAPI files on disk, serve
   commands, stacks. Repo scan says what the app *is*; api-scan says where it
   *answers* and what it *serves* right now.
+- **A spec IS an answer (NOOD_0216).** `noodle api-scan` / `probe_api` also
+  accept an OpenAPI document directly — a local `openapi.yaml`/`.json` path
+  or a spec URL a developer handed over — no live server needed: same
+  report, endpoints and copy-ready steps straight off the document (base URL
+  from the spec's `servers`, or a question when it names none). Add
+  `--suite` / `suite=True` (or `--out <file>` to write it) and the engine
+  generates a **runnable @api feature** — one scenario per documented
+  operation, expected status from the spec's responses, body hints from its
+  schemas; path params and unexemplified bodies come back as visible
+  `<placeholders>` plus `questions`, never guesses.
 
 With a discovered (or given) base URL, api steps may use **relative paths**
 (`POST /api/greeting`): the compiler emits the `REST_BASE_URL` Given bound to
@@ -176,6 +186,29 @@ body:` + `"""..."""`), and JSON assertions are typed — `the response json
 as booleans (`should contain`, `should have N items` too). Goal grammar:
 `{do: api, url, body, rows|repeat, expect_status}` and
 `{json: <path>, equals|contains|items: ...}` checks.
+
+### Every message shape, and the evidence to prove it (NOOD_0216)
+
+- **Form, multipart, GraphQL, cookies.** `with form body 'a=1&b=2'` sends
+  that one call form-encoded; `uploading the file 'f.png' as 'photo'` is a
+  real multipart/form-data upload (browserless twin of the web wok's file
+  chooser); a GraphQL query rides a docstring (`performs a graphql query at
+  '/graphql':`) with `the response should have no graphql errors` as the
+  gate a 200-with-errors response walks straight past; and Set-Cookie
+  responses fill a per-scenario, per-host cookie jar automatically —
+  Postman behaviour, `clears the rest cookies` to reset. Docstring bodies
+  can store the response now, which is also the escape hatch for payloads
+  containing a single quote.
+- **The api log.** Every scenario's REST traffic — method, URL, status,
+  request/response bodies (capped, secrets redacted) — lands on its Allure
+  result as the `api log` attachment, the api wok's twin of the web wok's
+  network log. Before NOOD_0216 the registry *claimed* this evidence and no
+  code wrote it.
+- **Goal parity.** The goal `api` action takes `timeout` (per-call budget)
+  and `wait_until: {status, contains?}` (compiles to the polling step — the
+  wait IS the assertion), and checks take `schema: 'schemas/x.json'` — so
+  async endpoints and contract assertions no longer force hand-written
+  `feature_content`.
 
 ### Waiting, contracts, auth and chaining (NOOD_0201)
 
