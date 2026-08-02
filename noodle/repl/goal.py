@@ -312,6 +312,24 @@ def normalize(goal) -> tuple[dict, list[str]]:
             notes.append("add_to without item_from → inserted the implied "
                          f"pick {pid!r} (any result of the search) and "
                          "wired item_from to it")
+    # NOOD_0213 — a brief that names its URL twice (a "base URL:" line AND a
+    # "go to <url>" step) yielded two navigation entries, and each compiles to
+    # its own Given: the run loaded the same page twice, under two env keys
+    # (<APP> and <APP>_EN, one value). Only CONSECUTIVE repeats collapse —
+    # A → B → A is a deliberate return trip, not a duplicate.
+    nav = g.get("navigation")
+    if isinstance(nav, list) and len(nav) > 1:
+        def _u(n):
+            return n.get("url") if isinstance(n, dict) else n
+        out = []
+        for n in nav:
+            u, prev = _u(n), (_u(out[-1]) if out else None)
+            if isinstance(u, str) and isinstance(prev, str) and same_url(u, prev):
+                notes.append(f"navigation: dropped the repeated entry {u!r} "
+                             "(the previous step already navigates there)")
+                continue
+            out.append(n)
+        g["navigation"] = out
     # NOOD_0192 — an api assertion belongs beside its call, not stranded at
     # the end of a browser flow. With exactly one api action there is only one
     # response it could mean, so anchor it there; with more, the author says.
@@ -754,6 +772,14 @@ def browserless_evidence(goal: dict) -> dict:
     return evidence(goal, {"pages": [{}]})
 
 
+def same_url(a: str, b: str) -> bool:
+    """Scheme- and trailing-slash-insensitive URL equality — one derivation
+    shared by navigation dedup (normalize) and env-key reuse."""
+    def _bare(u: str) -> str:
+        return u.rstrip("/").removeprefix("https://").removeprefix("http://")
+    return _bare(a) == _bare(b)
+
+
 def navigation_urls(goal: dict) -> list[str]:
     """The goal's ordered requested URLs, normalized to plain strings.
     [] when the goal has no navigation contract (single-URL goals keep the
@@ -777,13 +803,9 @@ def navigation_env(goal: dict, app: str,
     systematic: two keys, one value, and the extra one never pruned)."""
     from urllib.parse import urlsplit
 
-    def _same(a: str, b: str) -> bool:
-        return a.rstrip("/").removeprefix("https://").removeprefix("http://") \
-            == b.rstrip("/").removeprefix("https://").removeprefix("http://")
-
     taken, out = set(), []
     for u in navigation_urls(goal):
-        if base_url and _same(u, base_url):
+        if base_url and same_url(u, base_url):
             key = app.upper()
             if key not in taken:
                 taken.add(key)
@@ -2631,6 +2653,30 @@ def next_action(blocking: list[str]) -> str | None:
         if any(n in b for b in blocking or [] for n in needles):
             return code
     return "fix_goal_request" if blocking else None
+
+
+_UNPROVABLE_SEE = "no probed heading or control shows"
+
+
+def repair_goal(goal: dict, blocking: list[str]) -> dict | None:
+    """A ready-to-send copy of `goal` minus the see-checks the probe could not
+    prove — offered ONLY when those are the goal's only blockers and at least
+    one check survives. NOOD_0213: the engine still never drops an asked-for
+    verify itself (NOOD_0212 — the wording rule that tried ate real
+    assertions); dropping stays an explicit caller choice, now one field away
+    instead of a hand-rebuilt goal costing a full lap."""
+    checks = (goal or {}).get("checks") or []
+    bad = [c for c in checks if "see" in c and any(
+        b.startswith(f'check "{c["see"]}": ') and _UNPROVABLE_SEE in b
+        for b in blocking or [])]
+    keep = [c for c in checks if c not in bad]
+    if not bad or not keep or len(bad) != len(blocking):
+        return None
+    return {"goal": {**goal, "checks": keep},
+            "dropped_checks": [c["see"] for c in bad],
+            "note": "re-author with repair.goal (overwrite=true) to drop the "
+                    "unprovable text check(s), or fix their wording to probed "
+                    "evidence and keep them"}
 
 
 # --- deterministic compiler --------------------------------------------------

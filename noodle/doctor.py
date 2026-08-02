@@ -107,7 +107,10 @@ def resolve_context(path: Path, scope: str = "auto") -> DoctorContext:
 
 def _active_provenance() -> dict:
     return {
-        "version": install_check.dist_version(),
+        # NOOD_0213 — running_version(), same derivation as build_line: a
+        # stale-metadata editable install must not read as a launcher
+        # conflict against a probe of its own launcher.
+        "version": install_check.running_version(),
         "kind": {True: "editable", False: "NON-EDITABLE COPY",
                  None: "source tree"}[install_check.is_editable()],
         "root": str(install_check.package_dir()),

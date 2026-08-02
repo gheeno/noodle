@@ -1946,8 +1946,15 @@ def author(
             raise typer.BadParameter("spec must be a JSON/YAML object", param_hint="'--spec'")
         # NOOD_0207 — feature_path is no longer required: with a goal, the
         # engine derives it from the scenario (and relocates it regardless).
-        missing = [k for k in ("app_name", "base_url")
-                   if not data.get(k)]
+        # NOOD_0213 — neither are app_name/base_url when the goal navigates
+        # to a URL: author_test derives all three from navigation[0]. The
+        # gate here only rejects what the engine cannot derive downstream.
+        goal_navs = (data.get("goal") or {}).get("navigation") \
+            if isinstance(data.get("goal"), dict) else None
+        goal_has_url = bool(goal_navs) and isinstance(goal_navs[0], str) \
+            and goal_navs[0].startswith(("http://", "https://"))
+        missing = [] if goal_has_url else \
+            [k for k in ("app_name", "base_url") if not data.get(k)]
         if not data.get("feature_path") and not data.get("goal"):
             missing.append("feature_path (or goal, which derives it)")
         if not data.get("feature_content") and not data.get("goal"):
@@ -1956,7 +1963,7 @@ def author(
             raise typer.BadParameter(f"spec missing required field(s): {', '.join(missing)}",
                                      param_hint="'--spec'")
         result = core.author_test(
-            app_name=data["app_name"], base_url=data["base_url"],
+            app_name=data.get("app_name"), base_url=data.get("base_url"),
             feature_path=data.get("feature_path"),
             feature_content=data.get("feature_content"),
             pom_content=data.get("pom_content"),
