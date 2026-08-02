@@ -2491,6 +2491,13 @@ def validate(
     raise typer.Exit(result.returncode)
 
 
+# NOOD_0222 — the MCP tool is named validate_feature; an agent that knows one
+# surface types its name into the other. Hidden aliases, both spellings, so
+# the guess lands instead of costing a usage-error lap.
+app.command("validate-feature", hidden=True)(validate)
+app.command("validate_feature", hidden=True)(validate)
+
+
 def _lint_pom_scopes(target: Path, hard: bool = False) -> int:
     """POM lints. The orphan-key lint (NOOD_0109) always warn-only. The
     auto-scope lint (NOOD_0022; a *_pom.yaml whose stem can never appear in any
@@ -2724,14 +2731,14 @@ def probe(
     json_out: bool = typer.Option(False, "--json", help="Compact author-evidence JSON (as probe_page)"),
     full: bool = typer.Option(False, "--full", help="With --json, the RAW uncapped payload"),
     timeout: int = typer.Option(15000, "--timeout", help="Per-page load timeout in ms"),
-    click: list[str] = typer.Option(None, "--click", help="Control to click before a fresh snapshot (name or raw selector), repeatable — reveals only, never mutating buttons"),
-    do_: list[str] = typer.Option(None, "--do", help="Transaction after --click, in order: 'enter <v> in <field>', 'select <opt> from <dropdown>', 'click <name>', 'switch to <new|original> tab'. REAL actions, deltas under revealed; {env:KEY} resolves; with --search on the landed page"),
-    search: str = typer.Option(None, "--search", help="Run the site search and summarize the RESULTS page: new controls, the 'NN results' element + POM entry, count assertion"),
+    click: list[str] = typer.Option(None, "--click", help="Reveal control to click before a fresh snapshot (name or raw selector; repeatable, never mutating)"),
+    do_: list[str] = typer.Option(None, "--do", help="Transaction after --click: 'enter <v> in <field>', 'select <opt> from <dropdown>', 'click <name>[ in the row containing <text>]', 'switch to <new|original> tab'. REAL actions, deltas under revealed; {env:KEY} resolves"),
+    search: str = typer.Option(None, "--search", help="Run the site search and summarize the RESULTS page: new controls, 'NN results' element, count assertion"),
     suggest: str = typer.Option(None, "--suggest", help="Type this partial term per-character and capture the TYPEAHEAD rows + copy-ready steps"),
-    pick: str = typer.Option(None, "--pick", help="With --search: bind 'any matching result' to ONE caption (ambiguity refuses, never guesses) and snapshot it; '*' = any"),
+    pick: str = typer.Option(None, "--pick", help="With --search: bind 'any matching result' to ONE caption and snapshot it (ambiguity refuses); '*' = any"),
     follow: str = typer.Option(None, "--follow", help="With --suggest: click the captured suggestion row matching this text and summarize where it lands"),
     expect: list[str] = typer.Option(None, "--expect", help="Verify this text is on the landed page; repeatable, FOUND/NOT FOUND at the TOP"),
-    compact: bool = typer.Option(False, "--compact", help="Author-critical evidence only (POM-needing controls, POM YAML, headings)"),
+    compact: bool = typer.Option(False, "--compact", help="Author-critical evidence only (POM controls + YAML, headings)"),
     section: str = typer.Option("all", "--section", help="One slice only: controls | pom | steps | headings | revealed | all"),
     max_controls: int = typer.Option(None, "--max-controls", help="Cap each control list at N (compact caps at 25)"),
     open_native: bool = typer.Option(False, "--open-native", help="Enumerate native <select> options and click-open custom comboboxes too"),
@@ -2739,6 +2746,10 @@ def probe(
     discover: bool = typer.Option(False, "--discover", help="Trigger NAMES unknown? Clicks bounded disclosure candidates, deltas under revealed. Only for an unnamed control gating needed UI"),
     find: str = typer.Option(None, "--find", help="Only controls/result-items matching this text, pre-cap — replaces payload greps"),
     brief: bool = typer.Option(False, "--brief", help="Step templates once, not one sentence per control"),
+    # NOOD_0222 — every other command takes -w; probe rejecting it cost a
+    # reviewed session a retry lap. It also does real work: {env:KEY} in --do
+    # resolves against THIS workspace's env chain, not the cwd's.
+    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace for {env:} in --do"),
 ):
     """Proactive DOM probe: every actionable control (visible AND hidden) with
     a ready selector, POM YAML for the ones that need it, a suggested step
@@ -2758,7 +2769,7 @@ def probe(
                               expect=list(expect) if expect else None,
                               open_native_controls=open_native,
                               max_reveal_depth=max_reveal_depth,
-                              discover=discover)
+                              discover=discover, workspace=workspace)
     if find:
         # NOOD_0169 — one control out of a big page, pre-cap: the answer the
         # payload-spill grep round trips used to reconstruct by hand.

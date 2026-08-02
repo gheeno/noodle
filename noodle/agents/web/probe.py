@@ -1008,7 +1008,13 @@ _MAX_DO_LEN = 400   # NOOD_0177 — a --do item is a short sentence; bounds back
 # NOOD_0178 — the fourth verb. `\S+` (not `.+?`) for the tab target: one token,
 # anchored by "tab", so this alternative adds no backtracking surface.
 _DO_RE = re.compile(
-    r"^\s*(?:click\s+(?P<btn>.+?)"
+    # NOOD_0222 — the row-scoped form first (the generic <btn> would swallow
+    # it): a card-grid transaction ("click add to cart in the row containing
+    # BBQ Chicken") was the one flow --do rejected, forcing hand-authored
+    # features against unprobed state. Executed via the runtime's own
+    # click_in_row, so probe and run agree on what a row is.
+    r"^\s*(?:clicks?\s+(?P<rbtn>.+?)\s+in\s+(?:the\s+)?row\s+containing\s+(?P<row>.+?)"
+    r"|click\s+(?P<btn>.+?)"
     r"|enter\s+(?P<val>.+?)\s+in\s+(?P<field>.+?)"
     r"|select\s+(?P<opt>.+?)\s+from\s+(?P<dd>.+?)"
     r"|switch\s+to\s+(?:the\s+)?(?P<tab>\S+)\s+tab)\s*$", re.I)
@@ -1027,10 +1033,16 @@ def parse_do(actions: list[str]) -> list[tuple[str, str, str | None]]:
         if not m:
             raise ValueError(
                 f'bad do action {a!r} — use "click <name>", '
+                '"click <name> in the row containing <text>", '
                 '"enter <value> in <field>", "select <option> from <dropdown>" '
                 'or "switch to <new|original> tab"')
         g = m.groupdict()
-        if g["btn"] is not None:
+        if g["rbtn"] is not None:
+            # Quotes are pasted-runtime-phrasing noise; the row text and the
+            # control name both resolve against rendered text, not selectors.
+            out.append(("click_row", g["rbtn"].strip().strip("'\""),
+                        g["row"].strip().strip("'\"")))
+        elif g["btn"] is not None:
             out.append(("click", g["btn"].strip(), None))
         elif g["val"] is not None:
             out.append(("enter", g["field"].strip(), g["val"].strip()))
@@ -1049,10 +1061,15 @@ def parse_do(actions: list[str]) -> list[tuple[str, str, str | None]]:
     return out
 
 
-def _do_label(verb: str, target: str) -> str:
-    """The payload label for one action — values are never echoed (NOOD_0144)."""
-    return (f"do: switch to {target} tab" if verb == "switch"
-            else f"do: {verb} {target}")
+def _do_label(verb: str, target: str, row: str | None = None) -> str:
+    """The payload label for one action — values are never echoed (NOOD_0144).
+    A row caption is page content, not a value, so click_row echoes it: the
+    reader needs to know WHICH card the delta came from."""
+    if verb == "switch":
+        return f"do: switch to {target} tab"
+    if verb == "click_row":
+        return f"do: click {target} in row containing {row}"
+    return f"do: {verb} {target}"
 
 
 def _do(page, pg: dict, actions: list[tuple], timeout_ms: int):
@@ -1111,7 +1128,8 @@ def _do(page, pg: dict, actions: list[tuple], timeout_ms: int):
     # the same --do prose four times to tell those apart. N/M is the answer.
     pg["do_requested"], pg["do_completed"] = len(actions), 0
     for i, (verb, target, value) in enumerate(actions):
-        label = _do_label(verb, target)
+        label = _do_label(verb, target,
+                          value if verb == "click_row" else None)
         sel = None
         try:
             if verb == "switch":
@@ -1145,32 +1163,45 @@ def _do(page, pg: dict, actions: list[tuple], timeout_ms: int):
                         pg.setdefault("revealed", []).append(rev)
                 pg["do_completed"] = i + 1
                 continue
-            sel = _click_selector(known, target)
-            ctrl = next((c for c in known if c["selector"] == sel), None)
-            loc = page.locator(sel).first
-            armed, u, before = _arm(page), page.url, _pages(page)
-            if verb == "enter":
-                loc.fill(value)
-            elif verb == "select":
-                # NOOD_0145 — the SAME select implementation the runtime step
-                # uses (actions.select_on): native select_option plus the
-                # open-and-click-options fallback for custom comboboxes. The
-                # probe previously supported native <select> only, so a
-                # transaction against a custom dropdown failed where the
-                # authored test would have passed.
-                from noodle.agents.web.actions import select_on
-                select_on(page, loc, value)
-            elif ctrl is not None and ctrl.get("visible") is False:
-                loc.dispatch_event("click", timeout=3000)
+            if verb == "click_row":
+                # NOOD_0222 — resolve nothing against `known`: the runtime's
+                # click_in_row owns the row-climb (role=row, then the caption's
+                # innermost ancestor holding the control), so what the probe
+                # proves clickable here is exactly what the authored step does.
+                from noodle.agents.web.actions import click_in_row
+                sel, ctrl = f'{target} in row containing "{value}"', None
+                armed, u, before = _arm(page), page.url, _pages(page)
+                click_in_row(page, target, value)
             else:
-                try:
-                    loc.click(timeout=3000)
-                except Exception:
+                sel = _click_selector(known, target)
+                ctrl = next((c for c in known if c["selector"] == sel), None)
+                loc = page.locator(sel).first
+                armed, u, before = _arm(page), page.url, _pages(page)
+                if verb == "enter":
+                    loc.fill(value)
+                elif verb == "select":
+                    # NOOD_0145 — the SAME select implementation the runtime
+                    # step uses (actions.select_on): native select_option plus
+                    # the open-and-click-options fallback for custom
+                    # comboboxes. The probe previously supported native
+                    # <select> only, so a transaction against a custom
+                    # dropdown failed where the authored test would have
+                    # passed.
+                    from noodle.agents.web.actions import select_on
+                    select_on(page, loc, value)
+                elif ctrl is not None and ctrl.get("visible") is False:
                     loc.dispatch_event("click", timeout=3000)
+                else:
+                    try:
+                        loc.click(timeout=3000)
+                    except Exception:
+                        loc.dispatch_event("click", timeout=3000)
             settled = _settle(page, timeout_ms, armed=armed, url_before=u,
                               mutating=(verb == "click" and (
                                   _is_mutating_control(ctrl) if ctrl
-                                  else _is_mutating(target))))
+                                  else _is_mutating(target)))
+                              or (verb == "click_row"
+                                  and _is_mutating(target)))
             tab = _new_tab(page, before, pg.setdefault("warnings", []))
             raw = page.evaluate(_COLLECT_JS)
             raw["controls"] = [c for c in raw["controls"]
@@ -1191,7 +1222,7 @@ def _do(page, pg: dict, actions: list[tuple], timeout_ms: int):
                 seen |= {c["selector"] for c in rev["controls"]}
                 seen_head |= set(rev["headings"])
                 pg.setdefault("revealed", []).append(rev)
-            elif verb == "click" and tab is None:
+            elif verb in ("click", "click_row") and tab is None:
                 # NOOD_0156 follow-up — a CLICK that changed nothing must
                 # still leave a record: silence made "the click did nothing"
                 # and "the click worked, UI rendered late" indistinguishable,
@@ -1220,7 +1251,8 @@ def _do(page, pg: dict, actions: list[tuple], timeout_ms: int):
             pg["do_failed"] = {
                 "index": i, "action": label, "selector": sel or target,
                 "error": str(e),
-                "skipped": [_do_label(v, t) for v, t, _ in actions[i + 1:]],
+                "skipped": [_do_label(v, t, x if v == "click_row" else None)
+                            for v, t, x in actions[i + 1:]],
             }
             return page
     return page

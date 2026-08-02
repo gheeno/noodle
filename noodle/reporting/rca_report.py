@@ -1037,6 +1037,13 @@ def render_compact(results_dir: str = None) -> str:
         lines.append(f"[{cat}/{conf}] {e['scenario']} — failing step: {e['step']}")
         lines.append(f"  why: {' '.join(reason.split())[:300]}")
         lines.append(f"  fix: {' '.join(fix.split())[:300]}")
+        # NOOD_0222 — quote what the failed page rendered (hooks captures it
+        # as a [page-text] warning): the cheap read answers "what state was
+        # the app actually in?" without the screenshot or OCR.
+        shown = next((w for w in e.get("warnings") or []
+                      if str(w).startswith("[page-text]")), None)
+        if shown:
+            lines.append(f"  {shown}")
         if e.get("goal_node_hint"):
             lines.append(f"  goal: {e['goal_node_hint']}")
     for h in healed:

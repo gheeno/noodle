@@ -1219,9 +1219,14 @@ def after_step(context, step):
                 # click (ARIA alert/status/live or toast), so the RCA can
                 # quote why the app refused instead of guessing at locators.
                 resp = _actions.page_response(context.page)
+                # NOOD_0222 — and what the failed page renders, quoted, so
+                # nobody OCRs the screenshot to learn "Your cart is empty".
+                # Redacted: a login page can echo typed credentials as text.
+                shown = _actions.page_text(context.page)
                 step_warnings = (([note] if note else [])
                                  + ([stuck] if stuck else [])
                                  + ([resp] if resp else [])
+                                 + ([log.redact(shown)] if shown else [])
                                  + [f"URL: {_safe_url(context.page.url)}", *step_warnings])
             except Exception:
                 pass

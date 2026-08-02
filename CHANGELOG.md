@@ -4,6 +4,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a36] — 2026-08-02
+
+**NOOD_0222** — fix: a basic add-item-and-order flow cost 5 run cycles, ~10
+probes and an OCR pass over the engine's own failure screenshot (measured:
+57.1 AIC, 4 red runs all "locator-rot"). Four gaps, one per lap wasted:
+
+- **`within:` proves what the run resolves.** A within-scoped action skipped
+  the structurally-different gate that exists precisely to say "a within:
+  anchor will not resolve at run time" (NOOD_0209) — so two same-named
+  controls in different page chrome (hero + footer) authored `ready: true`
+  and every run died with "No row containing '<text>' found". The gate now
+  fires under `within:` too, and its note names the fix (drop `within:`, pin
+  the instance via `pom_content`). A probe-proven per-card family and a
+  pinned target still resolve untaxed.
+- **The RCA quotes what the failed page renders.** Failure warnings carried
+  announcements, navigation verdicts and the URL — but not the page's own
+  text, so the session ran tesseract over the failure screenshot to learn
+  the page said its cart was empty. Failures now attach a redacted, clipped
+  `[page-text]` note, and `rca_compact` surfaces it — screenshot never
+  needed for "what state was the app in?".
+- **`--do` accepts the row-scoped click.** "click <name> in the row
+  containing <text>" was the one verb a card grid needs and the one the
+  transaction grammar rejected, forcing hand-authored features against
+  unprobed state. Executed via the runtime's own `click_in_row`, so probe
+  and run agree on what a row is; a no-delta row click leaves the same
+  record a plain click does.
+- **Surface friction:** `noodle probe` now takes `-w/--workspace` (it
+  resolves `{env:}` in `--do` against that workspace's env chain), and
+  `validate-feature`/`validate_feature` are hidden aliases of `validate`
+  (the MCP tool name typed into the CLI now lands instead of erroring).
+  Probe's `--help` trimmed to keep the NOOD_0159 instruction budget.
+
 ## [1.0.0a35] — 2026-08-02
 
 **NOOD_0221** — fix: "Verify: Suggestion search works" is a summary of what

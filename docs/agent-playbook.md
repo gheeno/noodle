@@ -780,8 +780,10 @@ ten red runs:
    submit flow; `--suggest` runs first (the submit navigates away).
 0.3. **Page behind an auth/config gate or a multi-step transaction? Probe
    through it with `--do` (NOOD_0144).** `--do "enter <value> in <field>"
-   / "select <option> from <dropdown>" / "click <name>"` (repeatable,
-   ordered, run after any `--click` reveals) executes the REAL
+   / "select <option> from <dropdown>" / "click <name>"` / (NOOD_0222)
+   `"click <name> in the row containing <text>"` for card grids —
+   resolved by the runtime's own row-climb, so probe and run agree —
+   (repeatable, ordered, run after any `--click` reveals) executes the REAL
    transaction — fill the config field, pick the option, press Save — and
    snapshots the delta after every action, so the post-save state
    ("Save → login appears") is discovered in the same single probe.
