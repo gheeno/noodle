@@ -881,6 +881,21 @@ _TRAILING_NOUN = re.compile(
     r"\s+(?:banner|logo|image|img|icon|header|heading|section|label|"
     r"title|message|text|button|link|field|panel|badge|tile|card)s?$", re.I)
 
+# NOOD_0221 — the summary-line tail. Anchored to the END of the clause and
+# kept to the "does the feature function" family only: these describe the
+# TEST, never text a page renders. Everything adjacent was deliberately left
+# out — "is successful", "is correct", "as expected" are all strings real
+# pages print ("Payment is successful"), and skipping one of those would drop
+# a genuine assertion. The caller's escape hatch is quoting.
+# Longest alternatives first so "works properly" is read whole rather than
+# leaving "properly" stranded past an early `works` match.
+_SUMMARY_CLAIM = re.compile(
+    r"\b(?:works?\s+(?:fine|well|correctly|properly|"
+    r"as\s+(?:expected|intended))|"
+    r"functions?\s+(?:correctly|properly|as\s+(?:expected|intended))|"
+    r"functional|working|works?)"
+    r"\s*[.!]?\s*$", re.I)
+
 
 # NOOD_0197 — one concrete rewrite per still-unresolved clause, so a partial
 # rejection teaches the fix instead of dumping the whole grammar and walking
@@ -1838,6 +1853,27 @@ def expand(text: str, base_url: str | None = None) -> dict:
             rest = n["rest"]
             if not rest:
                 _refuse(n, "nothing to verify")
+                continue
+            # NOOD_0221 — a COVERAGE SUMMARY, not an assertion. Briefs end
+            # with "Verify: Suggestion search works" — the author naming what
+            # the test is about, in the same register as the `AC:` and `Note:`
+            # lines already classified as metadata. No page renders that
+            # sentence, so it compiled to a see-check that could only be
+            # dropped later (0218 benchmark TC1: the one row whose
+            # intent_verified read false, on a test that proved every real
+            # assertion asked of it).
+            #
+            # Deliberately NARROW, because NOOD_0212's lesson is that a
+            # wording rule which guesses eats real assertions: the clause must
+            # END in the summary verb and carry NO quoted text (quoted content
+            # is a claim about the page, always). "verify the totals are
+            # correct" keeps its check; "verify checkout works" does not.
+            if _SUMMARY_CLAIM.search(rest) and not _QUOTED_MEMBER.search(rest):
+                assumptions.append(
+                    f"step {no} '{n['raw']}': reads as a summary of what the "
+                    "test covers, not text to find on the page — no assertion "
+                    "compiled for it (quote the exact wording to assert it)")
+                _cover(n, "metadata")
                 continue
             # NOOD_0211 — the status claim _rewrite_asks normalized. Anchored
             # to `start`: it is the landing navigation's own response, not

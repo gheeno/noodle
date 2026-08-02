@@ -4,6 +4,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a35] — 2026-08-02
+
+**NOOD_0221** — fix: "Verify: Suggestion search works" is a summary of what
+the test covers, not text to find on the page. Briefs end with a line naming
+what the test is ABOUT, in the same register as the `AC:` and `Note:` lines
+already classified as metadata. It compiled to a see-check no page could
+satisfy, which the repair lap could then only drop — leaving
+`intent_verified: false` on a test that had proven every real assertion asked
+of it (the benchmark's TC1, its one non-clean row across three builds).
+
+- A verify clause that ENDS in the summary verb and carries NO quoted text
+  compiles to no assertion, is marked `metadata` in coverage, and says so in
+  `assumptions` along with its escape hatch. The family is only "does the
+  feature function": `works` / `is working` / `works properly` /
+  `functions correctly` / `functions as intended` / `is functional`.
+- Deliberately narrow, per NOOD_0212's lesson that a guessing wording rule
+  eats real assertions. Adjacent phrasings real pages genuinely print — "is
+  successful", "is correct", "is complete" — keep their checks, and so does
+  any clause where the verb is not final ("works of art").
+- **Quoting is the escape hatch**: `verify "Free Shipping works"` still
+  asserts that literal, because quoted content is a claim about the page,
+  always.
+- A brief whose ONLY assertion was a summary line still blocks on the
+  existing "parsed to setup only — nothing to test" guard. The skip never
+  manufactures a green.
+
 ## [1.0.0a34] — 2026-08-02
 
 **NOOD_0220** — fix: prove and compile must agree. Measured on the NOOD_0218
