@@ -2075,13 +2075,7 @@ def expand(text: str, base_url: str | None = None) -> dict:
         # free of per-step ( take a screenshot ) noise.
         goal["evidence"] = evidence_mode
 
-    host = urlsplit(first_url or base_url).netloc
-    app = re.sub(r"[^a-z0-9]+", "_",
-                 host.casefold().removeprefix("www.")).strip("_") or "app"
-    if app[0].isdigit():
-        # NOOD_0201 — an IP host (127.0.0.1:8080) slugs to a leading digit,
-        # which is not a legal {env:} key.
-        app = "app_" + app
+    app = app_from_url(first_url or base_url)
     slug = re.sub(r"[^a-z0-9]+", "_", scenario.casefold()).strip("_")[:40] \
         or "prompt_flow"
     return {"ok": True, "goal": goal, "base_url": first_url or base_url,
@@ -2092,6 +2086,19 @@ def expand(text: str, base_url: str | None = None) -> dict:
             "clauses": clauses, "coverage": coverage,
             "inferences": inferences, "unresolved": [], "conflicts": [],
             "assumptions": assumptions, "unrecognized": []}
+
+
+def app_from_url(url: str) -> str:
+    """App-name slug from a URL's host — the ONE derivation both the prompt
+    path and goal-mode (NOOD_0213) use, so they can't drift."""
+    host = urlsplit(url or "").netloc
+    app = re.sub(r"[^a-z0-9]+", "_",
+                 host.casefold().removeprefix("www.")).strip("_") or "app"
+    if app[0].isdigit():
+        # NOOD_0201 — an IP host (127.0.0.1:8080) slugs to a leading digit,
+        # which is not a legal {env:} key.
+        app = "app_" + app
+    return app
 
 
 # --- intent-contract review (pure, no model, no browser) -----------------------

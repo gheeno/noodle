@@ -4,6 +4,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a28] — 2026-08-01
+
+**NOOD_0213** — fix: the three frictions the 1.0.0a27 agent-regression drill
+measured. All four cases were green; these are the costs the green run still
+carried.
+
+- **A blocked prose verify hands back the repaired goal.** TC1's
+  `Verify: Suggestion search works` compiled to a literal `see` check,
+  blocked (correctly — NOOD_0212's guard stands: the engine never drops an
+  asked-for verify), and the repair cost a hand-rebuilt goal. The blocked
+  payload now carries `repair.goal` — the same goal minus the unprovable
+  see-check(s) — offered ONLY when those are the goal's only blockers and at
+  least one check survives. Dropping stays an explicit caller choice, now one
+  field away.
+- **Goal mode derives app_name/base_url/feature_path from navigation.** The
+  repair lap then failed with "app_name, base_url and feature_path are
+  required" — even though `goal.navigation[0]` is the very URL the prompt
+  path derives all three from. `author_test(goal={...})` now derives them by
+  the same `app_from_url` the expander uses (one function, shared, can't
+  drift). An `{env:}` navigation entry still requires them explicitly.
+- **`build_line()` names the code that runs.** Every drill run printed
+  `noodle 1.0.0a11 (source tree) … @ 2c54c6b` — install-time metadata beside
+  a SHA proving the executing code was current. For editable/source-tree
+  builds the headline now reads the checkout's pyproject
+  (`running_version()`, shared with doctor's launcher-provenance check so a
+  stale-metadata install can't read as a conflict against its own launcher);
+  a non-editable copy keeps dist metadata, which there IS the running code.
+  The stale-metadata warning now names the environment (`sys.prefix`) and
+  says `noodle update` repairs only the env it runs in — the misdirection
+  that taught a reader who had already updated their shell's env to ignore
+  the warning NOOD_0133 depends on.
+- **A twice-named URL navigates once.** A brief that states its URL in a
+  "base URL:" line AND a "go to \<url\>" step produced two navigation
+  entries; each compiles to its own Given, so the run loaded the same page
+  twice under two env keys holding one value (`<APP>` and `<APP>_EN`).
+  `normalize()` collapses CONSECUTIVE repeats — A → B → A stays a deliberate
+  return trip — and echoes the drop under `goal_normalized`, never silently.
+
 ## [1.0.0a27] — 2026-08-01
 
 **NOOD_0212** — fix: "search for a toy, add it to the cart" authors and runs

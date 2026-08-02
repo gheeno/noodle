@@ -803,6 +803,17 @@ def author_test(*, prompt: str | None = None,
                     probed = api_probe.probe(base_url)
                     app_name = _slug(probed.get("title", ""), "") \
                         or _slug(urlsplit(base_url).netloc, "api_app")
+    # NOOD_0213 — a browser goal already names its app: navigation[0] is the
+    # very URL the prompt path derives app_name/base_url from. Requiring them
+    # again on a goal-mode repair lap cost a full round trip (drill TC1).
+    if base_url is None and isinstance(goal, dict):
+        navs = goal.get("navigation") or []
+        if navs and isinstance(navs[0], str) \
+                and navs[0].startswith(("http://", "https://")):
+            base_url = navs[0]
+    if app_name is None and base_url and isinstance(goal, dict) and goal:
+        from noodle.repl import prompt_expander as _pe
+        app_name = _pe.app_from_url(base_url)
     # NOOD_0207 — feature_path is derivable from the goal's own scenario, and
     # author RELOCATES it anyway (it says so in a warning), so requiring it
     # cost a full round trip to supply a value the engine then overrode.
@@ -1314,6 +1325,12 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     }
     if wok_tag_added:
         result["wok_tag"] = wok_tag_added
+    # NOOD_0213 — a goal blocked ONLY by unprovable see-checks carries a
+    # ready-to-send repaired goal, so the drop-or-reword decision costs one
+    # field, not a hand-rebuilt goal (the drill's TC1 lap).
+    if goal is not None and goal_ev is not None and blocking:
+        if rep := goal_mod.repair_goal(goal, goal_ev.get("blocking") or []):
+            result["repair"] = rep
     # NOOD_0156 follow-up — every lenient-input rewrite, echoed back so the
     # caller sees exactly what the engine understood.
     if goal is not None and norm_notes:

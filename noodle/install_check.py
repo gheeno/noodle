@@ -178,11 +178,26 @@ def reinstall_argv() -> list[str]:
 
 def build_line() -> str:
     """One line naming the running build — version, editable-or-copy, path,
-    SHA. Printed by `noodle --version` and atop every `noodle run`."""
+    SHA. Printed by `noodle --version` and atop every `noodle run`.
+
+    NOOD_0213 — the version names the CODE that executes: for an editable or
+    source-tree build that is the checkout's pyproject, not the metadata
+    recorded at install time (which lags until `noodle update` and made the
+    headline contradict the SHA beside it). A non-editable copy keeps
+    dist_version — there the installed metadata IS the running code."""
     ed = is_editable()
     kind = {True: "editable", False: "NON-EDITABLE COPY", None: "source tree"}[ed]
     sha = git_sha()
-    return f"noodle {dist_version()} ({kind}) {package_dir()}" + (f" @ {sha}" if sha else "")
+    return f"noodle {running_version()} ({kind}) {package_dir()}" \
+        + (f" @ {sha}" if sha else "")
+
+
+def running_version() -> str:
+    """The version of the code that actually executes (see build_line) — one
+    derivation shared with doctor's provenance so a stale-metadata editable
+    install can't read as a launcher CONFLICT against itself."""
+    return dist_version() if is_editable() is False \
+        else (source_version() or dist_version())
 
 
 _BUILD_LINE_RE = re.compile(
@@ -261,7 +276,6 @@ def warn_if_stale(echo) -> None:
         # install from a wheel DELIBERATELY, and "run `noodle update`" on
         # every pipeline log line trains readers to ignore warnings. The
         # version-mismatch warning below stays — that one is legit anywhere.
-        import sys
         try:
             if not sys.stdout.isatty():
                 return
@@ -276,6 +290,11 @@ def warn_if_stale(echo) -> None:
     # The recorded version lagging the source is the visible proxy for both.
     vr = version_report()
     if vr["mismatch"]:
-        echo(f"  ⚠️ this checkout is noodle {vr['source']} but the install "
-             f"recorded {vr['installed']} — dependencies may also be stale. "
-             "Run `noodle update`.")
+        # NOOD_0213 — name the environment: `noodle update` repairs only the
+        # env it runs in, and a reader who already updated their SHELL's env
+        # (while e.g. an MCP server's env stayed stale) read this warning as
+        # noise — which trains ignoring the genuinely-stale case (NOOD_0133).
+        echo(f"  ⚠️ this checkout is noodle {vr['source']} but this "
+             f"environment ({sys.prefix}) recorded {vr['installed']} — "
+             "dependencies may also be stale. Run `noodle update` (it repairs "
+             "only the environment it runs in).")
