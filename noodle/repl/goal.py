@@ -2702,27 +2702,62 @@ def next_action(blocking: list[str]) -> str | None:
 
 
 _UNPROVABLE_SEE = "no probed heading or control shows"
+# NOOD_0218 — the wording _near_miss stamps into a blocking line when the
+# probe DID find a close twin of the asked-for text. repair_goal reads it
+# back: matches both "probed texts here" and "probed controls here".
+_NEAR_MISS_HIT = re.compile(r' — did you mean "(.+?)"\? \(probed ')
+
+# NOOD_0218 — the blocker family a same-origin navigation can cure: "this
+# name/text/mutation-control is not on the probed page". Ambiguity,
+# reachability and bind failures are excluded — another page won't fix those.
+_UNROUTED_MARKS = ("no probed control matches that name",
+                   "no probed text on this page identifies that",
+                   "no probed control mutates into")
+
+
+def unrouted_targets(blocking: list[str]) -> list[str]:
+    """The blocking entries that say the target simply isn't on the probed
+    page — the ones core._route_repair may resolve by probing the page's own
+    same-origin links (NOOD_0218)."""
+    return [b for b in (blocking or [])
+            if any(m in b for m in _UNROUTED_MARKS)]
 
 
 def repair_goal(goal: dict, blocking: list[str]) -> dict | None:
-    """A ready-to-send copy of `goal` minus the see-checks the probe could not
-    prove — offered ONLY when those are the goal's only blockers and at least
-    one check survives. NOOD_0213: the engine still never drops an asked-for
-    verify itself (NOOD_0212 — the wording rule that tried ate real
-    assertions); dropping stays an explicit caller choice, now one field away
-    instead of a hand-rebuilt goal costing a full lap."""
+    """A ready-to-send copy of `goal` with the see-checks the probe could not
+    prove REWORDED to the near-miss the probe did find (NOOD_0218) — or
+    dropped when there is no near-miss — offered ONLY when those are the
+    goal's only blockers and at least one check survives. NOOD_0213: the
+    engine still never drops an asked-for verify itself (NOOD_0212 — the
+    wording rule that tried ate real assertions); dropping stays an explicit
+    caller choice, now one field away instead of a hand-rebuilt goal costing
+    a full lap. A reword is not a drop: the assertion survives, in the
+    page's own wording, and `rewritten_checks` says so out loud."""
     checks = (goal or {}).get("checks") or []
-    bad = [c for c in checks if "see" in c and any(
-        b.startswith(f'check "{c["see"]}": ') and _UNPROVABLE_SEE in b
-        for b in blocking or [])]
-    keep = [c for c in checks if c not in bad]
-    if not bad or not keep or len(bad) != len(blocking):
+    dropped, rewritten, keep, matched = [], [], [], 0
+    for c in checks:
+        line = next((b for b in blocking or [] if "see" in c
+                     and b.startswith(f'check "{c["see"]}": ')
+                     and _UNPROVABLE_SEE in b), None)
+        if line is None:
+            keep.append(c)
+            continue
+        matched += 1
+        if m := _NEAR_MISS_HIT.search(line):
+            rewritten.append({"from": c["see"], "to": m.group(1)})
+            keep.append({**c, "see": m.group(1)})
+        else:
+            dropped.append(c["see"])
+    if not (dropped or rewritten) or not keep \
+            or matched != len(blocking or []):
         return None
     return {"goal": {**goal, "checks": keep},
-            "dropped_checks": [c["see"] for c in bad],
-            "note": "re-author with repair.goal (overwrite=true) to drop the "
-                    "unprovable text check(s), or fix their wording to probed "
-                    "evidence and keep them"}
+            "dropped_checks": dropped,
+            **({"rewritten_checks": rewritten} if rewritten else {}),
+            "note": "re-author with repair.goal (overwrite=true): unprovable "
+                    "text check(s) are reworded to the probe's near-miss "
+                    "where one exists and dropped otherwise — or fix their "
+                    "wording to probed evidence and keep them"}
 
 
 # --- deterministic compiler --------------------------------------------------
