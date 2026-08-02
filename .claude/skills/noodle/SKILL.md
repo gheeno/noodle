@@ -78,7 +78,9 @@ Every `do:` — inventing one is rejected (`target` = a control name,
   Identical payload twice = change the mechanism, not the wording.
 - Execute payload: report paths, served URLs and, on red, `rca_compact`;
   extra RCA/report/serve calls repeat it; URLs pre-checked (`http_ok`)
-  — no curl, no jq.
+  — no curl, no jq. App origin dead? `noodle probe <url>` says so
+  itself. Nothing in noodle answers it? Stop and name the engine gap
+  to report — improvising a shell command just hides it.
 - "run feature-regression" → `noodle feature-regression`. ONE call:
   generates the three test cases, runs, serves, prints the table.
   Never hand-build `results.json` or read host telemetry.

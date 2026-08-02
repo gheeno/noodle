@@ -172,7 +172,7 @@ def _agent_quiet() -> bool:
 
 
 
-def _json_out(payload, **dumps_kwargs) -> None:
+def _json_out(payload, indent: int | None = 2, **dumps_kwargs) -> None:
     """Print an agent-facing JSON payload, bounded (NOOD_0164). Every `--json`
     door is a spill door: a harness that can't inline the payload writes it to
     a temp file and the agent pays inferences to `jq` back what the command
@@ -183,13 +183,18 @@ def _json_out(payload, **dumps_kwargs) -> None:
     as 10,240 B at indent=2, and the compact measurement never saw those
     2.7 KB), and a payload that has to be trimmed is written whole to
     `.noodle/last_payload.json` first: the agent reads that path with its own
-    file tools instead of grepping the harness's spill file."""
-    bounded = payload_budget.bound(payload, indent=2)
+    file tools instead of grepping the harness's spill file.
+
+    NOOD_0215 — `indent=None` prints the payload on one line. A schema dump is
+    machine-facing, and 245 lines of mostly-whitespace is what makes an agent
+    reach for `sed -n '120,320p'` however loudly the no-pipes rule says not
+    to. One line cannot be paged."""
+    bounded = payload_budget.bound(payload, indent=indent)
     if isinstance(bounded, dict) and "payload_note" in bounded:
         full = _write_full_payload(payload)
         if full:
             bounded["payload_note"] += f" Full payload: {full}"
-    typer.echo(json.dumps(bounded, indent=2, default=str, **dumps_kwargs))
+    typer.echo(json.dumps(bounded, indent=indent, default=str, **dumps_kwargs))
 
 
 def _arg_text(value: str) -> tuple[str, bool]:
@@ -1398,10 +1403,13 @@ Hand-edited? `validate_feature` before re-running. Wrong element
 - Re-hosting an older run: ONLY `noodle report serve` (`serve_report`)
   — never `allure serve`, `http.server`, or `file://`.
 - Payloads are pre-bounded: read as returned, no jq/grep/sed/head
-  pipes; URLs pre-checked (no curl); schema: `noodle author
-  --vocabulary`; workspace map: `noodle list`, not find/ls sweeps.
-  NEVER read the app's source — Noodle is black-box, and
-  source-derived selectors are implementation-coupled. Identical
+  pipes; report URLs pre-checked (no curl) and a dead app origin is
+  named by `noodle probe <url>` itself, so never curl/wget one to
+  see; schema: `noodle author --vocabulary`; map: `noodle list`,
+  not find/ls sweeps. NEVER read the app's source — Noodle is
+  black-box, and source-derived selectors are implementation-coupled.
+  No noodle command for what you need? Say so and stop — an engine
+  gap to report, never a shell command to improvise. Identical
   payload twice? Change the mechanism, not the wording (§7.6).
 - Progress updates: max 2 sentences of current intent (e.g. "Serving
   the reports now"); quote only failing steps/errors. "do not output
@@ -1921,9 +1929,10 @@ def author(
         # learned the vocabulary by failing (or by paging --help through sed).
         from noodle.repl import goal as goal_mod
         from noodle.repl.prompt_expander import VERBS_HELP
+        # NOOD_0215 — compact: 3.3 KB on one line, not 5.3 KB over 245.
         _json_out({"ok": True, "example": goal_mod.EXAMPLE,
                    "vocabulary": goal_mod.vocabulary(),
-                   "prompt_grammar": VERBS_HELP})
+                   "prompt_grammar": VERBS_HELP}, indent=None)
         raise typer.Exit(0)
     if (spec is None) == (prompt is None):
         raise typer.BadParameter("pass exactly one of --spec or --prompt",

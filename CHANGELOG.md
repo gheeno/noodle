@@ -4,6 +4,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a30] — 2026-08-01
+
+**NOOD_0215** — fix: observability is noodle commands only, and the engine
+repo finally says so. A session working on the engine ran
+`curl -s -o /dev/null -w "%{http_code}" http://localhost:5173` and
+`noodle author --vocabulary | sed -n '120,320p'`. Neither was an agent
+ignoring the rules — the rules weren't reachable, and for one of the two
+questions no noodle command existed at all.
+
+- **The no-shell rule reaches every agent door, including the engine repo's.**
+  It lived in exactly two places: the `AGENTS.md` that `noodle init` scaffolds
+  into a *workspace*, and the two skill cards. The engine checkout had no
+  `AGENTS.md`, `CLAUDE.md` covered only git workflow, and
+  `.github/copilot-instructions.md` never mentioned curl/sed/jq/grep — so an
+  engine-repo session never had the rule in context. New `AGENTS.md` at the
+  engine root carries the full reflex → command table; it is the cross-tool
+  door (Claude, Copilot, Cursor, Codex, Gemini, Grok — nothing model-specific
+  in it). `CLAUDE.md` and the copilot digest carry the short form, the skill
+  cards and the scaffolded workspace `AGENTS.md` name the new command. A
+  parametrised drift guard fails if any door loses either half.
+- **A dead origin comes back in words, so no pre-check is wanted.** The curl
+  was checking a dev server before probing it, because
+  `net::ERR_CONNECTION_REFUSED at http://localhost:5173` reads like a Noodle
+  bug rather than "your app isn't running" — and an agent that can't tell
+  those apart goes and asks something it trusts. `probe` now translates the
+  four Chromium origin failures (refused / name-not-resolved / timed-out /
+  no-network) into `<url> is not reachable (ERR_…): <what to do>`. Anything
+  outside that table passes through verbatim; a wrong guess about the cause
+  is worse than a raw Playwright message. No new command: a reachability flag
+  on `doctor` was considered and dropped — the probe already has to load that
+  page, so a second door would be surface to learn, document and keep true
+  for no new information.
+- **The rule that outlives the table.** Every door now ends the same way: no
+  noodle command for what you need? Say so and stop — an unmet observability
+  need is an engine gap to report, never a shell command to improvise around.
+  A ban list can only forbid a reflex it has a substitute for; this is what
+  covers the next question nobody has listed yet.
+- **`noodle author --vocabulary` prints on one line.** 3.3 KB of schema
+  rendered as 245 mostly-whitespace lines at `indent=2` — well inside the
+  payload budget, and still exactly the shape that invites `sed -n '120,320p'`.
+  `_json_out` takes an `indent` argument now; the schema dump opts into
+  compact, every human-read `--json` payload keeps its indentation.
+- **doctor stops calling the engine's own `AGENTS.md` debris.** The engine
+  profile warns about workspace files at the repo root as evidence of an
+  accidental `noodle init` — with an `AGENTS.md` now shipped there
+  deliberately, that check matches the init template's heading instead of the
+  bare filename. A real scaffolded copy is still caught, edits and all.
+- **Bytes paid for, not borrowed.** Both instruction surfaces that took new
+  text were within ~30 B of their NOOD_0159 ceilings; the copilot digest lost
+  a duplicated probe/inspect bullet and a hardcoded report-URL block to fund
+  it. Ledger caps are unchanged and all nine surfaces still pass.
+
 ## [1.0.0a29] — 2026-08-01
 
 **NOOD_0214** — fix: the lap waste a reviewed authoring session measured. The

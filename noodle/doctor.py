@@ -260,6 +260,28 @@ def _login_shell_check() -> Check:
 _WORKSPACE_ARTIFACTS = ("AGENTS.md", "PROMPT_TEMPLATE.md", "noodle_tests")
 
 
+def _is_init_artifact(path: Path) -> bool:
+    """Is this the file `noodle init` writes, or an engine doc that shares its
+    name? NOOD_0215 — the engine root now ships its own `AGENTS.md` (the
+    cross-tool agent door, read by any assistant), so mere existence stopped
+    being evidence of an accidental `noodle init` here. The template's own
+    first line is the marker: it survives later edits to the scaffolded copy,
+    and the engine's heading (`— Noodle engine`) never matches the
+    workspace's (`— Noodle test workspace`)."""
+    if path.is_dir():
+        return True
+    from noodle import cli  # lazy: cli imports doctor
+    template = {"AGENTS.md": cli._AGENTS_MD,
+                "PROMPT_TEMPLATE.md": cli._PROMPT_TEMPLATE}.get(path.name)
+    if template is None:
+        return True
+    try:
+        heading = template.strip().splitlines()[0]
+        return path.read_text(encoding="utf-8").lstrip().startswith(heading)
+    except (OSError, IndexError):
+        return True
+
+
 def engine_checks(root: Path) -> list[Check]:
     """Never calls cli._template_files and never recommends `noodle init`
     against the engine root — engine docs are not workspace templates."""
@@ -276,7 +298,8 @@ def engine_checks(root: Path) -> list[Check]:
             remediation="activate this clone's environment, or reinstall editable "
                         f"from this clone: {install_check.reinstall_cmd()}"))
     found = [a + ("/" if (root / a).is_dir() else "")
-             for a in _WORKSPACE_ARTIFACTS if (root / a).exists()]
+             for a in _WORKSPACE_ARTIFACTS
+             if (root / a).exists() and _is_init_artifact(root / a)]
     if found:
         checks.append(Check(
             "engine.workspace-artifacts", "engine", "warn",

@@ -58,19 +58,14 @@ tests or start test apps unless also asked.
    NOOD_0115).
 3. **`--headless` by default** for any unattended run; only drop it when
    human is explicitly watching browser.
-4. **Whenever tests are run — always deliver BOTH reports, not one:**
-   ```bash
-   noodle report serve --workspace <workspace>
-   #  → http://127.0.0.1:8000/allure-report/index.html + http://127.0.0.1:8000/rca.html
-   ```
-   Every run auto-writes both (Allure + rca.md/rca.html, pass or fail,
-   parallel included — NOOD_0082); `report serve` hosts them together on
-   localhost, rebuilding from `allure-results/` first if missing. Host them
-   ONLY with `report serve` (or the `serve_report` MCP tool) — never `allure
-   serve`, `python -m http.server`, or a raw `file://` open: Allure's SPA
-   needs the real HTTP origin and only `report serve` co-hosts the RCA.
-   `noodle report list` + `noodle report serve <stamp>` re-host older
-   archived run. Playbook §5.
+4. **Whenever tests are run — always deliver BOTH reports, not one.**
+   `noodle report serve --workspace <workspace>` prints both pre-checked
+   URLs (Allure + rca.html). Every run auto-writes both (pass or fail,
+   parallel included — NOOD_0082); `report serve` hosts them together,
+   rebuilding from `allure-results/` first if missing. Host them ONLY that
+   way (or `serve_report`) — never `allure serve`, `python -m http.server`,
+   or raw `file://`: Allure's SPA needs a real HTTP origin. `noodle report
+   list` + `noodle report serve <stamp>` re-host older run. Playbook §5.
 5. **Root-cause before you patch.** failing assertion almost never means
    "change expected value" — read RCA verdict first (stale content,
    rate-limited/shared external resource, ambiguous locator, click blocked
@@ -98,7 +93,13 @@ tests or start test apps unless also asked.
    flags them in RCA warnings (check those after green runs). App-
    specific python scripts live in that app's `resources/scripts/`.
 
-9. **"run feature-regression"** → `noodle feature-regression`. ONE call:
+9. **Observability = noodle commands only** (NOOD_0215). Never curl/wget
+   a URL to see if it's up — `noodle probe <url>` names a dead origin
+   itself. Which tests exist? `noodle list`, not ls/find. Payloads are
+   pre-bounded: read as returned, no grep/jq/sed/head. No noodle command
+   for what you need? Say so and stop — that's an engine gap to report,
+   not a shell command to improvise. Table: [AGENTS.md](../AGENTS.md).
+10. **"run feature-regression"** → `noodle feature-regression`. ONE call:
    generates the three test cases, runs, serves, prints the table. Never
    hand-build `results.json` or read host telemetry. Run it before any
    engine-branch PR; exit 0 required.
@@ -113,10 +114,6 @@ tests or start test apps unless also asked.
   real dependency isn't available — that's expected, not bug.
 -  `*_pom.yaml` w/ no `match:` block silently never resolves unless its
   filename stem is substring of target URL.
-- Never hand-write a Playwright script to look at a page or debug a locator.
-  `noodle probe` (NOOD_0113/0116) is the pre-authoring probe; `noodle
-  inspect` (NOOD_0115) is the locator debugger — raw Playwright means you
-  skipped one.
 
 ## Git/commit conventions
 

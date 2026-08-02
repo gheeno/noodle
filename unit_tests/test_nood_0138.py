@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from noodle import doctor, install_check
+from noodle import cli, doctor, install_check
 from noodle.cli import app
 
 REPO = Path(__file__).resolve().parents[1]
@@ -251,7 +251,10 @@ def test_engine_profile_warns_on_workspace_artifacts_but_not_noodle_yaml(
         tmp_path, monkeypatch, single_launcher):
     e = make_engine(tmp_path / "eng")
     (e / "noodle.yaml").write_text("tests_dir: sample_feature_tests\n", encoding="utf-8")  # deliberate, tracked
-    (e / "AGENTS.md").write_text("generated", encoding="utf-8")
+    # NOOD_0215 — what `noodle init` actually writes, not a placeholder: the
+    # check now matches the template's heading so the engine's own AGENTS.md
+    # (a different heading) isn't reported as debris.
+    (e / "AGENTS.md").write_text(cli._AGENTS_MD, encoding="utf-8")
     (e / "noodle_tests").mkdir()
     monkeypatch.setattr(install_check, "package_dir", lambda: e / "noodle")
     r = runner.invoke(app, ["doctor", str(e)])
