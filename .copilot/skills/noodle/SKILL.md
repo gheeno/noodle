@@ -75,6 +75,10 @@ Every `do:` — inventing one is rejected (`target` = a control name,
   POM scope, `{env:}`; base URL key returns as `base_url_key`).
   `validate_feature`/`preflight` after it is waste. `ready: false` →
   repair the `blocking` list, re-author with `overwrite=true`.
+  `blocking` IS probe evidence — it quotes the control names read off
+  the live page; never probe to confirm one. Never read the app's
+  source (black-box; source selectors are implementation-coupled).
+  Identical payload twice = change the mechanism, not the wording.
 - Execute payload: report paths, served URLs and, on red, `rca_compact`;
   extra RCA/report/serve calls repeat it; URLs pre-checked (`http_ok`)
   — no curl, no jq.

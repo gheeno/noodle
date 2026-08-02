@@ -386,7 +386,13 @@ def test_atomic_goal_author_runs_once_headless_no_retries(tmp_path, monkeypatch)
 
 def test_blocked_goal_author_launches_no_run_browser(tmp_path, monkeypatch):
     probe = _probe_result(controls=[])          # weekly-flyer check unprovable
-    r, calls = _author_goal(_ws(tmp_path), monkeypatch, probe=probe)
+    # NOOD_0214 — the weekly-flyer check is the ONLY check here, so the
+    # auto-repair refuses it (a goal that asserts nothing is not a repair) and
+    # the block stands. With the other two checks present the repair applies
+    # and this call finishes green — see test_nood_0214.
+    r, calls = _author_goal(_ws(tmp_path), monkeypatch, probe=probe,
+                            goal=_goal(checks=[{"see": "Weekly Flyer",
+                                                "after": "start"}]))
     assert not r["ok"] and calls == []
     assert "no run browser launched" in r["run"]["skipped"]
     assert not r["author"]["ready"]

@@ -293,6 +293,12 @@ def _author(text: str, cls: dict, workspace: str, *, overwrite: bool,
         return out
     author, run = result.get("author", result), result.get("run") or {}
     ok = bool(result.get("ok"))
+    # NOOD_0214 — a blocked lap is not ok. The atomic path already said so
+    # (ok:false + run:skipped); the non-atomic one reported ok:true beside
+    # ready:false, so the envelope never reached the `need`/`next` branch that
+    # explains what a blocker is and what to do with it.
+    if author.get("ready") is False:
+        ok = False
     if not atomic and author.get("ready"):
         run = core.run_and_report(author.get("feature"), workspace=workspace,
                                   headless=headless, retries=0,
@@ -319,7 +325,9 @@ def _author(text: str, cls: dict, workspace: str, *, overwrite: bool,
             out["rca"] = run["rca_compact"]
     if not out["ok"] and not out.get("need"):
         out["need"] = ["fix_blocking"]
-        out["next"] = "repair every item in `blocking`, then re-send"
+        # NOOD_0214 — "repair every item" read as error handling; the list is
+        # discovery output, and saying so is what stops a re-probe.
+        out["next"] = core.BLOCKING_IS_EVIDENCE
     return out
 
 

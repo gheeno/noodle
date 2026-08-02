@@ -1169,6 +1169,143 @@ bundle`. Full contract: [session-diagnostics.md](session-diagnostics.md).
 
 ---
 
+## 7.6 — Lap waste: the five habits that turn a 3-call test into an 18-call one (NOOD_0214)
+
+A reviewed session authored a correct 7-action checkout test and spent ~49 AIC
+doing it: 9 standalone probes and 6 author calls, of which **4 calls did real
+work and 14 did not**. The cheap path was three `author --spec` calls, ~8 AIC,
+for the same test, the same assertions and the same screenshot. Nothing was
+missing from the engine — the information arrived in the same order both
+times. Each rule below is one of the five habits that re-bought it.
+
+Waste also compounds rather than adds: every retry re-sends the whole
+conversation, and that session's input grew 26.9k → 50.2k tokens across one
+turn. Ten wasted calls early make every later call more expensive too, so
+cost is roughly `n_calls × mean_context`, not `n_calls × first_context`.
+
+### 1. A `blocking` list IS probe output — never re-probe to confirm it
+
+The single biggest cause. Every unmatched-target blocker carries the probed
+vocabulary that fixes it, ranked closest-first (`_near_miss`):
+
+```
+enter "full name": no probed control matches that name
+  — did you mean "pickup name *"?
+  (probed controls here: "pickup name *", "mobile number *", …, +34 more)
+```
+
+Those names came off the live rendered DOM in *this* lap's own internal
+probe. The repair is a one-word edit to the goal and a re-author with
+`overwrite=true`. The blocked payload says so itself — it carries
+`next`: *"`blocking` IS this lap's probe evidence …"* — and a blocked
+goal-mode lap writes nothing, so there is no half-file to clean up.
+
+Corollary: **goal mode probes for you.** A `probe_page` before a `goal:`
+double-bills, and a search term one character off returns a different,
+misleading list. Probe standalone only when there is no goal, or when a
+blocker names a control you must reveal first — and then reuse the goal's
+exact strings.
+
+### 2. Identical output twice → change the mechanism, not the wording
+
+That session sent the same `--do` request in four phrasings and got
+byte-identical payloads back. The probe was not confused by the wording; the
+transaction genuinely stopped where it stopped. The fix (`--click` to
+establish the state, *then* `--do`) was mechanical, and it was found by
+accident on call #9 instead of by reasoning on call #4.
+
+Two identical payloads is a **signal, not a coincidence**. A third rephrasing
+is never the answer. Change the flag, the order, or the entry point.
+
+To make "did the rest of my chain run?" answerable without a re-probe, every
+`--do` payload now carries the completion count (NOOD_0214):
+
+```
+do: 2/4 actions completed — the controls below are the state the chain
+STOPPED in, not the requested end state
+```
+
+Structured consumers get `do_requested` / `do_completed`, plus `do_skipped`
+when `act_on="last"` made a setup URL snapshot-only. `4/4` is the
+confirmation; anything less is the reason to stop rewording.
+
+### 3. A schema rejection → read `--vocabulary` once, never guess twice
+
+`noodle author --vocabulary` prints the goal vocabulary, a minimal valid
+example and the prompt grammar as JSON, then exits — no browser, no page, one
+cheap call. Two guesses at a spec key (an invented `visible:` check, then
+prose where a spec was needed) cost more than that call and delivered less.
+The rejection payload names it too (`vocabulary_hint`).
+
+### 4. Never read the application's source — not for field names, not "just to understand"
+
+Noodle is deliberately **black-box**. Tests resolve against observable
+behaviour: accessible name/role → POM entry → self-heal. Reading the app's
+source leads to authoring from `className`, `useState` keys and internal
+`data-*` attributes, which produces tests coupled to implementation detail —
+they break on any refactor that does not change user-visible behaviour. That
+coupling is the cost, and it is worse than the tokens: reading the source
+corrupts the test written next.
+
+The DOM answer always comes from a probe or author payload. In the reviewed
+session it was already arriving — two calls after the source hunt, the
+`blocking` list returned the exact field names.
+
+### 5. `noodle list` is the workspace map — no `find`, no `ls`, no `| grep`
+
+`find`/`ls` sweeps are unbounded by construction: their payload size cannot
+be predicted before running them, which is why the "payloads are pre-bounded"
+rule pairs with them. `noodle list` (`list_tests`, `query=` to filter)
+returns a known-size map. Grepping a Noodle payload is worse than useless —
+the payload was already bounded, so the pipe re-prints text already paid for
+and then charges again to read the filtered copy.
+
+| Reflex | Correct call |
+|---|---|
+| `ls`, `ls noodle_tests/` | `noodle list` / `list_tests(query=…)` |
+| `find … "*.jsx"` for field names | nothing — app source is out of scope, always |
+| `\| grep` / `\| jq` / `\| head` on a payload | read it as returned |
+| `curl` a report URL | the payload's URLs are pre-checked (`http_ok`) |
+| guessing the next control name | the previous call's `blocking` list |
+
+### The failure mode to watch for in yourself
+
+None of these rules were missing from that session's context — all of them
+were in it, the whole time. Nine probes deep and stuck, the agent stopped
+operating as a Noodle agent and reverted to generic code-reading habits. The
+banned-command list exists precisely for that moment: black-box discipline is
+only ever tested when it feels inconvenient.
+
+**Hard budget:** on probe #3 with no new controls, stop and re-read this
+section instead of firing #4.
+
+### What `--run` decides for you (NOOD_0214)
+
+Two of the laps above are ones the engine can now take itself, because
+`run_after_author` / `--run` means "give me a finished outcome in one call":
+
+- **A brief that ends `Verify: <restatement of the flow>`.** "Verify:
+  Suggestion search works" names the flow, not text on a page, so the probe
+  proves nothing and the goal blocks — correctly, because no wording rule can
+  separate that from "verify order is placed successfully" (tried and reverted
+  in NOOD_0212). With `--run`, the engine applies its own `repair.goal`: the
+  unprovable check is dropped, every provable one is kept, and the drop leads
+  `warnings`, rides the payload as `dropped_checks`, and forces
+  **`intent_verified: false`** — the test proves less than the brief asked and
+  the contract says so. It never fires when the repair would leave zero checks
+  or when a real blocker sits beside it. Without `--run` you keep the block and
+  the `repair` field, which is what you want while composing laps.
+- **A labelled URL under any label.** `Web Test UI : https://…`,
+  `Environment under test: https://…`, `SUT : https://…` — if the value after
+  the colon is a bare URL, it is the base URL, and a later `go to UI`
+  back-reference resolves to it. A label carrying a verb of its own
+  (`click the link : https://…`) still means what it says.
+
+If a dropped check mattered, reword it to text the probe actually saw and
+re-author — the blocker names the probed candidates.
+
+---
+
 ## 8 — Edge cases to account for
 
 - **Artifacts are overwritten in place on every `noodle run`** (NOOD_0093):
