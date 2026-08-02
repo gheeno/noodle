@@ -4,6 +4,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a34] — 2026-08-02
+
+**NOOD_0220** — fix: prove and compile must agree. Measured on the NOOD_0218
+benchmark (TC5, lap 1): authoring reported
+`proven: {"see:BeanCounter ERP banner": "BeanCounter ERP"}` and then compiled
+`Then the user sees "BeanCounter ERP banner"`. The runtime asserts by
+substring, so it looked for text the page does not render — a red run on a
+check the payload had just called proven, and a lap spent discovering the
+engine's own evidence disagreed with its own Gherkin.
+
+- **A `see` proven by a shorter rendering compiles as that rendering.**
+  `_find_text` matches both directions; the reverse one (the page renders a
+  shorter form than the ask) claimed the check proven without narrowing it.
+  The check now narrows to what actually proved it, carrying the existing
+  NOOD_0199 `narrowed` provenance — never silent. The invariant is pinned by
+  a structural test: every compiled `see` is a substring of the text that
+  proved it.
+- **`any_of` is deliberately exempt.** NOOD_0195 measured why: a disjunction
+  runs over result titles, whose probe capture truncates, so a short probed
+  form usually means the capture was lossy rather than the page rendering
+  less. Narrowing there would weaken a correct assertion. The disjunction
+  stays whole and the run records which member rendered.
+- **The trailing element noun is stripped at expansion.** "verify X banner is
+  present" asserted the literal 'X banner'; the noun names the ELEMENT, and
+  the text before it is the page text. This is the unquoted twin of the
+  `_PRESENCE_RESIDUE` rule that already handled `'"Acme" logo is present'`.
+  Quoted content is data and is never rewritten. Safe by construction: the
+  strip can only shorten, and the runtime matches by substring, so an
+  assertion that would have passed still passes.
+
 ## [1.0.0a33] — 2026-08-02
 
 **NOOD_0218** — fix: the engine finds the page the flow lives on, and a

@@ -2228,6 +2228,21 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
                     # none of them says what the page DOES show.
                     + _near_miss(c["see"], scope, "text"))
             else:
+                # NOOD_0220 — prove and compile must agree. `_find_text` also
+                # matches the REVERSE direction (the page renders a shorter
+                # form than the ask: "BeanCounter ERP banner" proven by
+                # "BeanCounter ERP"), and the runtime asserts by SUBSTRING —
+                # so compiling the original wording asserts text the page
+                # does not render. The payload said proven, the run went red,
+                # and the reader paid a lap to discover the engine's own
+                # evidence disagreed with its own Gherkin. Narrow to what was
+                # actually proven, with the same NOOD_0199 provenance: never
+                # silent, and the invariant is now checkable — every compiled
+                # `see` is a substring of the text that proved it.
+                if _norm(c["see"]) not in _norm(hit):
+                    narrowed.append({"from": c["see"], "to": hit,
+                                     "probed": hit})
+                    c["see"] = hit
                 proven[f"see:{c['see']}"] = hit
                 proven_phase[f"see:{c['see']}"] = \
                     "search" if at_end else "initial"
@@ -2256,6 +2271,13 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
             for alt in c["any_of"]:
                 hit = alt if _norm(alt) in expect else _find_text(alt, blks)
                 if hit is not None:
+                    # NOOD_0220 — deliberately NOT narrowed, unlike the `see`
+                    # arm above. NOOD_0195 measured the difference: an any_of
+                    # runs over RESULT TITLES, whose probe capture truncates,
+                    # so a short probed form is usually the capture being
+                    # lossy rather than the page rendering less. Narrowing
+                    # there would weaken a correct assertion; the disjunction
+                    # stays whole and the run records which member rendered.
                     texts.add(_norm(hit))
             if len(texts) >= want:
                 # NOOD_0197 — the proven members feed ONE disjunctive step
