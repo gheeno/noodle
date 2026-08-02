@@ -44,3 +44,7 @@ docs/steps_dictionary_suggestions.md
 
 # Last-run pointer written by `noodle run` (NOOD_0086)
 .noodle/
+# Local virtualenvs — never committed (a benchmark run created one at
+# test-apps/erp/.venv and 950 files rode a NOOD_0218 amend into main).
+.venv/
+venv/
