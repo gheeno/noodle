@@ -208,7 +208,11 @@ def test_the_session_paste_compiles_to_the_asked_for_goal():
     # the first check is anchored to the landing page — the prompt asks for
     # it BEFORE the search, so it must not be scoped to the results page
     assert g["checks"] == [
-        {"see": "Weekly Deals banner", "after": "start"},
+        # NOOD_0220 — "banner" named the element, not page text, and the
+        # trailing noun is now stripped at expansion (unquoted only; the
+        # quoted form below still reaches evidence() intact). This test's
+        # subject is the ANCHOR, which is unchanged.
+        {"see": "Weekly Deals", "after": "start"},
         {"any_of": ["Toy Cars", "Die Cast"], "min": 1}]
     # the URL rides the labelled line, so app/feature derive without a flag
     assert exp["base_url"] == "https://shop.example.com/en.html"

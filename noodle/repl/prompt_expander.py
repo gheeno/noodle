@@ -871,6 +871,16 @@ _PRESENCE_TAILS = frozenset(
     ("visible", "present", "shown", "displayed", "there", "correct",
      "working", "ok"))
 
+# NOOD_0220 — display-element nouns a human appends when naming WHAT they are
+# looking at ("the BeanCounter ERP banner", "the Acme logo"). Deliberately
+# separate from resolver.patterns.CONTROL_NOUNS: that list drives locator
+# resolution, and widening it would change how steps match elements. This one
+# only trims an assertion's trailing word, where the worst case is a shorter
+# (still-passing) literal.
+_TRAILING_NOUN = re.compile(
+    r"\s+(?:banner|logo|image|img|icon|header|heading|section|label|"
+    r"title|message|text|button|link|field|panel|badge|tile|card)s?$", re.I)
+
 
 # NOOD_0197 — one concrete rewrite per still-unresolved clause, so a partial
 # rejection teaches the fix instead of dumping the whole grammar and walking
@@ -2051,8 +2061,29 @@ def expand(text: str, base_url: str | None = None) -> dict:
                     text = re.sub(r"\s+(?:is|are)\s+(?:visible|shown|"
                                   r"displayed|present)$", "", text, flags=re.I)
                     text = _ARTICLE.sub("", text)
-                    if len(text) > 1 and text[0] == text[-1] and text[0] in "\"'":
+                    quoted = (len(text) > 1 and text[0] == text[-1]
+                              and text[0] in "\"'")
+                    if quoted:
                         text = text[1:-1]
+                    # NOOD_0220 — the UNQUOTED twin of _PRESENCE_RESIDUE.
+                    # '"Acme" logo is present' already lost its noun; "verify
+                    # BeanCounter ERP banner is present" kept it and asserted
+                    # 'BeanCounter ERP banner' — text no page renders, and a
+                    # measured red run (0218 benchmark TC5) on a page that
+                    # plainly showed the thing. The trailing noun names the
+                    # ELEMENT; what precedes it is the page text. Quoted
+                    # content is DATA and is never rewritten (the engine's
+                    # standing rule), and the strip is safe by construction:
+                    # it can only shorten, the runtime matches by substring,
+                    # so an assertion that would have passed still passes.
+                    if not quoted and (
+                            stripped := _TRAILING_NOUN.sub("", text).strip()) \
+                            and stripped != text:
+                        assumptions.append(
+                            f"step {no} '{n['raw']}': the trailing noun names "
+                            f"the element, not page text — asserting "
+                            f"'{stripped}', not '{text}'")
+                        text = stripped
                     check = {"see": text}
                     assumptions.append(
                         f"step {no} '{n['raw']}': asserting the literal text "
