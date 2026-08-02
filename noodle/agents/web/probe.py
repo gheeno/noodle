@@ -2671,6 +2671,33 @@ def _skeleton_lines(pg: dict, indent: str = "  ") -> list[str]:
     return out
 
 
+# NOOD_0215 — Chromium's network errors, each with what the reader should do
+# about it. A dead origin fails at connect time, so the probe was already fast;
+# what it wasn't was legible — `net::ERR_CONNECTION_REFUSED at http://...` reads
+# like a Noodle bug, and the agent who can't tell "app is down" from "probe is
+# broken" goes and runs curl to find out. Saying it plainly is the whole fix.
+_ORIGIN_ERRORS = (
+    ("ERR_CONNECTION_REFUSED", "nothing is listening there — start the app "
+                               "(or check the port), then probe again"),
+    ("ERR_NAME_NOT_RESOLVED", "that host name does not resolve — check the "
+                              "spelling, or the VPN/DNS this machine needs"),
+    ("ERR_CONNECTION_TIMED_OUT", "the host accepted nothing before the timeout "
+                                 "— it may be firewalled or still starting"),
+    ("ERR_INTERNET_DISCONNECTED", "this machine has no network at all"),
+)
+
+
+def _origin_error(url: str, exc: Exception) -> str:
+    """A probe failure the reader can act on. Anything not in the table above
+    passes through verbatim — a wrong guess about the cause is worse than a
+    raw Playwright message."""
+    text = str(exc)
+    for marker, advice in _ORIGIN_ERRORS:
+        if marker in text:
+            return f"{url} is not reachable ({marker}): {advice}"
+    return text
+
+
 @outside_asyncio
 def probe(urls: list[str], timeout_ms: int = 15000,
           clicks: list[str] | None = None,
@@ -2839,7 +2866,7 @@ def probe(urls: list[str], timeout_ms: int = 15000,
                     pg["author_ready"] = _author_ready(pg)
                     pages.append(pg)
                 except Exception as e:
-                    errors.append({"url": url, "error": str(e)})
+                    errors.append({"url": url, "error": _origin_error(url, e)})
         finally:
             # the CONTEXT, never the pooled browser — closing the browser
             # here would defeat the reuse the pool exists for.

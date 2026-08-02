@@ -1266,7 +1266,18 @@ and then charges again to read the filtered copy.
 | `find … "*.jsx"` for field names | nothing — app source is out of scope, always |
 | `\| grep` / `\| jq` / `\| head` on a payload | read it as returned |
 | `curl` a report URL | the payload's URLs are pre-checked (`http_ok`) |
+| `curl`/`wget` an app URL to see if it answers | nothing — `noodle probe <url>` names a dead origin itself (NOOD_0215) |
 | guessing the next control name | the previous call's `blocking` list |
+
+**And the rule that outlives the table (NOOD_0215):** no noodle command for
+what you need? Say so and stop. An unmet observability need is an engine gap
+to report, never a shell command to improvise around — improvising hides the
+gap, so the next agent hits it too. That is how `curl` survived every rule
+above: `net::ERR_CONNECTION_REFUSED at http://localhost:5173` reads like a
+Noodle bug, not like "your app isn't running", so the agent went and asked
+something it trusted. A probe now says which it is, in words. The table can
+only ban a reflex whose substitute is legible; making it legible is the other
+half.
 
 ### The failure mode to watch for in yourself
 

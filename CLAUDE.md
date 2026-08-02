@@ -1,5 +1,23 @@
 # Noodle Test Framework — Claude Instructions
 
+## Observability — noodle commands only (NOOD_0215)
+
+Full table, shared with every other assistant, in
+[AGENTS.md](AGENTS.md#observability--noodle-commands-only). The short form:
+
+| Reflex | Noodle command |
+|---|---|
+| `curl`/`wget` a URL to see if it answers | nothing — `noodle probe <url>` names a dead origin itself |
+| `ls`/`find` for tests | `noodle list` |
+| `\| grep` `\| jq` `\| sed` `\| head` a payload | read it as returned — payloads are pre-bounded |
+| reading app source for a selector | `noodle probe <url>` (black-box) |
+| `allure serve` / `http.server` / `file://` | `noodle report serve` |
+
+**No noodle command for what you need? Say so and stop.** An unmet
+observability need is an engine gap to report — not a shell command to
+improvise around. `git` for the workflow below is the one exception: that
+is version control, not observability of a system under test.
+
 ## Terminology — engine, workspace, wok
 
 Three formal nouns (NOOD_0155), canonical definitions in

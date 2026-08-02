@@ -63,7 +63,7 @@ resources:
     - repository: noodle
       type: git                    # 'github' for a GitHub-hosted engine
       name: Tooling/noodle         # <Project>/<Repo> in Azure Repos
-      ref: refs/tags/1.0.0a29       # pin it — a moving ref is not a build
+      ref: refs/tags/1.0.0a30       # pin it — a moving ref is not a build
 
 jobs:
   # …the project's own build / deploy jobs stay as they are…
@@ -297,7 +297,7 @@ schedules, tag filters, speed, pools, secrets —
 | In the scaffolded file | Replace with | Fails how |
 |---|---|---|
 | `name: REPLACE_ME/noodle` | `<Project>/<Repo>` of the engine repo (a bare repo name only resolves within one project) | compile time |
-| `default: refs/tags/REPLACE_ME` | the engine version to pin, e.g. `refs/tags/1.0.0a29` | compile time |
+| `default: refs/tags/REPLACE_ME` | the engine version to pin, e.g. `refs/tags/1.0.0a30` | compile time |
 | `workspaceDir: ''` | leave empty for a root workspace; a path when nested | run time |
 
 Both compile-time failures happen *before any job exists*, so there is no job
