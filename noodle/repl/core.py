@@ -915,6 +915,60 @@ def _auto_repair(result: dict, *, app_name: str, base_url: str,
     return retry
 
 
+# NOOD_0217 — on a green result these keys are failure-diagnosis provenance:
+# they earn their bytes exactly when something is wrong, and cost ~5 KB per
+# call when nothing is. The failure path keeps every one of them.
+_GREEN_AUTHOR_DROP = ("compiled", "intent", "intent_trace", "probe_summary")
+_GREEN_RUN_DROP = ("output", "healing_events")
+
+
+def collapse_green(result: dict, workspace: str = ".") -> dict:
+    """NOOD_0217 — the agent-door diet for a PASSING atomic envelope.
+
+    Every authoring payload overflowed the 8 KB budget, 100% of the time,
+    because its weight sits in nested dicts `bound()` could not see — and the
+    heaviest keys on a green, verified run are diagnosis provenance a pass
+    does not need. Collapse ONLY when nothing needs diagnosing (ok, ready,
+    no blocking, run green, verified not false, intent_verified not false):
+    the full envelope is written to `.noodle/last_payload.json` first and the
+    payload points at it (`full_payload`), so nothing is lost — just moved
+    off the per-call token bill. Applied at the agent doors (MCP tool, CLI
+    --json), never to the internal result: regression.py and the REPL
+    envelope read the full shape."""
+    if not (isinstance(result, dict) and result.get("ok")):
+        return result
+    author, run = result.get("author"), result.get("run")
+    if not (isinstance(author, dict) and isinstance(run, dict)):
+        return result
+    if (not author.get("ready") or author.get("blocking")
+            or author.get("intent_verified") is False
+            or run.get("skipped") or not run.get("ok") or run.get("failed")
+            or run.get("verified") is False):
+        return result
+    out = {**result,
+           "author": {k: v for k, v in author.items()
+                      if k not in _GREEN_AUTHOR_DROP},
+           "run": {k: v for k, v in run.items() if k not in _GREEN_RUN_DROP}}
+    if isinstance(out["author"].get("evidence"), dict):
+        # counts, not content — "3 fact(s) proven" is the green-path answer
+        out["author"]["evidence"] = {
+            k: (len(v) if isinstance(v, (list, dict)) else v)
+            for k, v in out["author"]["evidence"].items()}
+    if isinstance(out.get("prompt_expansion"), dict):
+        out["prompt_expansion"] = {
+            k: v for k, v in out["prompt_expansion"].items()
+            if k not in ("coverage", "inferences", "goal")}
+    try:
+        p = Path(workspace) / ".noodle" / "last_payload.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(result, indent=2, default=str),
+                     encoding="utf-8")
+        out["full_payload"] = str(p.resolve())
+    except OSError:
+        pass
+    return out
+
+
 def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
                 feature_content: str | None = None,
                 pom_content: str | None = None,

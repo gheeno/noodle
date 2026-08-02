@@ -4,6 +4,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a32] — 2026-08-02
+
+**NOOD_0217** — fix: cut the agent cost of authoring, kill the wasted repair
+lap. A 4-TC cold benchmark went green on every case, but every authoring
+payload overflowed the 8 KB budget (10–12 KB, ~3.1k tokens per call) and one
+TC burned a whole red-run + re-author lap on normal human phrasing.
+
+- **The payload budget is enforceable again.** `payload_budget.bound()` built
+  its trim set from top-level lists/strings only; the authoring envelope's
+  weight sits in nested dicts (`author` 5.4 KB, `run` 2.9 KB), so every call
+  came back whole with "nothing is trimmable". `bound()` now walks nested
+  dicts and trims the largest list/string at any depth — keys are never
+  dropped, and `blocking` (the repair path's evidence) is never trimmed.
+- **A green result stops paying for its own diagnosis.** On a passing,
+  verified atomic result (`ok` + `ready` + no blocking + `verified` and
+  `intent_verified` not false) the agent doors (MCP `author_test`, CLI
+  `--json`) drop the failure-diagnosis provenance — `author.compiled`,
+  `intent`, `intent_trace`, `probe_summary`, `run.output`,
+  `healing_events`, `prompt_expansion.goal/coverage/inferences` — and
+  collapse `author.evidence` to counts. The full envelope is written to
+  `.noodle/last_payload.json` first and the payload points at it
+  (`full_payload`), so nothing is lost — just moved off the per-call token
+  bill (~12.2 KB → well under budget). The failure path keeps every byte,
+  and the internal result is untouched (regression.py and the REPL envelope
+  still read the full shape).
+- **The claim grammar strips control nouns like the step grammar does.**
+  `verify you see the textbox "Please enter your email address"` compiled to
+  an assertion on the literal 'textbox "..."' — text no page renders — and
+  cost a full wasted lap. The expander now strips a leading control-noun run
+  before a quoted claim (`the button "X" is visible`, `check the field "Y"
+  appears`, `the page shows the textbox "Z"`), reusing patterns.py's noun
+  list via one imported constant (`CONTROL_NOUNS`) with a drift-guard test.
+  State assertions (`is checked`, `is disabled`) are never rewritten; the
+  reading is echoed in `assumptions`.
+- **A goal label beside numbered steps is a title, not a step.** The re-run
+  benchmark fed the PROMPT_TEMPLATE shape minus its "Steps a human would
+  take:" line, and `User goal: Search for a product via search bar
+  suggestion box` minted a SECOND search action (that whole phrase as the
+  term): one CONTRACT_BLOCKED lap, then a probe lap where the summary's term
+  swallowed the suggest binding. NOOD_0199's title-skip keyed off a section
+  header; numbered steps now count as that evidence too (checked on lines —
+  the sentence splitter severs the "1." marker). A brief with no numbered
+  steps still reads its flow off the goal line, so the one-line
+  `Goal: search for shoes` door keeps working. Pre-existing on a31 —
+  verified identical on main — surfaced, not introduced, by this ticket.
+- **The missing signal.** Unit tests now assert the authoring envelope FITS
+  the budget — green and red, MCP (compact) and CLI (indent=2) renderings —
+  so the next ticket that grows `author`/`run` fails a test instead of
+  silently raising every agent's per-call cost.
+
 ## [1.0.0a31] — 2026-08-02
 
 **NOOD_0216** — feature: the api wok encapsulated and matured. The wok's

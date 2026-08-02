@@ -353,7 +353,10 @@ def author_test(app_name: str | None = None, base_url: str | None = None,
     control names this lap's own probe read off the live page, so a
     probe_page to confirm one re-buys evidence you hold (`next` says so
     in the payload). workspace overrides the server default."""
-    return core.author_test(
+    ws = _ws(workspace)
+    # NOOD_0217 — green atomic results collapse to the verdict + pointers;
+    # the full envelope is on disk at `full_payload`. Red keeps everything.
+    return core.collapse_green(core.author_test(
         app_name=app_name, base_url=base_url, feature_path=feature_path,
         feature_content=feature_content, pom_content=pom_content,
         environment_values=environment_values,
@@ -361,7 +364,7 @@ def author_test(app_name: str | None = None, base_url: str | None = None,
         goal=goal, run_after_author=run_after_author,
         overwrite=overwrite,
         allow_unverified_intent=allow_unverified_intent,
-        prompt=prompt, workspace=_ws(workspace))
+        prompt=prompt, workspace=ws), workspace=ws)
 
 
 @_tool()
