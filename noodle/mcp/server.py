@@ -417,7 +417,8 @@ def probe_page(url: str, click: list[str] | None = None,
     raw selectors pass; REAL clicks — never state-mutating).
     `do`: ONE stateful transaction — "enter <v> in <field>" /
     "select <opt> from <dropdown>" / "click <name>" /
-    "switch to <new|original> tab" in order, run for REAL (save/submit
+    "click <name> in the row containing <text>" (card grids, runtime row
+    resolution) / "switch to <new|original> tab" in order, run for REAL (save/submit
     included), each delta under "revealed"; {env:KEY} resolves engine-side
     (never paste a raw secret). A click opening a NEW TAB is followed, probed
     as its own block with the exact switch steps, and the transaction

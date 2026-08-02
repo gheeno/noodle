@@ -1454,13 +1454,17 @@ def _near_miss(target: str, blocks: list, kind: str = "control") -> str:
             + (f", +{len(ranked) - 8} more" if len(ranked) > 8 else "") + ")")
 
 
-def _locate(target: str, blocks: list, scoped: bool = False) \
+def _locate(target: str, blocks: list, scoped: bool = False,
+            pinned: bool = False) \
         -> tuple[dict | None, str | None, str | None, str | None]:
     """(control, phase, trigger, blocking_note) for a goal action target.
 
     `scoped` — the action carries a `within:` anchor (NOOD_0207), so a
     repeated control is exactly what it means to address; the ambiguity gate
     below is what `within:` is the answer to, and must not fire on it.
+
+    `pinned` — the caller pinned this target in pom_content (NOOD_0212), the
+    other way to settle ambiguity; every gate is answered by the selector.
 
     NOOD_0145 — deterministic match order, replacing first-substring-wins
     (which picked a machine-named lookalike, e.g. "login options toggle btn",
@@ -1500,7 +1504,25 @@ def _locate(target: str, blocks: list, scoped: bool = False) \
         # is a per-item family, where instance 1 is a coin flip.
         amb = next((c for c, _, _ in exact if c.get("unique") is False
                     and (c.get("matches") or 0) > _DUPLICATE_CEILING), None)
+        if pinned:
+            return (*exact[0], None)
         if scoped:
+            # NOOD_0222 — the structurally-different gate below exists
+            # precisely to say "a within: anchor will not resolve at run
+            # time" (NOOD_0209) — but supplying within: skipped it, so the
+            # exact goal it warns against authored ready:true and died in
+            # the run as "No row containing '<text>' found": a red run per
+            # instance of the most expensive ordering there is. Same page,
+            # same evidence, decided at author time instead.
+            shapes = {re.sub(r"\d+", "N", s) for s in sels}
+            if amb is None and len(shapes) > 1:
+                return None, None, None, (
+                    f"matches {len(exact)} structurally different probed "
+                    "controls sharing this exact name (distinct selectors) — "
+                    "these are not one control repeated per row/card, so the "
+                    "within: anchor will not resolve at run time; drop "
+                    "within: and pin the intended instance via pom_content "
+                    "(its selector answers \"which one\")")
             return (*exact[0], None)
         if len(sels) > 1 or amb is not None:
             # NOOD_0212 — same NAME and same DESTINATION is not an ambiguity.
@@ -2028,15 +2050,20 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
         # ambiguity gate asks. Blocking anyway left the gate's own advice —
         # "use the distinguishing control" — with nothing behind it: handing
         # over the selector IS that, and there was no other way to say so.
-        settled = bool(scope) or _norm(a.get("target")) in pinned
+        # NOOD_0222 — within: and a pom_content pin settle ambiguity on
+        # different terms (a pin answers every gate; within: only per-row
+        # repetition), so _locate now takes them apart.
+        is_pinned = _norm(a.get("target")) in pinned
         if after_pick and picked_blk is not None:
             # NOOD_0156 — an action after the pick happens on the landed page:
             # resolve there FIRST, so the landed page's single "Add to cart"
             # wins over the results page's repeated per-card twins.
             ctrl, phase, trigger, note = _locate(
-                a["target"], [(picked_blk, "picked", None)], settled)
+                a["target"], [(picked_blk, "picked", None)], bool(scope),
+                is_pinned)
         if ctrl is None and note is None:
-            ctrl, phase, trigger, note = _locate(a["target"], blocks, settled)
+            ctrl, phase, trigger, note = _locate(a["target"], blocks,
+                                                 bool(scope), is_pinned)
         if ctrl is None:
             # NOOD_0207 — past the evidence gate the probe never snapshotted
             # this page at all, so "no probed control matches" is a fact about

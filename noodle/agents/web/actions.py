@@ -360,6 +360,21 @@ def page_response(page) -> str | None:
             f'announced: "{text}"')
 
 
+def page_text(page, limit: int = 240) -> str | None:
+    """NOOD_0222 — failure-time note for the RCA: what the failed page
+    actually RENDERS, whitespace-collapsed and clipped. A reviewed session
+    ran tesseract over the failure screenshot to learn the page said "Your
+    cart is empty" — text the engine could read for free. Never raises."""
+    try:
+        text = " ".join(_body_text(page).split())
+    except Exception:
+        return None
+    if not text:
+        return None
+    clipped = text[:limit] + ("…" if len(text) > limit else "")
+    return f'[page-text] the page shows: "{clipped}"'
+
+
 def _warn_if_no_effect(page: Page, locator_text: str, probe: dict | None):
     """Best-effort, never raises, never fails a step. Any effect (navigation,
     mutation, request) exits immediately — only a genuinely inert click pays
