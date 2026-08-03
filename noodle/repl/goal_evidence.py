@@ -398,6 +398,64 @@ def _beyond_probe_reach(actions: list, performed: bool = False) -> bool:
     return any(a.get("do") not in _PROBE_FOLLOWS for a in actions[gate:])
 
 
+# NOOD_0229 — verbs that can carry the page out from under the landing
+# snapshot. `enter`/`select`/`check`/`hover` fill or reveal in place; the rest
+# submit, follow or navigate, so a check written for the landing page and left
+# unanchored will be asserted somewhere else entirely.
+_PAGE_CHANGING = ("click", "pick", "add_to", "search", "suggest",
+                  "press_key", "go_back")
+
+
+def _unanchored_landing_warning(check: dict, actions: list,
+                                landing_scope: list,
+                                performed_scope: list) -> str | None:
+    """Fix 1.1 — the split-the-test trap, named before it costs a lap.
+
+    An unanchored check is evaluated at the END state (NOOD_0158). When its
+    text is one the probe read off the LANDING page and the goal's own actions
+    navigate away from it, that check is about a page the compiled step will
+    never be on. The reviewed session hit exactly this, read it as "a
+    landing-page assertion cannot live in this scenario", and authored a
+    second feature to host it — two features for one ordered user flow, and
+    the logo it verified was never proven to be present in the run that
+    ordered the item.
+
+    Silent by design when the check is anchored, when the probe walked the
+    flow (probe.perform) and found the same text downstream — there the end
+    state really does show it — and when the goal takes fewer than two
+    page-changing actions. That last bound is what keeps this a signal rather
+    than a lecture: ONE click or mutation may well leave the page where it
+    was (and the engine already routes such a check to the run), while a
+    CHAIN of them is a multi-page flow by construction, which is the only
+    shape where a landing-page text asserted at the end is unambiguously
+    wrong.
+    """
+    if check.get("after") is not None:
+        return None
+    kind = "see" if "see" in check else ("any_of" if "any_of" in check else None)
+    if kind is None:
+        return None
+    if sum(1 for a in actions
+           if isinstance(a, dict) and a.get("do") in _PAGE_CHANGING) < 2:
+        return None
+    alts = [check["see"]] if kind == "see" else list(check["any_of"])
+    on_landing = [t for t in alts if _find_text(t, landing_scope) is not None]
+    if not on_landing:
+        return None
+    if performed_scope and any(_find_text(t, performed_scope) is not None
+                               for t in alts):
+        return None          # the walked end state shows it too — no trap
+    ids = [a["id"] for a in actions
+           if isinstance(a, dict) and a.get("id") is not None]
+    return (f'check "{on_landing[0]}" is unanchored → asserted at the END '
+            "state, but the probe read that text on the LANDING page. Anchor "
+            "it to the page it belongs to: `after: start` (landing) or "
+            "`after: <action id>` (mid-flow"
+            + (f", e.g. {ids[0]!r}" if ids else "; give the action an `id:`")
+            + "). One goal can carry checks on several pages — this is not a "
+              "reason to author a second feature.")
+
+
 def bind_result(controls: list[dict], term: str,
                 target: str | None = None,
                 items: list[dict] | None = None) -> tuple[dict | None, str | None]:
@@ -1204,6 +1262,11 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
     # of guessed and paid for with a red run.
     initial_scope = [blk for blk, ph, _ in blocks
                      if ph in ("initial", "reveal", "performed")]
+    # NOOD_0229 (fix 1.1) — the two halves of initial_scope, kept apart for
+    # the unanchored-check warning below: what the page showed BEFORE the
+    # goal's own actions ran, and what it showed after.
+    landing_scope = [blk for blk, ph, _ in blocks if ph in ("initial", "reveal")]
+    performed_scope = [blk for blk, ph, _ in blocks if ph == "performed"]
     search_scope = [blk for blk, ph, _ in blocks if ph == "search"]
     picked_blk = next((blk for blk, ph, _ in blocks if ph == "picked"), None)
     # NOOD_0195 — the probe's --expect verdicts: an exact full-text search of
@@ -1685,6 +1748,9 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
             runtime.append(_check_step(c, captions)[0])
             continue
         after = c.get("after")
+        if w := _unanchored_landing_warning(c, actions, landing_scope,
+                                            performed_scope):
+            warnings.append(w)
         anchor_i = next((j for j, a in enumerate(actions)
                          if a.get("id") == after), -1) if after is not None else -1
         if gate is not None and (anchor_i >= gate

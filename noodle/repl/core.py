@@ -319,8 +319,10 @@ def run_test(target: str | None = None, *, tag: str | None = None,
 def last_result(workspace: str = ".") -> dict:
     """Structured last-run result from allure-results (counts, failures,
     wall time) — the data `noodle summary` formats, returned as a dict."""
+    from noodle.reporting import scope as _scope
     from noodle.reporting import summary as _summary
-    results = str(_paths.last_run_root(workspace) / "allure-results")
+    root = _paths.last_run_root(workspace)
+    results = str(root / "allure-results")
     result = _summary.collect(results)
     # NOOD_0080 — surface the run's own LLM spend to MCP/REPL callers so
     # driving agents can relay it in chat (written by hooks.after_all).
@@ -328,10 +330,83 @@ def last_result(workspace: str = ".") -> dict:
     llm_cost = _cost.load_total(results)
     if llm_cost:
         result["llm_cost"] = llm_cost
+    # NOOD_0229 — what the run covered vs what the report beside it holds. The
+    # counts above are the RUN's; a reader with no way to tell them apart
+    # summarised "2 of 2 green" off a report holding one test.
+    result["report_scope"] = _scope.report_scope(
+        results, _scope.covered_features_root(
+            root, Path(workspace) / config.load(workspace)["tests_dir"]))
     return result
 
 
 # --- NOOD_0128: preflight, one-shot run/report, atomic authoring ------------
+
+_STEP_RE = re.compile(r"^\s*(Given|When|Then|And|But)\s+(.*\S)\s*$")
+
+
+def action_steps(gherkin: str) -> set[str]:
+    """The ACTION half of a feature's steps — every Given/When, with And/But
+    resolved to the keyword they inherit. Assertions (Then, and the Ands
+    under it) are deliberately excluded: two tests that assert different
+    things about the SAME flow are the case NOOD_0229's fix 1.2 is looking
+    for, and folding their Thens in would hide exactly that.
+
+    Text-only and engine-general: no goal, no app, no vocabulary — it reads
+    the compiled Gherkin, so a hand-authored feature is compared on the same
+    terms as a goal-compiled one."""
+    out, current = set(), None
+    for line in (gherkin or "").splitlines():
+        m = _STEP_RE.match(line)
+        if not m:
+            continue
+        kw, text = m.group(1), m.group(2)
+        if kw in ("Given", "When", "Then"):
+            current = kw
+        if current in ("Given", "When"):
+            out.add(re.sub(r"\s+", " ", text).casefold())
+    return out
+
+
+def _overlap_warnings(content: str, feat_dest: Path, app_dir: Path,
+                      _cap: int = 2) -> list[str]:
+    """Which existing features in this package walk the same flow as the one
+    being authored (fix 1.2).
+
+    "Same flow" = one feature's action set contains the other's. Both
+    directions matter, and the reported case was the second one: a
+    landing-page assertion authored as its own feature has ONE action (the
+    navigation), which every feature in the package already performs — so the
+    new test is a check looking for a flow it could have lived in. Splitting
+    it broke the causal chain: the assertion no longer proved anything about
+    the run that performed the flow.
+    """
+    mine = action_steps(content)
+    if not mine:
+        return []
+    dest = feat_dest.resolve()
+    hits = []
+    for f in sorted((app_dir / "features").glob("*.feature")):
+        if f.resolve() == dest:
+            continue
+        try:
+            theirs = action_steps(f.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if not theirs:
+            continue
+        if theirs <= mine:
+            hits.append((f.name, "repeats every action of"))
+        elif mine <= theirs:
+            hits.append((f.name, "performs every action of this one, and more"))
+    if not hits:
+        return []
+    named = "; ".join(f"'{n}' ({why})" for n, why in hits[:_cap])
+    more = f" (+{len(hits) - _cap} more)" if len(hits) > _cap else ""
+    return [f"overlaps existing feature(s) in this package — {named}{more}. "
+            "One user flow belongs in ONE scenario: consider adding this "
+            "test's check to that feature (anchored with `after:`) rather "
+            "than authoring a second feature for the same flow."]
+
 
 def _app_dir_for(feature_rel: str, workspace: str) -> Path | None:
     """The app package dir a run target points at — the `features/` parent when
@@ -515,7 +590,8 @@ def run_and_report(target: str | None = None, *, tag: str | None = None,
                    parallel: int | None = None, parallel_scheme: str = "feature",
                    preflight_check: bool = True, compact_rca: bool = True,
                    serve_reports: bool = False,
-                   workspace_strict: bool | None = None) -> dict:
+                   workspace_strict: bool | None = None,
+                   package: str | None = None) -> dict:
     """One bounded payload for the whole run→report→(serve) loop (NOOD_0128).
     Preflights secrets first (no browser on missing creds), runs, folds the
     compact RCA in on red, and optionally serves — so a driving agent needs one
@@ -524,7 +600,12 @@ def run_and_report(target: str | None = None, *, tag: str | None = None,
     the reports the run hook already built are freshness-checked once (rebuilt
     only when missing/stale — parallel runs and allure-less environments still
     get repaired) instead of unconditionally regenerated; serving reuses that
-    verified root without a second check."""
+    verified root without a second check.
+
+    NOOD_0229 — `package` (a workspace-relative app package dir) runs the whole
+    package instead of one feature: `noodle author --run-scope app`. Preflight
+    and the run both take the directory, so every feature in it is verified in
+    the one run the report then covers."""
     from noodle.reporting import builder
     ws = workspace
     # NOOD_0086 app-package runs (workspace IS the app dir) resolve inside
@@ -532,7 +613,9 @@ def run_and_report(target: str | None = None, *, tag: str | None = None,
     app_pkg_run = (target is None and not tag and (Path(ws) / "features").is_dir()
                    and not (Path(ws) / "noodle.yaml").exists())
     resolved = None
-    if not tag and not app_pkg_run:
+    if package:
+        resolved = Path(package).as_posix()
+    elif not tag and not app_pkg_run:
         r = resolve_target(target, ws)
         if "error" in r:
             return {"ok": False, **r}
@@ -1313,6 +1396,7 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
                 goal: dict | None = None, run_after_author: bool = False,
                 overwrite: bool = False,
                 allow_unverified_intent: bool = False,
+                run_scope: str = "feature",
                 workspace: str = ".") -> dict:
     """NOOD_0128/0129 — write a whole test package in one transaction:
     locate/create the app package (no sample_app copy), write environments.yaml
@@ -1349,12 +1433,21 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     An unprovable requested action/check blocks — never dropped or broadened.
     `run_after_author=true` then runs ONCE (headless, retries=0), serves both
     reports, and forces failure when 0 scenarios passed — one bounded
-    {author, run} payload, zero extra model round-trips."""
+    {author, run} payload, zero extra model round-trips.
+
+    NOOD_0229 — `run_scope`: "feature" (default) runs the feature just
+    authored; "app" runs its whole package, so every feature in the report was
+    verified by this run rather than kept from an earlier one. The report is
+    combined either way now — a run replaces only the scenarios it re-ran —
+    and `run.report_scope` says which features this run actually executed."""
 
     from noodle.repl import generate, validate
     if (feature_content is None) == (goal is None):
         return {"ok": False,
                 "error": "pass exactly one of feature_content or goal"}
+    if run_scope not in ("feature", "app"):
+        return {"ok": False, "error": f"unsupported run_scope {run_scope!r}; "
+                "valid: feature (this feature only), app (its whole package)"}
     cfg = config.load(workspace)
     # Reuse an existing package for this URL, else a fresh web/<app> package —
     # same layout generate.py produces (docs/feature-packages.md).
@@ -1754,6 +1847,11 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     # GUESS the corrected path for its overwrite retry. Requested vs written,
     # plus a warning whenever they differ.
     warnings = validate.redundant_post_nav_waits(content)
+    # NOOD_0229 (fix 1.2) — the duplicate-flow guard. One ordered user flow was
+    # authored as two features because a mid-flow assertion looked homeless;
+    # nothing said the second one was re-treading the first. Advisory: two
+    # features CAN legitimately share a flow.
+    warnings += _overlap_warnings(content, feat_dest, app_dir)
     # NOOD_0199 — a check the engine cut down to its probe-proven substring is
     # a weaker assertion than the one asked for, so it is stated, never silent.
     for nar in ((goal_ev or {}).get("narrowed") or []):
@@ -2033,7 +2131,8 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
                         # this call's; see the note where the entry is saved.
                         "blocking": (contract.get("blocking") or blocking)}}
     run = run_and_report(result["feature"], workspace=workspace,
-                         headless=True, retries=0, serve_reports=True)
+                         headless=True, retries=0, serve_reports=True,
+                         package=rel(app_dir) if run_scope == "app" else None)
     if run.get("ok") and not run.get("passed"):
         # An empty run exits 0 — a green that ran nothing is a failure.
         run["ok"] = False
@@ -2533,7 +2632,34 @@ def serve_report(workspace: str = ".", report_dir: str | None = None, port: int 
         builder.ensure_fresh_reports(str(root.parent / "allure-results"), str(root))
     if not root.is_dir():
         return {"ok": False, "error": f"no reports at {root} — run a test or `noodle report generate` first"}
-    return _cli._spawn_report_server(str(root), workspace, "127.0.0.1", port)
+    served = _cli._spawn_report_server(str(root), workspace, "127.0.0.1", port)
+    # NOOD_0229 — a hosted report names its own coverage. The served URL is
+    # the artifact a reader treats as proof, and it looked identical whether
+    # it covered the whole package or one feature of it.
+    if cov := _coverage_note(root, workspace):
+        served.setdefault("warnings", []).append(cov)
+    return served
+
+
+def _coverage_note(reports_root: Path, workspace: str) -> str | None:
+    """"the report covers N of M feature file(s)" — or None when it covers
+    them all (NOOD_0229, fix 2.3)."""
+    from noodle.reporting import scope as _scope
+    root = Path(reports_root)
+    root = root.parent if root.name == "reports" else root
+    results = root / "allure-results"
+    if not results.is_dir():
+        return None
+    try:
+        sc = _scope.report_scope(results, _scope.covered_features_root(
+            root, Path(workspace) / config.load(workspace)["tests_dir"]))
+    except OSError:
+        return None
+    if sc.get("features_in_app", 0) > sc["features_in_report"]:
+        return (f"report covers {sc['features_in_report']} of "
+                f"{sc['features_in_app']} feature file(s) in this package — "
+                "run the package for a combined report")
+    return None
 
 
 def stop_report_servers(workspace: str = ".") -> dict:

@@ -21,6 +21,8 @@ def test_results_dir_env_override(monkeypatch):
 
 
 def test_before_all_parallel_uses_pid_dir_and_skips_wipe(monkeypatch):
+    # NOOD_0229 renamed the hook: _begin_run_results marks the run and clears
+    # the per-run ledgers; it no longer deletes the package's results.
     from noodle import hooks
     monkeypatch.setattr(hooks, "load_dotenv", lambda *a, **k: None)
     monkeypatch.setattr(hooks, "_load_environments", lambda: None)
@@ -28,7 +30,7 @@ def test_before_all_parallel_uses_pid_dir_and_skips_wipe(monkeypatch):
     monkeypatch.setattr(hooks, "_run_hooks", lambda *a, **k: None)
     monkeypatch.setattr(hooks.healing, "reset", lambda: None)
     wiped = []
-    monkeypatch.setattr(hooks, "_clean_allure_results", lambda: wiped.append(True))
+    monkeypatch.setattr(hooks, "_begin_run_results", lambda: wiped.append(True))
     monkeypatch.setenv("NOODLE_PARALLEL_WORKER", "1")
     monkeypatch.delenv("NOODLE_RESULTS_DIR", raising=False)
 
@@ -46,7 +48,7 @@ def test_before_all_sequential_wipes_shared_dir(monkeypatch):
     monkeypatch.setattr(hooks, "_run_hooks", lambda *a, **k: None)
     monkeypatch.setattr(hooks.healing, "reset", lambda: None)
     wiped = []
-    monkeypatch.setattr(hooks, "_clean_allure_results", lambda: wiped.append(True))
+    monkeypatch.setattr(hooks, "_begin_run_results", lambda: wiped.append(True))
     monkeypatch.delenv("NOODLE_PARALLEL_WORKER", raising=False)
 
     hooks.before_all(object())
@@ -128,15 +130,26 @@ def test_parallel_toggle_flag_env_and_default(monkeypatch, tmp_path):
     assert "n" not in seen                                  # default = single process
 
 
-def test_clean_removes_worker_dirs(tmp_path):
+def test_clean_removes_worker_dirs_and_ledgers_but_keeps_results(tmp_path):
+    """NOOD_0229 — the per-run ledgers and worker leaves go; the package's
+    accumulated scenario results stay. Deleting them was how authoring a
+    second feature destroyed the first one's result and its evidence image."""
     from noodle.cli import _clean_results_root
     (tmp_path / "old-result.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "old-attachment.jpg").write_text("img", encoding="utf-8")
     (tmp_path / "junit.xml").write_text("<x/>", encoding="utf-8")
+    (tmp_path / "llm_cost.json").write_text("{}", encoding="utf-8")
     (tmp_path / "p7").mkdir()
     (tmp_path / "p7" / "x-result.json").write_text("{}", encoding="utf-8")
 
     _clean_results_root(tmp_path)
 
-    assert list(tmp_path.glob("*-result.json")) == []
+    assert [f.name for f in tmp_path.glob("*-result.json")] == ["old-result.json"]
+    assert (tmp_path / "old-attachment.jpg").exists()
     assert not (tmp_path / "junit.xml").exists()
+    assert not (tmp_path / "llm_cost.json").exists()
     assert not (tmp_path / "p7").exists()
+    # ...and the run marked itself, so the payload can tell its own results
+    # from the ones it kept.
+    from noodle.reporting import scope
+    assert scope.run_started_ms(tmp_path) is not None

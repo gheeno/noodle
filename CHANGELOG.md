@@ -4,6 +4,64 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a43] — 2026-08-03
+
+**NOOD_0229** — feature: a run replaces what it re-ran, and says what it
+covered. One ordered user flow was authored as two features, each run with
+`author --run`, and the served report contained one of them. Two independent
+defects met in the middle.
+
+**The data loss.** Every run began by deleting every `*-result.json` and
+`*-attachment.*` under `allure-results/`. Authoring a package test-by-test
+therefore destroyed each earlier test's result *and its evidence image*, then
+rebuilt the report from the single survivor. A green run's screenshot became
+"Path does not exist"; the report presented itself as the app's report while
+covering one feature; and `passed: 1` read as "all green".
+
+**The silence.** Nothing in the payload distinguished "the run passed" from
+"the report covers the package", so a two-row all-green summary was written
+against a report holding one test.
+
+- **The results directory accumulates** (`noodle/reporting/scope.py`). A run
+  stamps `.noodle-run.json` and replaces only the scenarios it actually
+  re-ran — by feature file when the whole file runs, by scenario under a
+  `--name`/`--tag` filter. A superseded result takes its own attachment
+  copies with it, so nothing dangles and nothing is orphaned. Retries of the
+  current run are protected, so a retried-green scenario still reads as flaky.
+- **The run payload stays run-scoped.** `summary.collect`/`latest_results`/
+  `mark_flaky` and the RCA's single result reader filter to this run, so the
+  exit code, `last_run.json`, `--failed` and the quarantine scan keep exactly
+  the meaning they had. A results dir with no marker — written before this
+  change, or by a bare `behave` — reads whole.
+- **`report_scope` on every run payload**: `features_run`,
+  `features_run_count`, `scenarios_run`, `features_in_report`,
+  `scenarios_in_report`, `features_in_app`, plus a `note` whenever they
+  disagree. `noodle run` prints it; `noodle report serve` prints the coverage
+  line; both skill cards now say never to claim green past `features_run`.
+- **`noodle author --run-scope app`** (`author_test(run_scope="app")`) runs
+  the whole package instead of the one feature just authored, so every
+  feature in the report was verified by this run. Default stays `feature` —
+  the report is combined either way now, so `app` buys re-verification, not
+  coverage, and a package re-run on every authoring lap is not something to
+  charge by default.
+- **`noodle report reset`** clears a package's accumulated results;
+  `NOODLE_FRESH_RESULTS=1` does it for one run. `noodle clean` is unchanged.
+
+And the authoring-side reasons the flow was split at all — all three are
+engine-general, none is about any particular app:
+
+- an unanchored `see`/`any_of` check whose text the probe read on the
+  **landing** page, in a goal whose own actions navigate past it, comes back
+  as a warning naming both anchors (`after: start`, `after: <action id>`) and
+  saying outright that this is not a reason to author a second feature;
+- authoring a feature whose action set contains — or is contained by — an
+  existing feature's in the same package returns an `overlaps existing
+  feature(s)` warning. Advisory: two features can legitimately share a flow;
+- `goal.EXAMPLE` (the copy-paste template every rejection ships, and both
+  skill cards' yaml block) now carries an anchored check and
+  `evidence: screenshot`. Optional `dismissals` left it to pay for them — a
+  missing dismissal costs one popup; a missing anchor cost a split test case.
+
 ## [1.0.0a42] — 2026-08-03
 
 **NOOD_0228** — feature: affordance closure. An audited agent session broke

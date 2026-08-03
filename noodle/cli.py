@@ -578,6 +578,15 @@ def run(
             _generate(results_root, str(reports_root / "allure-report"))
             _rca_report.write_reports(results_root, str(reports_root))
 
+    # NOOD_0229 — the honesty field. `passed: N` is true about the run and
+    # silent about the report served beside it; a reader with no way to tell
+    # them apart reported full coverage off a report holding one feature.
+    from noodle.reporting import scope as _scope
+    data["report_scope"] = _scope.report_scope(
+        results_root, _scope.covered_features_root(
+            Path(cwd) / _paths.artifacts_root(), Path(cwd) / cfg["tests_dir"]))
+    if (note := data["report_scope"].get("note")) and not json_out:
+        typer.echo(f"  🧾 {note}")
     data = _write_last_run(results_root, rc, cwd, data)
     _log_run_end(results_root, rc, _run_t0, data)   # NOOD_0173 — one run.end (json mode)
     # NOOD_0147 — engine-side failure-trigger detection: a fired trigger is
@@ -846,24 +855,24 @@ def _run_parallel(path: str, processes: int, tag: str, env: dict, cwd: str = "."
 
 
 def _clean_results_root(results: Path):
-    """Pre-run wipe of last run's flattened results + leftover worker subdirs."""
-    if not results.is_dir():
-        return
+    """Open a parallel run's shared results dir.
+
+    NOOD_0229 — the per-run ledgers (junit slices, cost, healing) and leftover
+    worker subdirs go; scenario results and their attachments stay and are
+    replaced per feature/scenario by the workers as they re-run them. The
+    parent marks the run here because a behavex worker's before_all takes the
+    worker branch and never would.
+    """
+    from noodle.reporting import scope as _scope
+    if os.getenv("NOODLE_FRESH_RESULTS", "").strip().lower() in ("1", "true", "yes", "on"):
+        _scope.clean_all(results)
+    else:
+        _scope.clean_run_ledgers(results)
     import shutil
-    for f in results.glob("*-result.json"):
-        f.unlink(missing_ok=True)
-    for f in results.glob("*-attachment.*"):
-        f.unlink(missing_ok=True)
-    (results / "junit.xml").unlink(missing_ok=True)
-    # NOOD_0187 — per-feature junit slices, healing slices and cost ledgers
-    # from the previous run: cost.load_total() rglobs llm_cost*.json, so a
-    # stale ledger inflated the next run's reported spend.
-    for f in (*results.glob("junit.*.xml"), *results.glob("llm_cost*.json"),
-              *results.glob("healing-report*.txt")):
-        f.unlink(missing_ok=True)
     for d in results.glob("p*"):
         if d.is_dir():
             shutil.rmtree(d, ignore_errors=True)
+    _scope.begin_run(results)
 
 
 def _merge_worker_results(results: Path):
@@ -2035,6 +2044,7 @@ def author(
     vocabulary: bool = typer.Option(False, "--vocabulary", help="NOOD_0197 — print the goal vocabulary, a minimal example, and the prompt grammar as JSON, then exit. The schema on demand instead of discoverability-by-rejection (no more scraping --help for it)."),
     section: str = typer.Option(None, "--section", help="NOOD_0227 — with --vocabulary: print ONE schema section (checks | actions | goal | probe | dismissals | prompt) instead of the whole blob, so one fact never costs a python3 pipe."),
     reset_intent: str = typer.Option(None, "--reset-intent", help="NOOD_0227 — clear the recorded intent contract for a feature (path or filename; 'all' clears every one), then exit. The recovery for a stale BLOCKED contract that refuses auto-runs — no more hand-editing agent_state.json."),
+    run_scope: str = typer.Option("feature", "--run-scope", help="NOOD_0229 — with --run: 'feature' (default) runs the feature just authored; 'app' runs its whole package, so every feature in the served report was verified by THIS run. The report is combined either way — a run now replaces only the scenarios it re-ran instead of wiping the package's results — and run.report_scope names which features this run actually executed."),
     auto_fix: int = typer.Option(0, "--auto-fix", help="NOOD_0223 — with --run, let the engine take up to N self-heal laps on a RED run: re-derive the goal from the run's own failure evidence, re-probe, re-author, re-run. Engine-only — no hand edits, no step suggestions to copy — and every file each lap rewrote is listed under auto_fix.engine_edits. Bounded and narrow: a lap runs ONLY when every failure classifies as test-side (assertion wording, locator rot, wrong/ambiguous target, overlay); one app-regression, app-rejected-action, test-data or environment failure in the run and no lap runs at all, because re-authoring against a broken app is a green-forcing retry. Default 0 — a lap costs a probe plus a run."),
 ):
     """NOOD_0128 — write a whole test package in one transaction (app package +
@@ -2147,7 +2157,7 @@ def author(
         # NOOD_0198 — ...and the steps may arrive as a file path or on stdin
         prompt, _ = _arg_text(prompt)
         result = core.author_test(prompt=prompt, run_after_author=run,
-                                  auto_fix=auto_fix,
+                                  auto_fix=auto_fix, run_scope=run_scope,
                                   overwrite=overwrite, workspace=workspace)
     else:
         # NOOD_0197 — --spec accepts the document inline: an argument
@@ -2197,7 +2207,7 @@ def author(
             # NOOD_0156 — explicit expert override for the manual-fallback gate;
             # autonomous agents must never set it.
             allow_unverified_intent=bool(data.get("allow_unverified_intent", False)),
-            workspace=workspace)
+            run_scope=run_scope, workspace=workspace)
     # NOOD_0217 — green atomic results collapse to the verdict + pointers;
     # the full envelope is on disk at `full_payload`. Red keeps everything.
     result = core.collapse_green(result, workspace=workspace)
@@ -3436,6 +3446,16 @@ def _serve_detached(target: str, workspace: str, host: str, port: int) -> None:
                f"(pid {served['pid']} — `noodle report stop` to stop)")
     for url in served["urls"]:
         typer.echo(f"  → {url}")
+    _echo_coverage(target, workspace)
+
+
+def _echo_coverage(target: str, workspace: str) -> None:
+    """NOOD_0229 — say what the hosted report covers when it covers less than
+    the package holds. A served URL is what a reader treats as proof, and it
+    looked identical either way."""
+    from noodle.repl import core
+    if note := core._coverage_note(Path(target), workspace):
+        typer.echo(f"  🧾 {note}")
 
 
 @report_app.command("serve")
@@ -3464,6 +3484,7 @@ def report_serve(
     # and unregister only OUR OWN entry: a serve that lost the port race must
     # not pop the pid of the server that's actually holding it.
     bound = {}
+    _echo_coverage(target, workspace)
 
     def _on_bound(actual_port: int):
         bound["port"] = str(actual_port)
@@ -3497,6 +3518,37 @@ def report_serve(
                 and _pid_of(pids[bound["port"]]) == os.getpid():
             del pids[bound["port"]]
             _write_report_pids(workspace, pids)
+
+
+@report_app.command("reset")
+def report_reset(
+    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+):
+    """Start this package's report from nothing — drop every accumulated
+    scenario result and its evidence.
+
+    NOOD_0229 — a run replaces only the scenarios it re-ran, so the report
+    grows into the app package's cumulative state. That is what makes
+    authoring test-by-test end with one combined report instead of the last
+    feature standing alone. This is the explicit way back to an empty one
+    (`NOODLE_FRESH_RESULTS=1 noodle run ...` does it for a single run); the
+    Allure trend history and the built reports are left alone — the next run
+    regenerates them.
+    """
+    from noodle.reporting import scope as _scope
+    results = _paths.last_run_root(workspace) / "allure-results"
+    ws_resolved = Path(workspace).resolve()
+    # NOOD_0177 — containment before any unlink, same rule as `noodle clean`:
+    # an absolute NOODLE_ARTIFACTS_DIR (or a pointer file holding one) must
+    # never point this at a path outside the workspace.
+    if not results.resolve().is_relative_to(ws_resolved):
+        typer.secho(f"Refusing to reset {results.resolve()} — it is outside "
+                    f"the workspace ({ws_resolved}).", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    before = len(list(results.glob("*-result.json"))) if results.is_dir() else 0
+    _scope.clean_all(results)
+    typer.echo(f"Cleared {before} scenario result(s) from {results}. "
+               "The next run starts this report from empty.")
 
 
 @report_app.command("list")

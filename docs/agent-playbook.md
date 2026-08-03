@@ -406,6 +406,27 @@ POM key either: each distinct locator gets its own (`result titles`,
 `result titles 2`, …), so the second check can't inherit the first's
 selector.
 
+**One user flow is one scenario — a mid-flow assertion is never a reason to
+author a second feature** (NOOD_0229). A reviewed session was asked for one
+ordered flow with a landing-page check in the middle of it, left every check
+unanchored, concluded that the landing-page assertion "could not live in that
+scenario", and authored a second feature to host it. The split broke the
+causal chain the acceptance criteria asked for: the landing-page check no
+longer proved anything about the run that performed the rest of the flow.
+`after:` is what makes that unnecessary, and `evidence: screenshot` on the
+check is how a mid-flow screenshot is requested — per check, never a
+hand-written screenshot step, and never the scenario-level `brief` spent
+twice. Two guards now say so before it costs a lap:
+
+- an unanchored `see`/`any_of` check whose text the probe read on the
+  **landing** page, in a goal whose own actions navigate away from it, comes
+  back as a warning naming both anchors;
+- authoring a feature whose action set contains — or is contained by — an
+  existing feature's in the same package returns an `overlaps existing
+  feature(s)` warning. Advisory, not blocking: two features can legitimately
+  share a flow. It is a prompt to add the check to the flow that already
+  exists.
+
 **`any_of` upgrades itself when every member is probe-proven**
 (NOOD_0195). If the probed page renders each alternative in full, the check
 compiles to one literal `the user sees "<member>"` per member and no
@@ -1021,6 +1042,59 @@ an exit code alone is neither. Before reporting success:
    multi-term check, verify the compilation before touching any action.)
 7. A green-with-warnings/healing outcome belongs in the session diagnostic
    (§7.5) — log the anomaly, don't bury it.
+
+### What the report covers is not what the run verified (NOOD_0229)
+
+A run used to begin by deleting every `*-result.json` and `*-attachment.*`
+under `allure-results/`. Authoring a package test-by-test therefore destroyed
+each earlier test's result **and its evidence image**, and rebuilt the report
+from whatever survived — a served report that presented itself as the app's
+report while covering one feature, with a `passed: 1` summary that reads as
+"all green".
+
+Both halves are fixed, and they are different facts:
+
+- **The results directory accumulates.** A run replaces only the scenarios it
+  actually re-ran (matched by feature file, or by scenario under a
+  `--name`/`--tag` filter), so the Allure report grows into the app package's
+  cumulative state. Deleting a superseded result also deletes its own
+  attachment copies — nothing is left dangling, nothing is left orphaned.
+- **The run payload stays run-scoped.** Exit code, `last_run.json`,
+  `--failed`, the quarantine scan and the RCA all still speak for the run that
+  just happened. A failure an earlier run recorded cannot red a green build.
+
+Every run payload (`--json`, `run_and_report`, `get_last_result`) therefore
+carries **`report_scope`**:
+
+```json
+"report_scope": {
+  "features_run": ["noodle_tests/web/<app>/features/two.feature"],
+  "features_run_count": 1, "scenarios_run": 1,
+  "features_in_report": 2, "scenarios_in_report": 2, "features_in_app": 3,
+  "note": "this run executed 1 of the 2 feature(s) the report holds — ..."
+}
+```
+
+**Never summarise beyond `features_run`.** "2 of 2 green" off a payload whose
+`scenarios_run` is 1 is the reporting defect this field exists to make
+impossible. When `note` is present, relay it: it names either features kept
+from an earlier run (not re-verified now) or feature files the report doesn't
+cover at all. `noodle report serve` prints the same coverage line.
+
+Two knobs, both explicit and rarely needed:
+
+- `noodle author --run --run-scope app` runs the whole package instead of the
+  one feature just authored, so everything in the report was verified by
+  *this* run. The report is combined either way; this buys re-verification,
+  not coverage. (MCP: `author_test(run_scope="app")`.)
+- `noodle report reset` clears the accumulated results and starts the
+  package's report from empty; `NOODLE_FRESH_RESULTS=1 noodle run ...` does it
+  for one run. `noodle clean` still wipes the whole artifacts tree.
+
+**A vanished artifact is a defect, not a detour.** If an `evidence[].path`
+from a green run no longer resolves, that is lost evidence — report it and
+stop. Hunting the results directory for a different image that might be the
+one meant is how a data-loss bug gets absorbed as a puzzle instead of raised.
 
 Assertions themselves are hardened engine-side: literal `should see` checks
 never resolve through the DOM-attribute scan (exact text/accessible caption

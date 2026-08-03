@@ -19,12 +19,21 @@ def _redact(text) -> str:
         return "<redaction failed — message withheld>"
 
 
+def scenario_key(scenario) -> tuple[str, str]:
+    """(historyId, fullName) — the identity ScenarioResult stamps on every
+    result. NOOD_0229's retention purge names the prior results a re-run
+    scenario replaces, and it must derive that name exactly the way the
+    writer does or it would delete nothing (or worse, the wrong result)."""
+    full_name = f"{scenario.feature.name}: {scenario.name}"
+    return hashlib.md5(full_name.encode()).hexdigest(), full_name
+
+
 class ScenarioResult:
     def __init__(self, scenario):
         self.uuid = str(uuid.uuid4())
         self._failure_message = None
         self._failure_trace = None
-        full_name = f"{scenario.feature.name}: {scenario.name}"
+        history_id, full_name = scenario_key(scenario)
         labels = [
             {"name": "feature", "value": scenario.feature.name},
             # suite/parentSuite give the Allure Suites tab a real hierarchy
@@ -49,7 +58,7 @@ class ScenarioResult:
             "uuid": self.uuid,
             # historyId folds auto-retry attempts into one test case (Retries
             # tab) instead of listing each attempt as a separate test.
-            "historyId": hashlib.md5(full_name.encode()).hexdigest(),
+            "historyId": history_id,
             "name": scenario.name,
             "fullName": full_name,
             "labels": labels,
