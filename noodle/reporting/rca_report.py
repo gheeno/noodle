@@ -673,6 +673,23 @@ def classify(entry: dict) -> dict:
     plain-English reason + suggested fix. Unit-testable without a run."""
     text = _text(entry)
 
+    # NOOD_0228 — the refusal the engine issues itself. Without a rule it fell
+    # to unknown/low with "inspect the trace manually", which is the same
+    # defect as the ambiguity warning below: the engine knows precisely what
+    # is wrong and hands back homework. A run only reaches here on a feature
+    # written against an older engine, so the fix is the migration.
+    if "not accepted inside step text" in text:
+        return {
+            "category": "test-script",
+            "confidence": "high",
+            "reason": "This step carries an evidence request inside its text. "
+                      "Run configuration rides as scenario tag metadata "
+                      "(@evidence:steps=<n>, 1-based), never in the sentence "
+                      "the tester reads — the engine refuses to run it.",
+            "fix": "noodle migrate evidence-markers --write  (converts this "
+                   "workspace's features to the tag form in one pass)",
+        }
+
     # NOOD_0135 — wrong page beats every locator verdict: when navigation
     # landed off the requested path, the "missing" element cannot exist and
     # any POM/inspect work is wasted. The engine stamps this verdict at
@@ -885,7 +902,12 @@ def classify(entry: dict) -> dict:
             "reason": "Accessibility matched more than one element and no POM "
                       "entry disambiguated it — lenient mode used the first "
                       "(possibly wrong) match.",
-            "fix": "Add a scoped pom.yaml entry for this locator.",
+            # NOOD_0228 — this used to read "add a scoped pom.yaml entry",
+            # which is a hand-edit prescription with no command behind it. The
+            # run's own warning prints the ambiguity id and candidate ids.
+            "fix": "noodle pom resolve <id> --choose <C#>  (the id and the "
+                   "candidates are in the run's ambiguity warning; "
+                   "`noodle pom list` reprints them)",
         }
 
     if _has_warning(entry, r"Healed: matched .* via partial text"):
@@ -934,8 +956,9 @@ def classify(entry: dict) -> dict:
             "category": "locator-rot",
             "confidence": "medium",
             "reason": "No matching element via accessibility, POM, or self-heal.",
-            "fix": "Add/verify a pom.yaml entry, or confirm the element actually "
-                   "renders on this page.",
+            "fix": "noodle inspect <url> \"<phrase>\" to see what the page "
+                   "offers, then noodle pom set \"<phrase>\" --css \"<sel>\" "
+                   "to pin it (NOOD_0228 — the engine writes the file).",
         }
 
     if re.search(r"Expected status \d+, got \d+", text):
@@ -1011,9 +1034,10 @@ def classify(entry: dict) -> dict:
                       "missing field, a failed fetch, a thrown-then-swallowed "
                       "exception) rendered straight into the DOM instead of "
                       "being handled.",
-            "fix": "Grep the app's JS for the field name to find which assignment "
-                   "produced the value, and add a null/undefined guard (or bail "
-                   "into a clean error state) before that assignment runs.",
+            "fix": "An app-side bug, not a test one: the field that rendered "
+                   "the value needs a null/undefined guard (or a clean error "
+                   "state) before it is assigned. Report it to whoever owns "
+                   "the app — do not re-author the test around it.",
         }
 
     if re.search(r"Comparison failed|should (contain|equal)|^Expected |does not (contain|equal)",

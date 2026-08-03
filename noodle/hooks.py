@@ -846,8 +846,6 @@ def before_scenario(context, scenario):
     _screen.set_region(None)              # 0024 — clear any OCR focus region
     context._vars = {}                     # 11.1 — run-scoped stored values
     context._scenario_failed = False       # set by after_step; gates trace save
-    context._evidence_request = False      # NOOD_0153 — "( take a screenshot )" marker
-    context._evidence_suppress = False     # NOOD_0225 — "( no screenshot )" marker
     context._manual_screenshot = None      # NOOD_0153 — explicit screenshot step's path
     context._evidence_last_step = _evidence_last_step(scenario)  # NOOD_0157
     context._mobile = None                 # Phase F — set by the @appium path below
@@ -1172,9 +1170,9 @@ def after_step(context, step):
     if getattr(step.status, "has_failed", lambda: step.status == "failed")():
         context._scenario_failed = True
         # NOOD_0153 — the failure screenshot supersedes any evidence request
-        # on this step; clear the flags so they can't leak into a retry.
-        context._evidence_request = False
-        context._evidence_suppress = False
+        # on this step; clear the manual path so it can't leak into a retry.
+        # (NOOD_0228 — the per-step flags are gone: the tag directives are
+        # read per step from the scenario, so nothing is left to leak.)
         context._manual_screenshot = None
         shots_dir = _paths.screenshots_dir()
         os.makedirs(shots_dir, exist_ok=True)
@@ -1300,19 +1298,15 @@ def after_step(context, step):
         from noodle.orchestrator.runner import ctx_get
         evidence_path, evidence_name, evidence_meta = None, None, None
         manual = ctx_get(context, "_manual_screenshot")
-        requested = bool(ctx_get(context, "_evidence_request"))
-        # NOOD_0225 — "( no screenshot )" on this step. Read and cleared on the
-        # same beat as the request flag, so it can never leak into the next.
-        suppressed = bool(ctx_get(context, "_evidence_suppress"))
         context._manual_screenshot = None
-        context._evidence_request = False
-        context._evidence_suppress = False
         page = ctx_get(context, "page")
-        # NOOD_0227 (D1) — per-step directives also arrive as scenario tags
-        # (@evidence:steps=2,7 / @evidence:skip=3), compiled by goal mode
-        # from checks[].evidence: run configuration as metadata, never
-        # step-text prose. Merged into the same request/suppress flags the
-        # prose markers set, so precedence stays one rule.
+        # NOOD_0227 (D1) / NOOD_0228 — per-step directives arrive as scenario
+        # tags (@evidence:steps=2,7 / @evidence:skip=3), compiled by goal mode
+        # from checks[].evidence or derived from the brief: run configuration
+        # as metadata. This is now the ONLY per-step source — the step-text
+        # spelling is refused at parse time, so there is no second channel to
+        # merge and no precedence question to get wrong.
+        requested = suppressed = False
         try:
             from noodle.reporting import evidence as _ev_dir
             _sc = ctx_get(context, "scenario")
@@ -1321,8 +1315,8 @@ def after_step(context, step):
             if _want or _skip:
                 _steps = getattr(_sc, "steps", None) or []
                 _pos = _steps.index(step) + 1 if step in _steps else None
-                requested = requested or _pos in _want
-                suppressed = suppressed or _pos in _skip
+                requested = _pos in _want
+                suppressed = _pos in _skip
         except Exception:
             pass
         if manual and not suppressed:

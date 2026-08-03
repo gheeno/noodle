@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Noodle Engine API",
-    "version": "1.0.0a41",
+    "version": "unknown (not installed)",
     "description": "Drive the Noodle test engine from another system: every MCP tool as a plain JSON endpoint (NOOD_0193), for callers that can't speak MCP.\n\nThis is the ENGINE API \u2014 the caller side. It is not the 'api wok', which is Noodle testing someone else's REST service with @api feature files; nothing here is a test target.\n\nCalls are SYNCHRONOUS: a run returns when it finishes, so set client read timeouts in minutes, not seconds. One call runs at a time per server. Green means `failed == 0` AND `verified == true`."
   },
   "servers": [
@@ -591,7 +591,7 @@
     "/api/tools/author_test": {
       "post": {
         "summary": "Write a whole test package in ONE transaction (web/<app_name> or",
-        "description": "Write a whole test package in ONE transaction (web/<app_name> or\nthe existing package mapped to base_url \u2014 environments.yaml, POM,\nfeature): validated first; any failure rolls every byte back.\nfeature_content / pom_content are each ONE string.\nsecret_values ({KEY: value}) is WRITE-ONLY (gitignored\n<app>_secrets.env, never echoed); missing required_secret_keys become\nplaceholders. `prompt`: numbered plain-English steps, expanded\nDETERMINISTICALLY to a goal (underspecified steps borrow from\nneighbours, inferences echoed as prompt_expansion.assumptions; a\nURL derives the three path params).\n\nELSE prefer `goal` (mutually exclusive w/ feature_content): {scenario,\nnavigation?: [ordered URLs, an {env:} Given each],\nactions: [{do: search|suggest|pick|add_to|click|enter|select|check|\nuncheck|hover|upload|press_key|pick_date|go_back, id?, term/target/\nvalue/option/file/key/date; pick binds 'any matching result' to ONE\nprobed result item; add_to = {item_from: pick-id, destination},\nengine-lowered to observed controls; never invent surface steps}],\nchecks: [{see|not_see|count|any_of|field|item_in_destination|\nurl_contains, min?, value?,\nexpected_from?: pick-id, evidence?: screenshot, after?: action-id}],\ndismissals?, probe?: {discover}}. item_in_destination re-asserts the\nbound caption (identity, not count). ONE goal-scoped probe,\nengine-compiled feature + POM; unproven requests block, never drop.\nPayloads carry goal_verified, intent_verified + intent_trace; a block\nnames ONE typed next_action \u2014 repair that gap only. Manual\nfeature_content is never intent_verified; allow_unverified_intent is\na human-only override.\nrun_after_author=true also runs once (headless, retries=0), serves\nboth reports, returns {author, run}; 0 passed = failure.\n\nReturns paths, warnings, missing_secret_keys, base_url_key (use that\nexact {env:} key), and ready+blocking. ready=true = static authoring\nchecks \u2014 never validate/preflight separately; run next. ready=false:\nfix `blocking`, re-author with overwrite=true; the list quotes the\ncontrol names this lap's own probe read off the live page, so a\nprobe_page to confirm one re-buys evidence you hold (`next` says so\nin the payload). workspace overrides the server default.",
+        "description": "Write a whole test package in ONE transaction (web/<app_name> or\nthe existing package mapped to base_url \u2014 environments.yaml, POM,\nfeature): validated first; any failure rolls every byte back.\nfeature_content / pom_content are each ONE string. `brief` (the user's\nask) works WITH feature_content: evidence derives from it as\n@evidence:steps=, a request naming no step blocks, and\nevidence_requests=[{\"step\": 2}] sets it directly \u2014 a screenshot request\nin step text is refused at parse time.\nsecret_values ({KEY: value}) is WRITE-ONLY (gitignored\n<app>_secrets.env, never echoed); missing required_secret_keys become\nplaceholders. `prompt`: numbered plain-English steps, expanded\nDETERMINISTICALLY to a goal (underspecified steps borrow from\nneighbours, inferences echoed as prompt_expansion.assumptions; a\nURL derives the three path params).\n\nELSE prefer `goal` (mutually exclusive w/ feature_content): {scenario,\nnavigation?: [ordered URLs, an {env:} Given each],\nactions: [{do: search|suggest|pick|add_to|click|enter|select|check|\nuncheck|hover|upload|press_key|pick_date|go_back, id?, term/target/\nvalue/option/file/key/date; pick binds 'any matching result' to ONE\nprobed result item; add_to = {item_from: pick-id, destination},\nengine-lowered to observed controls; never invent surface steps}],\nchecks: [{see|not_see|count|any_of|field|item_in_destination|\nurl_contains, min?, value?,\nexpected_from?: pick-id, evidence?: screenshot, after?: action-id}],\ndismissals?, probe?: {discover}}. item_in_destination re-asserts the\nbound caption (identity, not count). ONE goal-scoped probe,\nengine-compiled feature + POM; unproven requests block, never drop.\nPayloads carry goal_verified, intent_verified + intent_trace; a block\nnames ONE typed next_action \u2014 repair that gap only. Manual\nfeature_content is never intent_verified; allow_unverified_intent is\na human-only override.\nrun_after_author=true also runs once (headless, retries=0), serves\nboth reports, returns {author, run}; 0 passed = failure.\n\nReturns paths, warnings, missing_secret_keys, base_url_key (use that\nexact {env:} key), and ready+blocking. ready=true = static authoring\nchecks \u2014 never validate/preflight separately; run next. ready=false:\nfix `blocking`, re-author with overwrite=true; the list quotes the\ncontrol names this lap's own probe read off the live page, so a\nprobe_page to confirm one re-buys evidence you hold (`next` says so\nin the payload). workspace overrides the server default.",
         "operationId": "author_test",
         "tags": [
           "tools"
@@ -743,6 +743,31 @@
                     "default": null,
                     "title": "Prompt"
                   },
+                  "brief": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Brief"
+                  },
+                  "evidence_requests": {
+                    "anyOf": [
+                      {
+                        "items": {},
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Evidence Requests"
+                  },
                   "workspace": {
                     "anyOf": [
                       {
@@ -757,6 +782,357 @@
                   }
                 },
                 "title": "author_testArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/list_workspace_resources": {
+      "post": {
+        "summary": "NOOD_0228 \u2014 what this workspace contains, so nothing has to be listed",
+        "description": "NOOD_0228 \u2014 what this workspace contains, so nothing has to be listed\nwith a shell: test packages, their features and tags, environment KEY\nNAMES (values never returned), POM files with their URL scope and pinned\nphrases, whether a secrets file exists (contents never returned), and\nwhere reports land. `app` narrows to one package.",
+        "operationId": "list_workspace_resources",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "app": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "App"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "title": "list_workspace_resourcesArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/resolve_locator": {
+      "post": {
+        "summary": "NOOD_0228 \u2014 pin the element you meant for an ambiguous locator the run",
+        "description": "NOOD_0228 \u2014 pin the element you meant for an ambiguous locator the run\nrecorded. The ambiguous-locator warning prints a stable A-id and one C-id\nper candidate; this call supplies only the choice. The engine already\nholds each candidate's selector, writes the app's flat resources/pom.yaml\n(the file that applies on every URL) and keeps ownership \u2014 no YAML is\never hand-written.",
+        "operationId": "resolve_locator",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "ambiguity_id": {
+                    "title": "Ambiguity Id",
+                    "type": "string"
+                  },
+                  "candidate_id": {
+                    "title": "Candidate Id",
+                    "type": "string"
+                  },
+                  "app": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "App"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "required": [
+                  "ambiguity_id",
+                  "candidate_id"
+                ],
+                "title": "resolve_locatorArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/set_pom_entry": {
+      "post": {
+        "summary": "NOOD_0228 \u2014 pin a plain-English control name to an explicit selector",
+        "description": "NOOD_0228 \u2014 pin a plain-English control name to an explicit selector\n(exactly one of css/xpath/testid). The escape hatch for a phrase no probe\nsettles. `page` writes a per-page file and the engine adds `match: {}`\nitself, so the NOOD_0212 scoping trap (a page file silently applies only\non URLs matching its own filename) cannot be reintroduced by hand.",
+        "operationId": "set_pom_entry",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "phrase": {
+                    "title": "Phrase",
+                    "type": "string"
+                  },
+                  "css": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Css"
+                  },
+                  "xpath": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Xpath"
+                  },
+                  "testid": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Testid"
+                  },
+                  "app": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "App"
+                  },
+                  "page": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Page"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "required": [
+                  "phrase"
+                ],
+                "title": "set_pom_entryArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/list_pom": {
+      "post": {
+        "summary": "NOOD_0228 \u2014 every POM pin in the workspace, per file, WITH each file's",
+        "description": "NOOD_0228 \u2014 every POM pin in the workspace, per file, WITH each file's\nURL scope, plus any ambiguity the last run recorded and its candidate\nids (the arguments resolve_locator takes).",
+        "operationId": "list_pom",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "app": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "App"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "title": "list_pomArguments",
                 "type": "object"
               }
             }

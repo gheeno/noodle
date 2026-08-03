@@ -1207,7 +1207,7 @@ Scaffolded by `noodle init`. What's here:
 | File | Purpose | You edit? |
 |---|---|---|
 | `noodle.yaml` | engine config — paths, browser, headless | rarely |
-| `.env` | run-wide settings (hidden file — `ls -a` to see it) | yes |
+| `.env` | run-wide settings (a dotfile — `noodle workspace inspect` reports it) | yes |
 | `AGENTS.md` / `CLAUDE.md` | instructions for AI coding agents driving this workspace | rarely |
 | `noodle_tests/sample_app/features/login.feature` | step-vocabulary template | copy & adapt |
 | `noodle_tests/sample_app/resources/pageobjects/login_pom.yaml` | page-object template for the sample feature | copy & adapt |
@@ -1735,7 +1735,10 @@ def init(
     typer.echo("\nAgent skill (/noodle slash command):")
     _copy_skills(root, force)
     typer.echo(f"\nNext: cd {path} && noodle repl  — next steps in README.md")
-    typer.echo("Note: .env is a hidden file — `ls -a` to see it.")
+    # NOOD_0228 — this line used to end in "`ls -a` to see it", which is the
+    # engine prescribing the shell reflex it forbids. `workspace inspect`
+    # reports what is here, dotfiles included.
+    typer.echo("What's here: noodle workspace inspect")
     # NOOD_0133 — init is the first post-install command, the best moment to
     # catch a stale non-editable copy shadowing the clone, before tests exist.
     from noodle import install_check
@@ -2018,7 +2021,12 @@ def ship(
 
 @app.command()
 def author(
-    spec: str = typer.Option(None, "--spec", help="A JSON or YAML spec, three forms: a FILE PATH (the right one for any multi-line spec — write spec.yaml, pass the path), '-' for stdin, or the document inline (one-liners only; shell quoting mangles quotes/$/*). Fields: app_name, base_url, feature_path, and EITHER feature_content (one Gherkin string; pom_content is likewise one YAML string, never a filename map) OR goal (the engine probes and compiles the feature/POM itself; see author_test). Optionally: environment_values, required_secret_keys, secret_values, overwrite. (NOOD_0197/0227)"),
+    spec: str = typer.Option(None, "--spec", help="A JSON or YAML spec: the document inline, a FILE PATH, or '-' for stdin. Multi-line? use --spec-text/--spec-line, which need no shell redirection. Fields: app_name, base_url, feature_path, and EITHER feature_content (one Gherkin string; pom_content is likewise one YAML string, never a filename map) OR goal (the engine probes and compiles the feature/POM itself; see author_test). Optionally: brief, environment_values, required_secret_keys, secret_values, overwrite. (NOOD_0197/0227/0228)"),
+    spec_text: str = typer.Option(None, "--spec-text", help="NOOD_0228 — the whole multi-line spec as ONE argument value, newlines and all. No file, no heredoc, no redirection: the shell-free way to submit a spec that --spec inline cannot hold."),
+    spec_line: list[str] = typer.Option(None, "--spec-line", help="NOOD_0228 — one spec line per flag, joined in order. For hosts that mangle embedded newlines in a single argument."),
+    brief: str = typer.Option(None, "--brief", help="NOOD_0228 — the user's verbatim ask, inline or a file path / '-'. Unlike a goal it is COMPATIBLE with feature_content: the engine reads evidence requests out of it ('take a screenshot for evidence') and compiles them to @evidence:steps= tags, so a hand-authored test still carries what the user asked to see. Blocks when a request cannot be placed on a step."),
+    evidence_step: list[int] = typer.Option(None, "--evidence-step", help="NOOD_0228 — capture an evidence screenshot on this 1-based step position (repeatable). The explicit form for a caller that already knows which step the picture proves."),
+    evidence_skip: list[int] = typer.Option(None, "--evidence-skip", help="NOOD_0228 — decline an evidence screenshot on this 1-based step position (repeatable)."),
     prompt: str = typer.Option(None, "--prompt", help="NOOD_0169 — numbered plain-English steps ('1. go to <url> 2. search for X 3. add to cart 4. verify cart has X'), inline OR (NOOD_0198) a file path / '-' for stdin, so a generator upstream can hand off a written file without `\"$(cat ...)\"` mangling its backticks; the engine expands them deterministically into a goal (ambiguous steps borrow their subject from neighbouring steps, every inference echoed under prompt_expansion.assumptions) and derives app_name/base_url/feature_path from the URL. No spec file needed; combine with --run for prompt → authored → run → reports in ONE call."),
     workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
@@ -2101,6 +2109,36 @@ def author(
     if section:
         raise typer.BadParameter("--section requires --vocabulary",
                                  param_hint="'--section'")
+    # NOOD_0228 (C3) — three spellings of one input. `--spec-text` carries a
+    # multi-line document as one argv value and `--spec-line` assembles it a
+    # line at a time; both exist so "write a file, pass the path" — which was
+    # the skill card's own instruction, and the reason the audited session ran
+    # a heredoc — is no longer the answer to a multi-line spec.
+    if not isinstance(spec_line, list):
+        spec_line = None
+    if not isinstance(spec_text, str):
+        spec_text = None
+    given = [s for s in (spec, spec_text, spec_line) if s]
+    if len(given) > 1:
+        raise typer.BadParameter(
+            "pass exactly one of --spec / --spec-text / --spec-line",
+            param_hint="'--spec'")
+    if spec_line:
+        spec = "\n".join(spec_line)
+    elif spec_text:
+        spec = spec_text
+    inline_spec = bool(spec_text or spec_line)
+    if not isinstance(brief, str):
+        brief = None
+    if not isinstance(evidence_step, list):
+        evidence_step = None
+    if not isinstance(evidence_skip, list):
+        evidence_skip = None
+    ev_reqs = ([{"step": n} for n in (evidence_step or [])]
+               + [{"step": n, "skip": True} for n in (evidence_skip or [])]) \
+        or None
+    if brief is not None:
+        brief, _ = _arg_text(brief)
     if (spec is None) == (prompt is None):
         raise typer.BadParameter("pass exactly one of --spec or --prompt",
                                  param_hint="'--spec' / '--prompt'")
@@ -2116,7 +2154,7 @@ def author(
         # that resolves to no file is the spec itself. This removes the
         # heredoc/temp-file dance (and the shell approval it costs an
         # agent) the moment --prompt can't express a flow.
-        raw, indirect = _arg_text(spec)
+        raw, indirect = (spec, False) if inline_spec else _arg_text(spec)
         if not indirect and ":" not in raw and "{" not in raw:
             raise typer.BadParameter(f"spec file not found: {spec}",
                                      param_hint="'--spec'")
@@ -2153,6 +2191,8 @@ def author(
             required_secret_keys=data.get("required_secret_keys"),
             secret_values=data.get("secret_values"),   # NOOD_0130 — write-only, never echoed
             goal=data.get("goal"), run_after_author=run, auto_fix=auto_fix,
+            brief=brief or data.get("brief"),
+            evidence_requests=ev_reqs or data.get("evidence_requests"),
             overwrite=overwrite or bool(data.get("overwrite", False)),
             # NOOD_0156 — explicit expert override for the manual-fallback gate;
             # autonomous agents must never set it.
@@ -2661,7 +2701,9 @@ def _validate_resolve(target: Path) -> int:
     for f in files:
         typer.echo(f"\n{f}")
         result = _validate.check_feature(f.read_text(encoding="utf-8"), filename=str(f))
-        if result["error"]:
+        # NOOD_0228 — a rejected step fails validation. An LLM-fallback step is
+        # legal-but-flagged; an evidence request inside step text is not legal.
+        if result["error"] or result.get("rejected"):
             rc = 1
         typer.echo(_validate.render(result))
     return rc
@@ -2675,9 +2717,10 @@ def _validate_resolve_json(target: Path) -> int:
     out, rc = [], 0
     for f in files:
         result = _validate.check_feature(f.read_text(encoding="utf-8"), filename=str(f))
-        if result["error"]:
+        if result["error"] or result.get("rejected"):
             rc = 1
         out.append({"path": str(f), "error": result["error"],
+                    "rejected": result.get("rejected", []),
                     "steps": [{"step": line, "matched": ok}
                               for line, ok in result["steps"]]})
     _json_out(out)
@@ -3658,6 +3701,177 @@ def diagnostic_bundle(
         typer.echo(result["error"])
         raise typer.Exit(code=1)
     typer.echo(f"Bundled {result['count']} diagnostic(s) -> {result['path']}")
+
+
+# ---------------------------------------------------------------------------
+# NOOD_0228 (C1) — pom subcommand group: resolve an ambiguous locator, pin a
+# phrase, list the pins. Every one of these was previously a YAML hand-edit
+# the engine's own warning prescribed and no command could perform.
+# ---------------------------------------------------------------------------
+
+pom_app = typer.Typer(cls=_OrderedGroup,
+                      help="Locator pins — resolve ambiguity, list entries")
+app.add_typer(pom_app, name="pom")
+
+
+@pom_app.command("resolve")
+def pom_resolve(
+    ambiguity_id: str = typer.Argument(..., help="The A-prefixed id printed by the ambiguous-locator warning"),
+    choose: str = typer.Option(..., "--choose", "-c", help="Which candidate you meant: C0, C1, …"),
+    app_name: str = typer.Option(None, "--app", help="Test package (default: the one the run was in)"),
+    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
+):
+    """Pin the candidate you meant for a recorded ambiguity. The engine already
+    holds each candidate's selector and the app it belongs to, so this call
+    supplies only the choice — it writes the app's flat resources/pom.yaml
+    (the file that applies on every URL) and records ownership."""
+    from noodle import pom_admin
+    result = pom_admin.resolve_ambiguity(ambiguity_id, choose,
+                                         workspace=workspace, app=app_name)
+    if as_json:
+        _json_out(result, indent=None)
+    elif result.get("ok"):
+        typer.echo(f"  ✓ pinned {result['key']!r} → css: {result['selector']['css']}")
+        typer.echo(f"    {result['pom']}")
+    else:
+        typer.echo(f"  ✗ {result['error']}")
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
+@pom_app.command("set")
+def pom_set(
+    phrase: str = typer.Argument(..., help="The plain-English control name a step uses"),
+    css: str = typer.Option(None, "--css", help="CSS selector"),
+    xpath: str = typer.Option(None, "--xpath", help="XPath selector"),
+    id_: str = typer.Option(None, "--id", help="Element id"),
+    testid: str = typer.Option(None, "--testid", help="data-testid value"),
+    text: str = typer.Option(None, "--text", help="Visible text"),
+    role: str = typer.Option(None, "--role", help="ARIA role"),
+    label: str = typer.Option(None, "--label", help="Field label"),
+    placeholder: str = typer.Option(None, "--placeholder", help="Placeholder text"),
+    app_name: str = typer.Option(None, "--app", help="Test package (default: the only one)"),
+    page: str = typer.Option(None, "--page", help="Write a per-page file instead; the engine adds `match: {}` so it still applies everywhere"),
+    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
+):
+    """Pin a control name to an explicit selector. The escape hatch for a
+    phrase no probe settles — exactly one selector kind per call."""
+    from noodle import pom_admin
+    result = pom_admin.set_entry(
+        phrase, app=app_name, workspace=workspace, page=page,
+        css=css, xpath=xpath, id=id_, testid=testid, text=text, role=role,
+        label=label, placeholder=placeholder)
+    if as_json:
+        _json_out(result, indent=None)
+    elif result.get("ok"):
+        typer.echo(f"  ✓ pinned {result['key']!r} in {result['pom']}")
+    else:
+        typer.echo(f"  ✗ {result['error']}")
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
+@pom_app.command("list")
+def pom_list(
+    app_name: str = typer.Option(None, "--app", help="Only this test package"),
+    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    as_json: bool = typer.Option(True, "--json/--no-json", help="Structured output (default) or a short human listing"),
+):
+    """Every POM pin in the workspace, per file, WITH each file's URL scope —
+    plus any ambiguity the last run recorded and its candidate ids."""
+    from noodle import pom_admin
+    result = pom_admin.list_entries(app=app_name, workspace=workspace)
+    if as_json:
+        _json_out(result, indent=None)
+    else:
+        for f in result.get("files", []):
+            typer.echo(f"{f['path']}  (applies: {f['scope']})")
+            for k in f["keys"]:
+                typer.echo(f"    {k}")
+        for a in result.get("ambiguities", []):
+            typer.echo(f"{a['id']}  {a['phrase']!r} — "
+                       + ", ".join(c["id"] for c in a["candidates"]))
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
+# ---------------------------------------------------------------------------
+# NOOD_0228 (C2) — workspace subcommand group. `ls resources/` was the third
+# shell reflex the audit caught, and it existed only because no command
+# reported what a workspace contains.
+# ---------------------------------------------------------------------------
+
+workspace_app = typer.Typer(cls=_OrderedGroup,
+                            help="What this workspace contains")
+app.add_typer(workspace_app, name="workspace")
+
+
+@workspace_app.command("inspect")
+def workspace_inspect(
+    app_name: str = typer.Option(None, "--app", help="Only this test package"),
+    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    as_json: bool = typer.Option(True, "--json/--no-json", help="Structured output (default) or a short human listing"),
+):
+    """Everything a caller would otherwise `ls` for: test packages, their
+    features and tags, environment KEY NAMES (never values), POM files with
+    their URL scope and pinned phrases, whether a secrets file exists (never
+    its contents), and where reports land."""
+    from noodle.repl import core
+    result = core.list_workspace_resources(workspace=workspace, app=app_name)
+    if as_json:
+        _json_out(result, indent=None)
+    else:
+        for a in result.get("apps", []):
+            typer.echo(f"{a['app']}  ({a['wok']})  {a['dir']}")
+            for f in a["features"]:
+                typer.echo(f"    feature: {f['path']}  {' '.join(f['tags'])}")
+            if a["environment_keys"]:
+                typer.echo("    env keys: " + ", ".join(a["environment_keys"]))
+            for p in a["pom_files"]:
+                typer.echo(f"    pom: {p['path']} (applies: {p['scope']}) "
+                           + ", ".join(p["keys"]))
+            typer.echo(f"    secrets file: "
+                       f"{'present' if a['secrets_present'] else 'absent'}")
+            typer.echo(f"    reports: {a['report_dir']}")
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
+# ---------------------------------------------------------------------------
+# NOOD_0228 (A) — migrate: the one-command upgrade for a workspace whose
+# features still carry evidence requests inside step text. A breaking parser
+# change without a migration is just breakage.
+# ---------------------------------------------------------------------------
+
+migrate_app = typer.Typer(cls=_OrderedGroup,
+                          help="Upgrade a workspace to this engine")
+app.add_typer(migrate_app, name="migrate")
+
+
+@migrate_app.command("evidence-markers")
+def migrate_evidence_markers(
+    write: bool = typer.Option(False, "--write", help="Apply the rewrite (default: report what would change)"),
+    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
+):
+    """Convert per-step evidence requests written inside step text into
+    `@evidence:steps=` / `@evidence:skip=` scenario tags, which is where run
+    configuration belongs and the only form the engine now accepts. Step
+    positions are 1-based over each scenario's own steps. Rewrites go through
+    the engine's ownership record, so a migrated file stays regenerable."""
+    from noodle import evidence_migration
+    result = evidence_migration.migrate(workspace, write=write)
+    if as_json:
+        _json_out(result, indent=None)
+    else:
+        for f in result["features"]:
+            verb = "rewrote" if write else "would rewrite"
+            typer.echo(f"  {verb} {f['path']} — "
+                       + "; ".join(f"{s['scenario']}: {s['tag']}"
+                                   for s in f["scenarios"]))
+        if not result["features"]:
+            typer.echo("  ✓ no step-text evidence requests in this workspace")
+        elif not write:
+            typer.echo("  → re-run with --write to apply")
+    raise typer.Exit(0 if result.get("ok") else 1)
 
 
 # NOOD_0161 — `noodle --help` rendered every command's FULL docstring into the

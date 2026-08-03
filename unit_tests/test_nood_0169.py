@@ -274,8 +274,12 @@ def test_on_ambiguous_strict_message_marks_used_and_pins_fix(monkeypatch):
         msg = str(e)
     else:  # pragma: no cover
         raise AssertionError("strict mode must raise")
-    assert "[0] (used)" in msg and "Pin the intended one" in msg
-    assert "css: #buy-1" in msg
+    # NOOD_0228 — the candidates keep their ids and the "(used)" mark, but the
+    # fix is a COMMAND now: this message used to end in a YAML snippet and a
+    # path, which is a hand-edit prescription with nothing behind it.
+    assert "[C0] (used)" in msg and "noodle pom resolve" in msg
+    from noodle import remediation
+    assert remediation.filesystem_imperative(msg) is None, msg
 
 
 # --- 6. prompt expander: numbered plain English → goal, deterministically ---

@@ -95,15 +95,34 @@ def record(workspace: str, paths) -> dict:
     return owned
 
 
+def agent_driven() -> bool:
+    """NOOD_0228 (G3) — is an AGENT driving this run, rather than a human at a
+    terminal? True inside the MCP server (which sets NOODLE_AGENT_MODE), or
+    when a caller passes it explicitly.
+
+    The distinction matters because the two audiences want opposite defaults.
+    A blocking gate a *tester* did not ask for is the opposite of helpful in
+    their own project — Noodle ships enforcement opt-in. But an agent driving
+    through the MCP door is the party the rule governs, not the party it
+    inconveniences, and for it the gate is the whole point."""
+    return os.getenv("NOODLE_AGENT_MODE", "").strip().lower() in _TRUTHY
+
+
 def enabled(workspace: str = ".", override: bool | None = None) -> bool:
-    """Most specific wins: explicit flag, then env, then noodle.yaml."""
+    """Most specific wins: explicit flag, then env, then noodle.yaml, then —
+    NOOD_0228 — on by default for agent-driven runs. A `workspace_strict:
+    false` in noodle.yaml still wins over that default: a workspace that has
+    said no keeps saying no."""
     if override is not None:
         return bool(override)
     env = os.getenv("NOODLE_WORKSPACE_STRICT")
     if env is not None and env.strip():
         return env.strip().lower() in _TRUTHY
     from noodle import config
-    return bool(config.load(workspace).get("workspace_strict", False))
+    configured = config.load(workspace).get("workspace_strict")
+    if configured is not None:
+        return bool(configured)
+    return agent_driven()
 
 
 def drift(workspace: str = ".") -> list[dict]:
@@ -130,42 +149,63 @@ _TRACKED_SUFFIXES = {".feature", ".yaml", ".yml"}
 _FOREIGN_CAP = 20
 
 
+# NOOD_0228 (G4) — the scan reaches the workspace ROOT, not just the tests
+# tree. A heredoc'd spec lands wherever the agent's cwd is, and the audited
+# session's went to /tmp — outside any scan by construction. Widening to the
+# workspace root catches the far commoner case (a scratch file beside
+# noodle.yaml) without pretending to catch the rest.
+_SKIP_DIRS = {"sample_app", "sample_api", "report", "artifacts",
+              "__pycache__", ".git", ".venv", "venv", "node_modules",
+              ".noodle", "allure-results", "allure-report", "diagnostics"}
+
+
 def foreign_artifacts(workspace: str = ".") -> list[str]:
-    """NOOD_0227 (A5) — files inside the tests tree that no author
-    transaction wrote: scripts/temp files anywhere, and .feature/.yaml files
-    the ownership manifest doesn't know. Telemetry, never a gate — the
-    scaffold's sample packages are skipped, absence of a manifest reports
+    """NOOD_0227 (A5) / NOOD_0228 (G4) — files the engine did not write, in
+    the tests tree AND at the workspace root: scripts/temp files anywhere, and
+    .feature/.yaml files the ownership manifest doesn't know.
+
+    **What this can and cannot see.** It sees a FOOTPRINT. `ls`, `cat`,
+    `grep` and `head` leave none — a read-only shell command is invisible to
+    filesystem scanning by construction, not by omission. So this is evidence
+    of write-shaped improvisation only; the layers that actually remove the
+    shell reflex are the commands that made it unnecessary (`noodle workspace
+    inspect`, `noodle pom`, `--spec-text`) and a host-level tool allowlist.
+    Do not read a clean scan as "no shell was used".
+
+    The scaffold's sample packages are skipped, absence of a manifest reports
     nothing (a hand-authored workspace is a legitimate workflow), and the
-    list is capped. The point is that the shell-improvisation class
-    self-reports instead of surfacing months later as an unregenerable
-    file."""
+    list is capped."""
     from noodle import config
     owned = load(workspace)
     if not owned:
         return []
-    root = Path(workspace) / config.load(workspace).get(
-        "tests_dir", "noodle_tests")
-    if not root.is_dir():
-        return []
+    ws = Path(workspace)
+    roots = [ws / config.load(workspace).get("tests_dir", "noodle_tests")]
     out = []
     try:
-        for p in sorted(root.rglob("*")):
-            if len(out) >= _FOREIGN_CAP:
-                break
-            if not p.is_file():
+        # workspace root: top level only — a deep walk of someone's project
+        # would report their application source as "foreign", which it is not.
+        for p in sorted(ws.iterdir()):
+            if p.is_file() and p.suffix.lower() in _FOREIGN_SUFFIXES:
+                out.append(_rel(p, workspace))
+        for root in roots:
+            if not root.is_dir():
                 continue
-            rel = _rel(p, workspace)
-            parts = set(p.parts)
-            if {"sample_app", "sample_api", "report", "artifacts",
-                    "__pycache__"} & parts:
-                continue
-            suffix = p.suffix.lower()
-            if suffix in _FOREIGN_SUFFIXES or (
-                    suffix in _TRACKED_SUFFIXES and rel not in owned):
-                out.append(rel)
+            for p in sorted(root.rglob("*")):
+                if len(out) >= _FOREIGN_CAP:
+                    break
+                if not p.is_file():
+                    continue
+                rel = _rel(p, workspace)
+                if _SKIP_DIRS & set(p.parts):
+                    continue
+                suffix = p.suffix.lower()
+                if suffix in _FOREIGN_SUFFIXES or (
+                        suffix in _TRACKED_SUFFIXES and rel not in owned):
+                    out.append(rel)
     except OSError:
         return out
-    return out
+    return out[:_FOREIGN_CAP]
 
 
 def gate(workspace: str = ".", override: bool | None = None) -> dict:
@@ -180,14 +220,18 @@ def gate(workspace: str = ".", override: bool | None = None) -> dict:
         return {"ok": True, "strict": False}
     found = drift(workspace)
     if not found:
-        out = {"ok": True, "strict": True}
+        out = {"ok": True, "strict": True, "agent_mode": agent_driven()}
         if foreign := foreign_artifacts(workspace):
+            # NOOD_0228 (G4) — the COUNT rides the payload whether or not the
+            # list is read, so the class self-reports in the diagnostic log.
             out["foreign"] = foreign
+            out["foreign_count"] = len(foreign)
             out["foreign_note"] = (
-                f"{len(foreign)} file(s) in the tests tree that no author "
+                f"{len(foreign)} file(s) in the workspace that no author "
                 "transaction wrote — engine-foreign artifacts (hand-written "
                 "or shell-created); they run, but nothing can regenerate "
-                "them")
+                "them. Advisory: a read-only shell command leaves no "
+                "footprint, so a clean scan is not proof none was used.")
         return out
     lines = ", ".join(f'{d["path"]} ({d["kind"]})' for d in found[:5])
     more = f", +{len(found) - 5} more" if len(found) > 5 else ""

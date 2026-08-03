@@ -137,29 +137,31 @@ def _no_text_into_permission_prompt(name: str):
     )
 
 
-# NOOD_0153 — trailing evidence marker: `clicks "Login" ( take a screenshot )`
-# asks for an evidence screenshot of THAT step. Detected (and the request flag
-# set) in runner.execute_step; ALSO stripped here in _pre_clean so every other
-# resolution path — step-search, the LSP, the docs example corpus — tolerates
-# the marker instead of failing to match the inner step.
+# NOOD_0153 — a trailing evidence request written INSIDE step text used to ask
+# for a screenshot of that step. NOOD_0227 stopped the engine emitting it.
 #
-# NOOD_0227 (D2) — READ-ONLY from here on: the engine never EMITS these
-# markers any more. Goal-compiled features carry per-step evidence as tag
-# metadata (@evidence:steps= / @evidence:skip=, reporting/evidence.
-# step_directives); this regex family exists solely so hand-authored
-# features keep their prose spelling working.
+# NOOD_0228 — and this regex family is now a REJECTION detector, not a
+# tolerance. It stayed legal, documented, discoverable and rewarded for five
+# tickets, so every session that hit a block rediscovered it and shipped it
+# green. A prohibited behaviour is not prohibited while it remains executable.
 #
-# NOOD_0225 — the bracket and dash spellings are accepted too. A reviewed
-# session watched a model write `[evidence: screenshot]` onto a step, argue
-# with itself about whether that was "step decorator syntax", and ship a step
-# that resolved green with no picture attached — the marker was simply not
-# recognised, and nothing said so. Every shape a model reaches for now means
-# the same thing: `( take a screenshot )`, `[take a screenshot]`,
-# `[evidence: screenshot]`, `- take a screenshot`, `(screenshot)`.
-# The tail must still be a marker, not step text: an explicit separator is
-# required, the phrase is anchored to the end of the line, and — since the
-# span is STRIPPED, not merely flagged — the bare word "evidence" needs a
-# verb or a photographic noun beside it before it counts.
+# _pre_clean no longer strips these spans: the step must NOT resolve. Callers
+# that own a user-facing surface (validate, the author transaction, the runner)
+# call `evidence_marker_rejection()` first, which returns a remediation naming
+# the compliant channel — the brief, the @evidence:steps= tag, or
+# `noodle migrate evidence-markers` for an existing suite. Run configuration
+# belongs in metadata; it never rides in the sentence a tester reads.
+#
+# The detector is grammar-based, not string-based, and deliberately covers
+# every spelling a model reaches for — a rejection that only knew one spelling
+# would just redirect the next model to a variant.
+#
+# NOOD_0225 — the bracket and dash spellings included. A reviewed session
+# watched a model write a bracketed form, argue with itself about whether that
+# was "step decorator syntax", and ship a step that resolved green with no
+# picture attached. The tail must still be a marker, not step text: an explicit
+# separator is required, the phrase is anchored to the end of the line, and the
+# bare word "evidence" needs a verb or a photographic noun beside it.
 _EV_VERB = (r'(?:take|takes|capture|captures|grab|grabs|attach|attaches|'
             r'include|includes|add|adds|save|saves)')
 _EV_NOUN = r'(?:screen\s*shots?|screen\s*caps?|snapshots?|captures?)'
@@ -203,8 +205,44 @@ def _pre_clean(text: str) -> str:
                 .replace('“', '"').replace('”', '"'))
     text = re.sub(r'\s+', ' ', text).strip()
     text = re.sub(r'[.!]+$', '', text).strip()
-    text = EVIDENCE_SUPPRESS_RE.sub('', text).strip()
-    return EVIDENCE_MARKER_RE.sub('', text).strip()
+    # NOOD_0228 — the evidence-request spans are NOT stripped any more. A
+    # stripped span resolves, and a step that resolves is a step that ships.
+    return text
+
+
+def has_evidence_marker(text: str) -> str | None:
+    """The matched span when `text` carries an evidence request inside step
+    text, else None. Both directions — a request and a refusal — are the same
+    category error: run configuration in the sentence."""
+    for rx in (EVIDENCE_SUPPRESS_RE, EVIDENCE_MARKER_RE):
+        m = rx.search(text or "")
+        if m:
+            return m.group(0).strip()
+    return None
+
+
+def evidence_marker_rejection(text: str) -> str | None:
+    """The rejection message for a step carrying an evidence request, else
+    None.
+
+    NOOD_0228 (D) — this message deliberately does NOT quote the offending
+    span. NOOD_0227 failed precisely because the "don't use this" surface was
+    itself copy-ready: `noodle steps "screenshot"` printed the marker as an
+    example at the exact moment an agent was blocked and maximally
+    suggestible, and the agent pasted it. A rejection that reprints the
+    forbidden spelling teaches it one more time. So: name the category, name
+    the compliant mechanism, name the command."""
+    if not has_evidence_marker(text):
+        return None
+    from noodle import remediation
+    fix = remediation.build("evidence.marker_in_step", brief="<the user's ask>")
+    return ("evidence requests are not accepted inside step text — run "
+            "configuration rides as scenario tag metadata "
+            "(@evidence:steps=<n> / @evidence:skip=<n>, 1-based over the "
+            "scenario's steps), or is derived by the engine from the brief.\n"
+            + fix.render()
+            + "\n  (an existing suite converts in one command: "
+              "noodle migrate evidence-markers --write)")
 
 
 def normalize_subject(text: str) -> str:

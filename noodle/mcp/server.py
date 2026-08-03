@@ -314,11 +314,17 @@ def author_test(app_name: str | None = None, base_url: str | None = None,
                 overwrite: bool = False,
                 allow_unverified_intent: bool = False,
                 prompt: str | None = None,
+                brief: str | None = None,
+                evidence_requests: list | None = None,
                 workspace: str | None = None) -> dict:
     """Write a whole test package in ONE transaction (web/<app_name> or
     the existing package mapped to base_url — environments.yaml, POM,
     feature): validated first; any failure rolls every byte back.
-    feature_content / pom_content are each ONE string.
+    feature_content / pom_content are each ONE string. `brief` (the user's
+    ask) works WITH feature_content: evidence derives from it as
+    @evidence:steps=, a request naming no step blocks, and
+    evidence_requests=[{"step": 2}] sets it directly — a screenshot request
+    in step text is refused at parse time.
     secret_values ({KEY: value}) is WRITE-ONLY (gitignored
     <app>_secrets.env, never echoed); missing required_secret_keys become
     placeholders. `prompt`: numbered plain-English steps, expanded
@@ -364,7 +370,61 @@ def author_test(app_name: str | None = None, base_url: str | None = None,
         goal=goal, run_after_author=run_after_author,
         overwrite=overwrite,
         allow_unverified_intent=allow_unverified_intent,
-        prompt=prompt, workspace=ws), workspace=ws)
+        prompt=prompt, brief=brief, evidence_requests=evidence_requests,
+        workspace=ws), workspace=ws)
+
+
+@_tool()
+def list_workspace_resources(app: str | None = None,
+                             workspace: str | None = None) -> dict:
+    """NOOD_0228 — what this workspace contains, so nothing has to be listed
+    with a shell: test packages, their features and tags, environment KEY
+    NAMES (values never returned), POM files with their URL scope and pinned
+    phrases, whether a secrets file exists (contents never returned), and
+    where reports land. `app` narrows to one package."""
+    return core.list_workspace_resources(workspace=_ws(workspace), app=app)
+
+
+@_tool()
+def resolve_locator(ambiguity_id: str, candidate_id: str,
+                    app: str | None = None,
+                    workspace: str | None = None) -> dict:
+    """NOOD_0228 — pin the element you meant for an ambiguous locator the run
+    recorded. The ambiguous-locator warning prints a stable A-id and one C-id
+    per candidate; this call supplies only the choice. The engine already
+    holds each candidate's selector, writes the app's flat resources/pom.yaml
+    (the file that applies on every URL) and keeps ownership — no YAML is
+    ever hand-written."""
+    return _pom_admin().resolve_ambiguity(ambiguity_id, candidate_id,
+                                          workspace=_ws(workspace), app=app)
+
+
+@_tool()
+def set_pom_entry(phrase: str, css: str | None = None,
+                  xpath: str | None = None, testid: str | None = None,
+                  app: str | None = None, page: str | None = None,
+                  workspace: str | None = None) -> dict:
+    """NOOD_0228 — pin a plain-English control name to an explicit selector
+    (exactly one of css/xpath/testid). The escape hatch for a phrase no probe
+    settles. `page` writes a per-page file and the engine adds `match: {}`
+    itself, so the NOOD_0212 scoping trap (a page file silently applies only
+    on URLs matching its own filename) cannot be reintroduced by hand."""
+    return _pom_admin().set_entry(phrase, app=app, workspace=_ws(workspace),
+                                  page=page, css=css, xpath=xpath,
+                                  testid=testid)
+
+
+@_tool()
+def list_pom(app: str | None = None, workspace: str | None = None) -> dict:
+    """NOOD_0228 — every POM pin in the workspace, per file, WITH each file's
+    URL scope, plus any ambiguity the last run recorded and its candidate
+    ids (the arguments resolve_locator takes)."""
+    return _pom_admin().list_entries(app=app, workspace=_ws(workspace))
+
+
+def _pom_admin():
+    from noodle import pom_admin
+    return pom_admin
 
 
 @_tool()
@@ -832,6 +892,11 @@ def main(argv: list[str] | None = None) -> None:
         # Remote callers get no per-call escape hatch unless roots were
         # explicitly allowed at startup.
         _ALLOWED_ROOTS = [Path(args.workspace).resolve()]
+    # NOOD_0228 (G3) — everything reached through this door is agent-driven by
+    # definition, which is what flips workspace-strict on by default (a
+    # `workspace_strict: false` in noodle.yaml still wins). Set BEFORE the
+    # workspace .env loads so a workspace may override it there too.
+    os.environ.setdefault("NOODLE_AGENT_MODE", "1")
     _load_workspace_env(_WORKSPACE)
     # NOOD_0172 — the server's own log lines (mcp.tool / mcp.auth.deny) must go
     # to stderr: stdout is the stdio protocol channel. No-op in json mode.

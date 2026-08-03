@@ -455,7 +455,7 @@ VERBS_HELP = ("go to / open url / then url <url>; "
               "verify <A> or <B> | verify at least <N> results with title "
               "<A> or <B> | "
               "verify <text> is not visible | verify the url contains <part>; "
-              "close popups / location prompt; take a screenshot")
+              "close popups / location prompt; capture evidence")
 
 # (kind, compiled regex) — first match wins, order matters: nav-url before
 # nav (an "open url X" clause must never become a click on "url X"),
@@ -1767,12 +1767,16 @@ def expand(text: str, base_url: str | None = None) -> dict:
             # assumptions so nothing is silently dropped.
             if n.get("evidence_mode"):
                 evidence_mode = n["evidence_mode"]
+                # NOOD_0228 — this used to reassure the reader by NAMING the
+                # step-text spelling it replaced. An assumption line is an
+                # emitted surface: printing the forbidden form here taught it
+                # to every agent that read a successful authoring payload.
                 how = {"off": "no evidence screenshots for this scenario",
-                       "all": "an evidence screenshot on every step — no "
-                              "( take a screenshot ) markers needed",
+                       "all": "an evidence screenshot on every step, carried "
+                              "as a scenario tag",
                        }.get(evidence_mode,
-                             "an evidence screenshot on every assertion — no "
-                             "( take a screenshot ) markers needed")
+                             "an evidence screenshot on every assertion, "
+                             "carried as a scenario tag")
                 assumptions.append(
                     f"step {no} '{n['raw']}': read as a directive — {how}")
             else:
@@ -2374,7 +2378,7 @@ def expand(text: str, base_url: str | None = None) -> dict:
         elif n.get("evidence_off") and n["kind"] != "verify":
             pending_evidence_off = True
 
-    # a trailing "take a screenshot" step attaches to the last check
+    # a trailing evidence request attaches to the last check
     if pending_evidence and checks and "evidence" not in checks[-1]:
         checks[-1]["evidence"] = "screenshot"
     elif pending_evidence_off and checks and "evidence" not in checks[-1]:
@@ -2535,7 +2539,7 @@ def expand(text: str, base_url: str | None = None) -> dict:
         goal["navigation"] = urls
     if evidence_mode:
         # NOOD_0211 — compiles to a scenario tag, so the feature file stays
-        # free of per-step ( take a screenshot ) noise.
+        # free of per-step evidence-request noise.
         goal["evidence"] = evidence_mode
 
     app = app_from_url(first_url or base_url)

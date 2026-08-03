@@ -79,9 +79,16 @@ def _reset_locator_state():
 # ---------------------------------------------------------------------------
 
 class TestMarker:
-    def test_marker_stripped_before_matching(self):
-        assert _resolve("User clicks the 'Login' button ( take a screenshot )") == \
-            _resolve("User clicks the 'Login' button")
+    def test_marker_is_not_stripped_so_the_step_cannot_resolve(self):
+        """NOOD_0228 — the inverse of the original assertion, deliberately.
+        Stripping the span made the step resolve, and a step that resolves is
+        a step that ships green: that is why the form survived 0153, 0211,
+        0215, 0225 and 0227. It must NOT match the clean step now."""
+        marked = _resolve("User clicks the 'Login' button ( take a screenshot )")
+        assert marked != _resolve("User clicks the 'Login' button")
+        from noodle.resolver import patterns
+        assert patterns.evidence_marker_rejection(
+            "User clicks the 'Login' button ( take a screenshot )")
 
     @pytest.mark.parametrize("suffix", [
         "( take a screenshot )", "(take a screenshot)", "( Take a Screenshot )",
@@ -94,23 +101,28 @@ class TestMarker:
     def test_ordinary_parentheses_survive(self):
         assert EVIDENCE_MARKER_RE.search("clicks the 'Save (draft)' button") is None
 
-    def test_runner_sets_flag_and_strips(self):
+    def test_runner_refuses_a_marked_step(self):
+        """NOOD_0228 — the runner used to strip the marker and set a flag.
+        It now REFUSES: a file that reached a runner without passing validate
+        must not run, or the rejection holds everywhere except the one place
+        that decides whether a test goes green."""
+        import pytest as _pytest
+
         from noodle.orchestrator.runner import execute_step
         ctx = _Ctx()
         ctx.page = None
         ctx._vars = {}
-        execute_step("sets {var:GREETING} to 'hi' ( take a screenshot )", ctx)
-        assert ctx._vars["GREETING"] == "hi"
-        assert ctx._evidence_request is True
-        assert isinstance(ctx._match_seq_at_step_start, int)
+        with _pytest.raises(AssertionError, match="not accepted inside step text"):
+            execute_step("sets {var:GREETING} to 'hi' ( take a screenshot )", ctx)
 
-    def test_runner_no_flag_without_marker(self):
-        from noodle.orchestrator.runner import ctx_get, execute_step
+    def test_runner_runs_a_clean_step(self):
+        from noodle.orchestrator.runner import execute_step
         ctx = _Ctx()
         ctx.page = None
         ctx._vars = {}
         execute_step("sets {var:GREETING} to 'hi'", ctx)
-        assert ctx_get(ctx, "_evidence_request") is None
+        assert ctx._vars["GREETING"] == "hi"
+        assert isinstance(ctx._match_seq_at_step_start, int)
 
 
 # ---------------------------------------------------------------------------

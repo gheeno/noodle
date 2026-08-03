@@ -1096,24 +1096,20 @@ box** drawn around the element that step resolved. So
 toy outlined. Evidence lands on the step in the Allure report and in the
 Evidence section of `rca.md` / `rca.html`.
 
-Ask for evidence of any specific step with a trailing marker — it is
-stripped before the step resolves, so every step form accepts it:
+**You say it in the brief; the engine decides which step.** NOOD_0225/0228 —
+the words that ask for evidence live in the prompt or `brief`, never in a
+step. A step described as *"take evidence screenshot on this step"*,
+*"attach evidence"* or *"with a screenshot"* gets one; *"no screenshot
+needed"* gets none; a brief-level *"a screenshot on every step"*, *"each
+assertion must contain an evidence screenshot"* or *"DO NOT ADD
+SCREENSHOTS"* compiles to a scenario tag from the table below.
 
-```gherkin
-When User clicks the 'Login' button ( take a screenshot )
-Then User should see 'Welcome back' ( take a screenshot )
-When User closes the banner ( no screenshot )
-```
-
-**You rarely write these by hand.** NOOD_0225 — the engine reads the brief
-and compiles the marker itself: a step that says *"take evidence screenshot
-on this step"*, *"attach evidence"* or *"with a screenshot"* gets one; a
-step that says *"no screenshot needed"* gets none; a brief-level *"a
-screenshot on every step"*, *"each assertion must contain an evidence
-screenshot"* or *"DO NOT ADD SCREENSHOTS"* compiles to the scenario tag
-below. Marker spelling is forgiving for the same reason — `( take a
-screenshot )`, `[take a screenshot]`, `[evidence: screenshot]`,
-`- attach evidence` and `(screenshot)` are one thing.
+`brief` works alongside hand-authored `feature_content`, not only with a
+goal — `noodle author --brief "<the user's ask>"` /
+`author_test(brief=…, feature_content=…)`. If a request cannot be attached
+to a step the authoring **blocks** rather than shipping a test that proves
+less than was asked; name the position yourself with
+`--evidence-step N` (`evidence_requests=[{"step": N}]`).
 
 Gates — the engine never takes random screenshots:
 
@@ -1122,24 +1118,34 @@ Gates — the engine never takes random screenshots:
 | `NOODLE_EVIDENCE=last` | default — final step of each passing web scenario |
 | `NOODLE_EVIDENCE=assertions` | every `Then`/`And`-under-`Then`, plus the last step |
 | `NOODLE_EVIDENCE=all` | every passed step (heavier — debugging/demo runs) |
-| `NOODLE_EVIDENCE=off` | none (markers and `@evidence` still respected: off kills only the automatic shot) |
-| `( take a screenshot )` marker | always capture that step |
-| `( no screenshot )` marker | never capture that step, overriding the mode |
+| `NOODLE_EVIDENCE=off` | none (the tags still apply: off kills only the automatic shot) |
+| `@evidence:steps=2,7` tag | capture exactly those steps (1-based over the scenario's own steps) |
+| `@evidence:skip=3` tag | never capture that step, overriding the mode |
 | `@evidence` tag | every passed step in that scenario |
 | `@evidence:assertions` tag | every assertion in that scenario, plus its last step |
 | `@no_evidence` tag | no evidence for that scenario, overriding everything |
 
-Strongest first: `@no_evidence` > `( no screenshot )` > `( take a
-screenshot )` / `@evidence` > the mode. An explicit refusal always wins —
-including over the always-capture-the-last default.
+Strongest first: `@no_evidence` > `@evidence:skip=` > `@evidence:steps=` /
+`@evidence` > the mode. An explicit refusal always wins — including over the
+always-capture-the-last default.
+
+**Evidence requests inside step text are rejected** (NOOD_0228). Run
+configuration written into the sentence a tester reads was accepted for five
+releases, stayed discoverable, and kept coming back; it now fails
+`noodle validate`, fails the author transaction, and refuses to run. An older
+suite converts in one command:
+
+```bash
+noodle migrate evidence-markers --write
+```
 
 Web area only: `@api`, `@appium`/platform and `@visual` scenarios have no
 Playwright page, so the gate skips them. Failure screenshots are unchanged
 (full-page PNG with expected/matched markers). The explicit
-`takes a screenshot` step above is also attached to the reports now, not
-just written to disk. Related: in **headed** runs the engine scrolls each
-matched element into view so the visible viewport follows what Playwright
-is doing (`NOODLE_FOLLOW=true|false` overrides; headless runs skip it).
+`takes a screenshot` step is also attached to the reports, not just written
+to disk. Related: in **headed** runs the engine scrolls each matched element
+into view so the visible viewport follows what Playwright is doing
+(`NOODLE_FOLLOW=true|false` overrides; headless runs skip it).
 
 ---
 

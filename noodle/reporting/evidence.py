@@ -13,12 +13,13 @@ Gates (the engine never takes random screenshots):
 
   * mode        — NOODLE_EVIDENCE: 'last' (default: the final step of each
                   passing web scenario), 'all' (every passed step), 'off'.
-  * per step    — a trailing "( take a screenshot )" marker in the step text
-                  (stripped before resolution; see resolver/patterns._pre_clean)
-                  always captures that step, regardless of mode. Its opposite,
-                  "( no screenshot )", declines one for that step (NOOD_0225).
+  * per step    — the scenario tags @evidence:steps=2,7 (capture exactly those
+                  steps, 1-based) and @evidence:skip=3 (decline one). The
+                  engine derives them from the user's brief; a hand-author may
+                  write them directly. NOOD_0228 — this is the ONLY per-step
+                  channel: run configuration is metadata, never step text.
   * per scenario — @evidence tag = every passed step; @no_evidence = none,
-                  overriding mode and markers both.
+                  overriding the mode and the per-step tags both.
   * area        — web only: no Playwright page (api/appium/visual) → no shot.
 
 Space/tokens: one viewport JPEG per scenario by default (~40–150 KB), the
@@ -46,10 +47,10 @@ def step_directives(tags) -> tuple[set[int], set[int]]:
     """NOOD_0227 (D1) — per-step evidence directives carried as scenario
     tags: `@evidence:steps=2,7` requests a shot on those steps (1-based over
     the scenario's steps), `@evidence:skip=3` declines one. The goal compiler
-    emits these from `checks[].evidence` so run configuration never rides
-    inside step text; hand-authors may write them too, or keep the prose
-    markers — both stay honoured (the markers are read-only now: the engine
-    never emits them). Returns (wanted_positions, skipped_positions)."""
+    emits these from `checks[].evidence`, and NOOD_0228 derives them from a
+    hand-author's `brief` too, so run configuration never rides inside step
+    text. This is the only per-step channel there is.
+    Returns (wanted_positions, skipped_positions)."""
     import re as _re
     want: set[int] = set()
     skip: set[int] = set()
@@ -69,19 +70,19 @@ def wanted(tags, requested: bool, is_last_step: bool, has_page: bool,
     NOOD_0211 — `is_assertion` is the step's Gherkin type: True for a `Then`
     and for any `And`/`But` chained under one (behave reports both as
     step_type 'then'). "Every assertion gets evidence" is the thing testers
-    actually ask for, and it used to require hand-writing
-    `( take a screenshot )` on every line — noise in the feature file
-    expressing something the step's own keyword already says. `@evidence:
-    assertions` / NOODLE_EVIDENCE=assertions now says it once.
+    actually ask for, and it used to require a per-line request in the feature
+    file expressing something the step's own keyword already says.
+    `@evidence:assertions` / NOODLE_EVIDENCE=assertions now says it once.
 
-    NOOD_0225 — `suppressed` is the per-step opt-out ("( no screenshot )"),
-    the missing half of the per-step marker. Without it a step could ask for
-    a shot but never decline one, so a tester who wrote "no screenshot on
-    this step" still got one whenever that step ended the scenario.
+    `requested` / `suppressed` are the per-step tag directives for THIS step
+    (@evidence:steps= / @evidence:skip=, via step_directives). NOOD_0225 —
+    without the negative half a step could ask for a shot but never decline
+    one, so a tester who said "no screenshot on this step" still got one
+    whenever that step ended the scenario.
 
     Precedence, strongest first: @no_evidence (silence, overriding everything
     — an explicit "no screenshots" must not be second-guessed by the
-    always-capture-the-last rule) > per-step opt-out > explicit marker /
+    always-capture-the-last rule) > @evidence:skip= > @evidence:steps= /
     @evidence > mode.
     """
     if not has_page:

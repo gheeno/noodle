@@ -86,7 +86,7 @@ _GOAL_KEYS = {"scenario", "actions", "checks", "dismissals", "probe",
               # NOOD_0211 — run-wide evidence policy from a prompt directive
               # ("each assertion must contain an evidence screenshot" / "no
               # screenshots"). Compiles to ONE scenario tag instead of a
-              # ( take a screenshot ) marker pasted onto every line.
+              # per-line evidence request pasted onto every line.
               "evidence"}
 
 # NOOD_0225 — "all" (every passed step) joins the enum. The runtime tag
@@ -197,8 +197,8 @@ _TARGETED_ACTIONS = ("click", "enter", "select", "check", "uncheck",
 # expected_from: <pick id>, evidence?: screenshot}): the BOUND result caption
 # must be visible in the named destination. Identity, never a count — a
 # cart-count assertion cannot satisfy "the selected toy is in the cart".
-# `evidence: screenshot` (any check kind) compiles the existing NOOD_0153
-# "( take a screenshot )" marker onto the verification step itself.
+# `evidence: screenshot` (any check kind) compiles an @evidence:steps= tag
+# naming the verification step (NOOD_0227 D1 / NOOD_0228).
 # NOOD_0188 — "not_see" (text absent: the empty-state/removal case, which
 # `see` cannot express) and "url_contains" (the flow landed where it should —
 # the navigation half of a journey, previously unassertable from a goal).
@@ -1654,7 +1654,7 @@ def _check_step(c: dict, captions: dict | None = None) -> tuple[str, str | None]
             f"_check_step has no branch for check {sorted(c)} — add one for "
             "the new kind (a fallthrough would compile a wrong assertion)")
     # NOOD_0227 (D1) — the engine no longer serialises checks[].evidence into
-    # the step TEXT. "( take a screenshot )" was run configuration smuggled
+    # the step TEXT. The per-step prose form was run configuration smuggled
     # into prose: emitted here, stripped back out by a ~15-line regex family
     # (resolver/patterns EVIDENCE_MARKER_RE), and carried as noise in every
     # step label the reports show. compile_goal now records the directive as
@@ -2068,8 +2068,8 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
     slug = re.sub(r"[^a-z0-9]+", "_", goal["scenario"].lower()).strip("_") \
         or "goal"
     # NOOD_0211 — the evidence policy rides as ONE scenario tag. The
-    # alternative the engine used to force — `( take a screenshot )` appended
-    # to every assertion — put run configuration into the step text of every
+    # alternative the engine used to force — a per-line request appended to
+    # every assertion — put run configuration into the step text of every
     # line, which reads as noise and is trivially forgotten on step nine.
     evidence_tag = {"all": " @evidence",
                     "assertions": " @evidence:assertions",

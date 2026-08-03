@@ -333,13 +333,38 @@ it per §7, never re-run it hoping.
 
 ### The engine owns what the engine wrote (NOOD_0223)
 
-Every authored file's sha256 lands in `.noodle/authored.json`. With
-`workspace_strict: true` (noodle.yaml) or `NOODLE_WORKSPACE_STRICT=1` a run
-refuses to launch on any engine-authored file changed underneath it. Whether
-or not strict mode is armed, the rule for you is the same and older than this
-ticket: **repair through `author`, never by editing the compiled artifact.**
-A hand edit is discarded by the next author lap, so a green run on one proves
-a file the engine cannot regenerate.
+Every authored file's sha256 lands in `.noodle/authored.json`. A run refuses
+to launch on any engine-authored file changed underneath it when strict mode
+is armed — `workspace_strict: true` (noodle.yaml), `NOODLE_WORKSPACE_STRICT=1`,
+and, since NOOD_0228, **by default for agent-driven runs** (anything through
+the MCP door; `workspace_strict: false` still turns it off). Human CLI runs
+stay opt-in: a blocking gate a tester did not ask for is the opposite of
+helpful in their own project. Whether or not strict mode is armed, the rule
+for you is the same and older than this ticket: **repair through `author`,
+never by editing the compiled artifact.** A hand edit is discarded by the next
+author lap, so a green run on one proves a file the engine cannot regenerate.
+
+**What the footprint scan can and cannot see.** A passing strict gate also
+reports `foreign` — files in the workspace no author transaction wrote
+(scratch scripts, hand-copied YAML, an untracked .feature). That is evidence
+of *write-shaped* improvisation only. `ls`, `cat`, `grep` and `head` leave no
+filesystem footprint at all, so scanning can never detect a read-only shell
+command — this is a category limit, not a gap to be closed. **Do not read a
+clean scan as "no shell was used."**
+
+The layers that actually work, strongest first (NOOD_0228):
+
+1. **Remove the need.** Every `ls`/`cat`/heredoc the audit caught now has a
+   command: `noodle workspace inspect`, `noodle pom resolve|set|list`,
+   `noodle author --spec-text`. Making the correct command cheaper than the
+   shell reflex is the only lever that works without the model's cooperation.
+2. **Host-level allowlisting** — the only absolute control. Run the agent
+   against the Noodle MCP server (`noodle init-mcp`) with its shell tool
+   disabled; MCP is the canonical agent interface, the CLI the human/CI one.
+3. **Strict mode + the footprint scan** — detection and refusal, per above.
+4. **This document and the skill cards** — defence in depth, never the
+   control. Deleting a contradictory instruction is worth more than adding
+   emphasis to a rule.
 
 ### The goal object (NOOD_0137/0161)
 
@@ -1074,8 +1099,7 @@ report stop` can find it.
 Both reports carry per-step **evidence screenshots** (NOOD_0153): by default
 the final step of every passing web scenario ships a viewport-only JPEG with
 the asserted element boxed in green — proof the test did what it claims. A
-tester requests more with a trailing `( take a screenshot )` marker on any
-hand-written step, the `@evidence`/`@no_evidence` tags, per-step tag
+tester requests more with the `@evidence`/`@no_evidence` tags, per-step tag
 metadata (`@evidence:steps=2,7` / `@evidence:skip=3` — 1-based positions,
 NOOD_0227), or `NOODLE_EVIDENCE=all|last|off`
 (see docs/steps_dictionary.md § Evidence screenshots). **Never hand-author
@@ -1084,9 +1108,12 @@ screenshot on this step", "attach evidence per each step", "DO NOT ADD
 SCREENSHOTS" — and the prompt compiler turns that into per-check metadata
 (`evidence: screenshot|none` on a check, compiled to `@evidence:steps=`)
 or the run-wide tag (`evidence: all|assertions|off` on the goal) for you.
-Goal-compiled features never carry the prose marker (NOOD_0227): the
-engine emits tag metadata only, and the marker regexes stay read-only for
-hand-authored features. In rca.md the
+Hand-authoring `feature_content`? Pass the user's words as `brief` in the
+same call — it is compatible with feature_content and the engine derives the
+tags from it. An evidence request written INSIDE step text is rejected at
+parse time (NOOD_0228): it fails validate, fails authoring, and refuses to
+run; `noodle migrate evidence-markers --write` converts an older suite. In
+rca.md the
 Evidence section lists file paths only (token-lean — never inline pixels);
 rca.html inlines bounded thumbnails. Don't screenshot the page yourself to
 prove a run worked — point at the reports' evidence instead.
