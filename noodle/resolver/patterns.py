@@ -142,9 +142,49 @@ def _no_text_into_permission_prompt(name: str):
 # set) in runner.execute_step; ALSO stripped here in _pre_clean so every other
 # resolution path — step-search, the LSP, the docs example corpus — tolerates
 # the marker instead of failing to match the inner step.
+#
+# NOOD_0225 — the bracket and dash spellings are accepted too. A reviewed
+# session watched a model write `[evidence: screenshot]` onto a step, argue
+# with itself about whether that was "step decorator syntax", and ship a step
+# that resolved green with no picture attached — the marker was simply not
+# recognised, and nothing said so. Every shape a model reaches for now means
+# the same thing: `( take a screenshot )`, `[take a screenshot]`,
+# `[evidence: screenshot]`, `- take a screenshot`, `(screenshot)`.
+# The tail must still be a marker, not step text: an explicit separator is
+# required, the phrase is anchored to the end of the line, and — since the
+# span is STRIPPED, not merely flagged — the bare word "evidence" needs a
+# verb or a photographic noun beside it before it counts.
+_EV_VERB = (r'(?:take|takes|capture|captures|grab|grabs|attach|attaches|'
+            r'include|includes|add|adds|save|saves)')
+_EV_NOUN = r'(?:screen\s*shots?|screen\s*caps?|snapshots?|captures?)'
+_EV_OPEN = r'\s*(?:\(\s*|\[\s*|[-–—,]\s*)'
+_EV_CLOSE = r'\s*[)\]]?\s*$'
 EVIDENCE_MARKER_RE = re.compile(
-    r'\s*\(\s*(?:(?:please\s+)?(?:take|capture|grab)s?\s+(?:an?\s+|the\s+)?)?'
-    r'(?:evidence\s+)?screenshot(?:\s+here)?\s*\)\s*$', re.IGNORECASE)
+    _EV_OPEN
+    + r'(?:'
+    + rf'(?:please\s+)?{_EV_VERB}\s+(?:an?\s+|the\s+)?(?:evidence\s*[:=-]?\s*)?'
+    + rf'(?:{_EV_NOUN}|evidence)'
+    + rf'|(?:evidence\s*[:=-]\s*)?{_EV_NOUN}'
+    + r')'
+    + r'(?:\s+(?:here|as\s+evidence|on\s+this\s+step|for\s+this\s+step))?'
+    + _EV_CLOSE, re.IGNORECASE)
+# NOOD_0225 — the opposite instruction, same shapes: `( no screenshot )`,
+# `[no evidence]`, `- do not attach a screenshot`. Without it a step could ask
+# for a shot but never decline one, so the default (one shot on whichever step
+# ends the scenario) overrode a tester who had said not to. Matched BEFORE the
+# positive marker everywhere, because "no screenshot" contains "screenshot".
+EVIDENCE_SUPPRESS_RE = re.compile(
+    _EV_OPEN
+    + r'(?:(?:do\s+not|don\'?t|never|no\s+need\s+to)\s+' + _EV_VERB
+    + r'\s+(?:an?\s+|the\s+|any\s+)?(?:evidence\s+)?'
+    + rf'(?:{_EV_NOUN}|evidence)'
+    + rf'|(?:no|without|skip|omit)\s+(?:{_EV_VERB}\s+)?'
+    + rf'(?:any\s+|the\s+)?(?:evidence\s+)?(?:{_EV_NOUN}|evidence)'
+    + rf'|(?:{_EV_NOUN}|evidence)\s+(?:is\s+|are\s+)?not\s+'
+    + r'(?:required|needed|necessary|wanted)'
+    + r')'
+    + r'(?:\s+(?:needed|required|necessary|here|on\s+this\s+step|'
+    + r'for\s+this\s+step))?' + _EV_CLOSE, re.IGNORECASE)
 
 
 def _pre_clean(text: str) -> str:
@@ -157,6 +197,7 @@ def _pre_clean(text: str) -> str:
                 .replace('“', '"').replace('”', '"'))
     text = re.sub(r'\s+', ' ', text).strip()
     text = re.sub(r'[.!]+$', '', text).strip()
+    text = EVIDENCE_SUPPRESS_RE.sub('', text).strip()
     return EVIDENCE_MARKER_RE.sub('', text).strip()
 
 

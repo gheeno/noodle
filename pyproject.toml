@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "noodle"
-version = "1.0.0a38"
+version = "1.0.0a39"
 requires-python = ">=3.11"
 dependencies = [
     "behave>=1.2.6",

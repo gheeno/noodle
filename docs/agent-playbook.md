@@ -1057,7 +1057,12 @@ the final step of every passing web scenario ships a viewport-only JPEG with
 the asserted element boxed in green — proof the test did what it claims. A
 tester requests more with a trailing `( take a screenshot )` marker on any
 step, the `@evidence`/`@no_evidence` tags, or `NOODLE_EVIDENCE=all|last|off`
-(see docs/steps_dictionary.md § Evidence screenshots). In rca.md the
+(see docs/steps_dictionary.md § Evidence screenshots). **Never hand-author
+either** (NOOD_0225): the brief already says what it wants — "take evidence
+screenshot on this step", "attach evidence per each step", "DO NOT ADD
+SCREENSHOTS" — and the prompt compiler turns that into the marker
+(`evidence: screenshot|none` on a check) or the run-wide tag
+(`evidence: all|assertions|off` on the goal) for you. In rca.md the
 Evidence section lists file paths only (token-lean — never inline pixels);
 rca.html inlines bounded thumbnails. Don't screenshot the page yourself to
 prove a run worked — point at the reports' evidence instead.

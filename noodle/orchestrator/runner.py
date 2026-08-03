@@ -780,17 +780,27 @@ def execute_step(step_text: str, context):
     # shot and is stripped so the inner step resolves normally (patterns.
     # _pre_clean strips it for every non-runner resolution path too).
     from noodle.agents.web import locator as _locator
-    from noodle.resolver.patterns import EVIDENCE_MARKER_RE
+    from noodle.resolver.patterns import (
+        EVIDENCE_MARKER_RE,
+        EVIDENCE_SUPPRESS_RE,
+    )
     context._match_seq_at_step_start = _locator.match_seq()
     # NOOD_0156 — healing snapshot: hooks.after_step attributes any healing
     # events recorded from here on to THIS step, so the run result can report
     # per-step resolution provenance (and compute `verified`).
     from noodle import healing as _healing
     context._healing_at_step_start = _healing.event_count()
-    m = EVIDENCE_MARKER_RE.search(step_text)
+    # NOOD_0225 — the opt-out is read first: "( no screenshot )" contains the
+    # word the positive marker looks for, so the order is the whole guard.
+    m = EVIDENCE_SUPPRESS_RE.search(step_text)
     if m:
         step_text = step_text[:m.start()]
-        context._evidence_request = True
+        context._evidence_suppress = True
+    else:
+        m = EVIDENCE_MARKER_RE.search(step_text)
+        if m:
+            step_text = step_text[:m.start()]
+            context._evidence_request = True
     # "... in the new tab" (NOOD_0025) — run the rest of the step against the
     # newest page, then drop the suffix so the inner verb resolves normally.
     m = re.search(r'\s+in the (?:new|last) (?:tab|window)$', step_text, re.IGNORECASE)
@@ -815,7 +825,7 @@ def execute_step(step_text: str, context):
     # shell-quoted, so a stored page string can only ever be one argument.
     if t in _EXEC_TYPES:
         safe = substitute(raw_step_text, context._vars, quote_captured=True)
-        safe = EVIDENCE_MARKER_RE.sub("", safe)
+        safe = EVIDENCE_SUPPRESS_RE.sub("", EVIDENCE_MARKER_RE.sub("", safe))
         safe = re.sub(r'\s+in the (?:new|last) (?:tab|window)$', '', safe,
                       flags=re.IGNORECASE)
         action = resolve(safe, tags=set(

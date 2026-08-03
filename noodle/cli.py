@@ -1423,7 +1423,7 @@ can't": read the wok.
    output or `search_step` (`noodle steps <kw>…` — all words, ONE
    call); `use_llm=True` last; `append_to` appends a scenario
    (llm-performance). Result-pick binding, `after:` anchoring,
-   `evidence: screenshot`: playbook.
+   evidence (never hand-write it): playbook.
 3. Execute + report — one call: `run_and_report` with `headless=True,
    retries=0, serve_reports=True` (`noodle run noodle_tests/<app>
    --headless --retries 0 --json`): preflights secrets, runs,

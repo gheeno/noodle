@@ -847,6 +847,7 @@ def before_scenario(context, scenario):
     context._vars = {}                     # 11.1 — run-scoped stored values
     context._scenario_failed = False       # set by after_step; gates trace save
     context._evidence_request = False      # NOOD_0153 — "( take a screenshot )" marker
+    context._evidence_suppress = False     # NOOD_0225 — "( no screenshot )" marker
     context._manual_screenshot = None      # NOOD_0153 — explicit screenshot step's path
     context._evidence_last_step = _evidence_last_step(scenario)  # NOOD_0157
     context._mobile = None                 # Phase F — set by the @appium path below
@@ -1141,6 +1142,7 @@ def after_step(context, step):
         # NOOD_0153 — the failure screenshot supersedes any evidence request
         # on this step; clear the flags so they can't leak into a retry.
         context._evidence_request = False
+        context._evidence_suppress = False
         context._manual_screenshot = None
         shots_dir = _paths.screenshots_dir()
         os.makedirs(shots_dir, exist_ok=True)
@@ -1259,10 +1261,14 @@ def after_step(context, step):
         evidence_path, evidence_name, evidence_meta = None, None, None
         manual = ctx_get(context, "_manual_screenshot")
         requested = bool(ctx_get(context, "_evidence_request"))
+        # NOOD_0225 — "( no screenshot )" on this step. Read and cleared on the
+        # same beat as the request flag, so it can never leak into the next.
+        suppressed = bool(ctx_get(context, "_evidence_suppress"))
         context._manual_screenshot = None
         context._evidence_request = False
+        context._evidence_suppress = False
         page = ctx_get(context, "page")
-        if manual:
+        if manual and not suppressed:
             evidence_path, evidence_name = manual, "screenshot"
         elif not ctx_get(context, "_scenario_failed", False):
             try:
@@ -1280,7 +1286,7 @@ def after_step(context, step):
                 # "this step is an assertion" signal the evidence modes need.
                 is_assertion = getattr(step, "step_type", None) == "then"
                 if _evidence.wanted(tags, requested, is_last, page is not None,
-                                    is_assertion):
+                                    is_assertion, suppressed):
                     seq0 = ctx_get(context, "_match_seq_at_step_start", None)
                     fresh = seq0 is not None and locator_module.match_seq() != seq0
                     evidence_path = _evidence.capture(page, step.name, fresh)

@@ -63,6 +63,19 @@ _PATHISH = re.compile(r"^/[\w\-./{}%?=&]*$")
 _ARTICLE = re.compile(r"^(?:a|an|the|any|some)\s+", re.I)
 _ANAPHORA = {"it", "that", "this", "them", "one", "item", "product",
              "the item", "the product", "the result"}
+# NOOD_0225 — one vocabulary for "evidence", shared by the per-step marker and
+# the run-wide directive below. A tester writes "attach", "take", "capture" or
+# "grab" interchangeably, and the noun is "screenshot", "screen cap", "capture"
+# or plain "evidence"; before this, only `take` + `screenshot|capture` was
+# understood, so "take evidence screenshot on this step" worked and
+# "attach evidence" — the phrasing the same brief used one line later —
+# silently produced no shot at all.
+_EV_TAKE = (r"(?:takes?|taking|captures?|capturing|attach(?:es|ing)?|"
+            r"includ(?:e|es|ing)|adds?|adding|grabs?|grabbing|"
+            r"saves?|saving|collects?|collecting|provid(?:e|es|ing))")
+# The photographic nouns. Deliberately NOT "image"/"photo": a brief that says
+# "verify no images are broken" must not read as an evidence directive.
+_EV_SHOT = r"(?:screen\s*shots?|screen\s*caps?|snapshots?|captures?)"
 # NOOD_0207 — the span now swallows its own punctuation and tail. It used to
 # strip only the word "screenshot", so "... is present -  on this step" was
 # left behind as the literal to assert: an assertion nothing renders, failing
@@ -71,13 +84,42 @@ _EVIDENCE = re.compile(
     # NOOD_0212 — "…, with a screenshot as evidence" left "with a" behind once
     # the noun was lifted out, and that residue compiled into an assertion on
     # the literal text "with a". The lead-in has to go with the phrase.
-    r"(?:\s*[-–—,]\s*)?(?:\band\s+)?(?:\bwith\s+(?:an?\s+)?)?"
-    # NOOD_0218 — "take AN evidence screenshot" left "- take an" behind
-    r"(?:take\s+(?:an?\s+)?)?"
+    r"(?:\s*[-–—,]\s*)?(?:\band\s+)?(?:\bplease\s+)?"
+    r"(?:"
+    # "with a screenshot" / "take AN evidence screenshot" (NOOD_0218 — the
+    # article left "- take an" behind) / a bare "screenshot".
+    r"(?:\bwith\s+(?:an?\s+)?)?"
+    rf"(?:\b{_EV_TAKE}\s+(?:an?\s+|the\s+)?)?"
     r"(?:\bevidence\b\s*[:-]?\s*)?"
-    r"(?:\bscreenshots?\b|\bcaptures?\b(?:\s+(?:the\s+)?(?:screen|page))?)"
+    rf"{_EV_SHOT}(?:\s+(?:the\s+)?(?:screen|page))?"
+    # NOOD_0225 — "evidence" standing alone as the noun ("attach evidence",
+    # "with evidence"). Anchored to the clause end because, unlike
+    # "screenshot", the bare word appears in ordinary prose ("verify the
+    # page for evidence of the order") and this span is STRIPPED, not just
+    # flagged — an unanchored match would delete words the tester meant.
+    rf"|(?:\b{_EV_TAKE}\s+(?:an?\s+|the\s+)?|\b(?:with|as|for)\s+(?:an?\s+)?)"
+    r"\bevidence\b(?=\s*[.;,]?\s*$)"
+    r")"
     r"(?:\s+for\s+verification)?"
-    r"(?:\s+(?:on\s+this\s+step|here|as\s+evidence))?", re.I)
+    r"(?:\s+(?:on\s+this\s+step|for\s+this\s+step|here|as\s+evidence))?", re.I)
+# NOOD_0225 — the per-step NEGATIVE ("… - no screenshot needed"). Two bugs
+# lived where this regex now sits. The clause splitter classified any line
+# carrying such a phrase as a run-wide directive and DROPPED it, so
+# "Verify the banner is present - no screenshot needed" lost its assertion
+# entirely; and had it survived, _EVIDENCE matched the word "screenshot"
+# inside the negation and turned the shot ON. Matched before _EVIDENCE.
+_EVIDENCE_NEG = re.compile(
+    r"(?:\s*[-–—,(\[]\s*)?(?:\band\s+|\bbut\s+)?"
+    r"(?:"
+    rf"(?:do\s+not|don'?t|no\s+need\s+to|never)\s+{_EV_TAKE}\s+"
+    rf"(?:an?\s+|the\s+|any\s+)?(?:evidence\s+)?(?:{_EV_SHOT}|evidence)"
+    rf"|(?:no|without|skip|omit)\s+(?:{_EV_TAKE}\s+)?"
+    rf"(?:any\s+|the\s+)?(?:evidence\s+)?(?:{_EV_SHOT}|evidence)"
+    rf"|(?:{_EV_SHOT}|evidence)\s+(?:is\s+|are\s+)?not\s+"
+    r"(?:required|needed|necessary|wanted)"
+    r")"
+    r"(?:\s+(?:needed|required|necessary|here|on\s+this\s+step|"
+    r"for\s+this\s+step))?\s*[)\]]?", re.I)
 _RUN_MODE = re.compile(r"\brun\b.*\b(headed|headless)\b|"
                        r"\b(headed|headless)\b.*\bmode\b|"
                        r"^\s*(headed|headless)\s*$", re.I)
@@ -231,33 +273,104 @@ def _is_brief_noise(text: str) -> bool:
 # Evidence intent, recognised anywhere in the brief (labelled or standing on
 # its own line). Order matters: the negative is checked first, because "no
 # screenshots" contains "screenshot".
+# NOOD_0225 — the negation vocabulary a tester actually types. It used to
+# accept only take/capture/include, so "DO NOT ADD SCREENSHOTS" and
+# "don't attach any evidence" — the two most natural spellings — read as no
+# directive at all, and the default still shot the last step. An explicit
+# refusal that the engine ignores is worse than no feature: the brief said
+# one thing and the report showed another.
 _EVIDENCE_OFF = re.compile(
-    r"\b(?:no|without|skip|omit|don'?t\s+(?:take|capture|include)|"
-    r"do\s+not\s+(?:take|capture|include))\s+"
-    r"(?:any\s+)?(?:evidence\s+)?(?:screen\s*shots?|screen\s*caps?|"
-    r"captures?|evidence)\b"
-    r"|\bscreen\s*shots?\s+(?:are\s+)?not\s+(?:required|needed|necessary)\b",
+    rf"\b(?:no|without|skip|omit|avoid)\s+(?:{_EV_TAKE}\s+)?"
+    rf"(?:any\s+|the\s+)?(?:evidence\s+)?(?:{_EV_SHOT}|evidence)\b"
+    rf"|\b(?:do\s+not|don'?t|should\s+not|shouldn'?t|must\s+not|mustn'?t|"
+    rf"never|no\s+need\s+to)\s+{_EV_TAKE}\s+"
+    rf"(?:any\s+|an?\s+|the\s+)?(?:evidence\s+)?(?:{_EV_SHOT}|evidence)\b"
+    rf"|\b(?:{_EV_SHOT}|evidence)\s+(?:are\s+|is\s+)?not\s+"
+    r"(?:required|needed|necessary|wanted)\b"
+    rf"|\bno\s+need\s+for\s+(?:any\s+|an?\s+|the\s+)?(?:{_EV_SHOT}|evidence)\b",
+    re.I)
+# NOOD_0225 — "a screenshot on EVERY STEP" is not "on every assertion". The
+# runtime has had the @evidence tag (every passed step) since NOOD_0153, but
+# `steps?` sat in the per-assertion pattern, so the brief that asked for the
+# most evidence quietly got the least — action steps shipped none. Matched
+# before the per-assertion pattern.
+_EVIDENCE_PER_STEP = re.compile(
+    r"\b(?:each|every|all|per)\b[^.]{0,40}?\b(?:single\s+)?steps?\b[^.]{0,40}?"
+    rf"\b(?:{_EV_SHOT}|evidence)\b"
+    rf"|\b(?:{_EV_SHOT}|evidence)\b[^.]{{0,40}}?\b(?:each|every|all|per)\b"
+    r"[^.]{0,40}?\b(?:single\s+)?steps?\b",
     re.I)
 _EVIDENCE_PER_ASSERTION = re.compile(
     r"\b(?:each|every|all|per)\b[^.]{0,40}?\b(?:assert(?:ion)?s?|checks?|"
-    r"verif(?:y|ication)s?|steps?)\b[^.]{0,40}?"
-    r"\b(?:screen\s*shots?|screen\s*caps?|evidence)\b"
-    r"|\b(?:screen\s*shots?|evidence)\b[^.]{0,40}?\b(?:each|every|all|per)\b"
-    r"[^.]{0,40}?\b(?:assert(?:ion)?s?|checks?|verif(?:y|ication)s?|steps?)\b",
+    r"verif(?:y|ication)s?)\b[^.]{0,40}?"
+    rf"\b(?:{_EV_SHOT}|evidence)\b"
+    rf"|\b(?:{_EV_SHOT}|evidence)\b[^.]{{0,40}}?\b(?:each|every|all|per)\b"
+    r"[^.]{0,40}?\b(?:assert(?:ion)?s?|checks?|verif(?:y|ication)s?)\b",
     re.I)
 
 
 def evidence_intent(text: str) -> str | None:
     """NOOD_0211 — the run-wide evidence mode a brief asks for, or None.
 
-    'off' beats 'assertions': an explicit "no screenshots" is a decision, and
+    'off' beats the positives: an explicit "no screenshots" is a decision, and
     the always-capture-the-last default must not quietly overrule it.
+    NOOD_0225 — 'all' (every step) beats 'assertions', because a brief that
+    names STEPS asked for more than one that names assertions.
     """
-    if _EVIDENCE_OFF.search(text or ""):
+    text = text or ""
+    if _EVIDENCE_OFF.search(text):
         return "off"
-    if _EVIDENCE_PER_ASSERTION.search(text or ""):
+    if _EVIDENCE_PER_STEP.search(text):
+        return "all"
+    if _EVIDENCE_PER_ASSERTION.search(text):
         return "assertions"
     return None
+
+
+def _directive_span(text: str):
+    """NOOD_0225 — (mode, match) when `text` carries a run-wide evidence
+    directive, else None. evidence_intent() answers WHAT was asked; this
+    answers WHERE, which is what tells a directive line ("no screenshots")
+    apart from a step that merely carries an evidence note ("Verify the
+    banner is present - no screenshot needed"). Conflating the two dropped
+    the step and its assertion with it."""
+    for mode, rx in (("off", _EVIDENCE_OFF), ("all", _EVIDENCE_PER_STEP),
+                     ("assertions", _EVIDENCE_PER_ASSERTION)):
+        if m := rx.search(text or ""):
+            return mode, m
+    return None
+
+
+def _run_directive(text: str) -> str | None:
+    """NOOD_0225 — the run-wide evidence mode, read only off the units of the
+    brief that ARE the directive. A unit keeps its step when something
+    recognizable survives the directive span; only a unit that is nothing but
+    the directive configures the whole run."""
+    best = None
+    for unit in _directive_units(text):
+        found = _directive_span(unit)
+        if not found:
+            continue
+        mode, m = found
+        rest = (unit[:m.start()] + " " + unit[m.end():])
+        rest = _DIRECTIVE_LABEL.sub("", rest).strip(" -–—,;:.")
+        if _recognizable(rest):
+            continue                   # a step that mentions evidence
+        if mode == "off":
+            return "off"               # an explicit refusal beats everything
+        best = best or mode
+    return best
+
+
+def _directive_units(text: str) -> list[str]:
+    """The brief cut the same way _clauses cuts it — wrapped lines rejoined,
+    then split into sentences — so a directive is judged against the unit it
+    was written in, whether the brief is a numbered list or one paragraph."""
+    lines = [(i + 1, ln) for i, ln in enumerate((text or "").splitlines())
+             if ln.strip()]
+    return [s for _, ln in _join_wrapped(lines)
+            for raw in _SENTENCE.split(re.sub(r"\s+", " ", ln))
+            if (s := _BULLET.sub("", raw).strip())]
 
 
 # NOOD_0209 — the only URL in a brief often lives on its metadata line
@@ -794,8 +907,18 @@ def _clauses(text: str) -> list[dict]:
         # that identify one ("NO SCREENSHOT" → "NO"), leaving a residue that
         # then refused as an unknown step — the directive would configure the
         # run correctly and still fail the brief it came from.
-        if _DIRECTIVE_LABEL.match(bare) or evidence_intent(bare):
+        # NOOD_0225 — but only when the line IS the directive. The old test
+        # dropped any line an evidence pattern touched, so
+        # "Verify the banner is present - no screenshot needed" lost its
+        # assertion outright AND flipped the whole run's evidence off: the
+        # tester asked for one step without a picture and got neither the
+        # picture nor the check.
+        if _DIRECTIVE_LABEL.match(bare):
             continue
+        if found := _directive_span(bare):
+            rest = (bare[:found[1].start()] + " " + bare[found[1].end():])
+            if not _recognizable(rest.strip(" -–—,;:.")):
+                continue
         if _SECTION_HEADER.match(bare) or (titled and _GOAL_LABEL.match(bare)):
             continue                         # header / title — not a step
         if row := _TABLE_ROW.match(bare):
@@ -827,10 +950,18 @@ def _clauses(text: str) -> list[dict]:
                          if (q := _depreamble(p).strip().rstrip(".;,")))
     out = []
     for line_no, frag in frags:
-        evidence = bool(_EVIDENCE.search(frag))
-        body = _EVIDENCE.sub("", frag).strip().strip("+&,;:- ")
+        # NOOD_0225 — the negative is read FIRST. Left to _EVIDENCE, the word
+        # "screenshot" inside "no screenshot needed" matched and requested the
+        # very shot the tester declined.
+        if _EVIDENCE_NEG.search(frag):
+            evidence, evidence_off = False, True
+            body = _EVIDENCE_NEG.sub("", frag).strip().strip("+&,;:- ")
+        else:
+            evidence, evidence_off = bool(_EVIDENCE.search(frag)), False
+            body = _EVIDENCE.sub("", frag).strip().strip("+&,;:- ")
         out.append({"id": f"clause-{len(out) + 1}", "text": body or frag,
                     "line": line_no, "evidence": evidence,
+                    "evidence_off": evidence_off,
                     "evidence_only": evidence and not body})
     return out
 
@@ -936,7 +1067,8 @@ def _parse_clause(c: dict) -> dict:
     """One clause → a typed node; kind 'unknown' when no verb matches."""
     text = c["text"]
     node = {"kind": "unknown", "raw": text, "clause": c["id"],
-            "line": c["line"], "evidence": c["evidence"]}
+            "line": c["line"], "evidence": c["evidence"],
+            "evidence_off": bool(c.get("evidence_off"))}
     if c.get("evidence_only"):
         node["kind"] = "evidence_only"
         return node
@@ -944,11 +1076,19 @@ def _parse_clause(c: dict) -> dict:
     # Checked before the verb table because "each assertion must CONTAIN an
     # evidence screenshot" trips the verify verb and compiles to an assertion
     # on the literal text.
-    if _DIRECTIVE_LABEL.match(text) or evidence_intent(text):
+    # NOOD_0225 — same "is it the WHOLE clause?" test as the splitter: a
+    # compound whose right half carries an evidence note is still a step.
+    if _DIRECTIVE_LABEL.match(text):
         node.update(kind="directive",
                     directive=_DIRECTIVE_LABEL.sub("", text).strip(),
                     evidence_mode=evidence_intent(text))
         return node
+    if found := _directive_span(text):
+        rest = (text[:found[1].start()] + " " + text[found[1].end():])
+        if not _recognizable(rest.strip(" -–—,;:.")):
+            node.update(kind="directive", directive=text.strip(),
+                        evidence_mode=found[0])
+            return node
     if m := _META_LABEL.match(text):   # NOOD_0199 — a brief field, not a step
         node.update(kind="metadata", label=m.group("label").strip().lower())
         return node
@@ -1498,13 +1638,19 @@ def expand(text: str, base_url: str | None = None) -> dict:
     meta_urls: list[str] = []           # NOOD_0209 — URLs on metadata lines
     counters = {"search": 0, "pick": 0, "add": 0, "api": 0}
     pending_evidence = False
+    pending_evidence_off = False     # NOOD_0225 — the same seam, negated
     # NOOD_0211 — scanned off the RAW brief, not off a clause. The clause
     # splitter treats a trailing "evidence screenshot" as a per-step evidence
     # MARKER and strips it, so by parse time the directive had been shortened
     # to "Note : each assertion must contain an" — the exact string the old
     # refusal quoted back. Reading the whole text also lets the directive sit
     # anywhere in the brief, labelled or not.
-    evidence_mode = evidence_intent(text)
+    # NOOD_0225 — scanned per UNIT, not over the whole blob: a single step
+    # that declined a picture ("… - no screenshot needed") used to switch the
+    # entire run off, which is the opposite of what one line about one step
+    # can mean. _run_directive only honours a unit that is nothing but the
+    # directive.
+    evidence_mode = _run_directive(text)
 
     def _cover(n, status, node_ids=()):
         coverage.append({"clause": n["clause"], "status": status,
@@ -1588,10 +1734,12 @@ def expand(text: str, base_url: str | None = None) -> dict:
             # assumptions so nothing is silently dropped.
             if n.get("evidence_mode"):
                 evidence_mode = n["evidence_mode"]
-                how = ("no evidence screenshots for this scenario"
-                       if evidence_mode == "off"
-                       else "an evidence screenshot on every assertion — no "
-                            "( take a screenshot ) markers needed")
+                how = {"off": "no evidence screenshots for this scenario",
+                       "all": "an evidence screenshot on every step — no "
+                              "( take a screenshot ) markers needed",
+                       }.get(evidence_mode,
+                             "an evidence screenshot on every assertion — no "
+                             "( take a screenshot ) markers needed")
                 assumptions.append(
                     f"step {no} '{n['raw']}': read as a directive — {how}")
             else:
@@ -2154,6 +2302,12 @@ def expand(text: str, base_url: str | None = None) -> dict:
             if n["evidence"] or pending_evidence:
                 check["evidence"] = "screenshot"
                 pending_evidence = False
+            elif n.get("evidence_off") or pending_evidence_off:
+                # NOOD_0225 — the tester declined a picture for THIS step. Say
+                # so on the step itself, or the run-wide default ('last')
+                # would still shoot it when it happens to end the scenario.
+                check["evidence"] = "none"
+                pending_evidence_off = False
             if not actions and "after" not in check:
                 # NOOD_0199 — prompt ORDER is the anchor. A check written
                 # BEFORE any action observes the landing page; unanchored, it
@@ -2166,10 +2320,14 @@ def expand(text: str, base_url: str | None = None) -> dict:
             _cover(n, "check")
         if n.get("evidence") and n["kind"] != "verify":
             pending_evidence = True
+        elif n.get("evidence_off") and n["kind"] != "verify":
+            pending_evidence_off = True
 
     # a trailing "take a screenshot" step attaches to the last check
     if pending_evidence and checks and "evidence" not in checks[-1]:
         checks[-1]["evidence"] = "screenshot"
+    elif pending_evidence_off and checks and "evidence" not in checks[-1]:
+        checks[-1]["evidence"] = "none"
     if actions:
         # NOOD_0199 — anchor the checks the prompt put BEFORE its first
         # action to the landing page. Skipped when the goal has no actions
@@ -2391,11 +2549,25 @@ def review_contract(exp: dict) -> dict:
     # contract on exactly the brief that asked for the most evidence.
     if any(c.get("evidence") or c.get("evidence_only")
            for c in exp.get("clauses") or []) \
-            and not norm.get("evidence"):
+            and norm.get("evidence") not in ("assertions", "all"):
         if not any(ch.get("evidence") == "screenshot"
                    for ch in norm.get("checks") or []):
             problems.append("the prompt requested screenshot evidence but "
                             "no check carries it")
+    # NOOD_0225 — and the same contract in the negative. A brief that declines
+    # evidence is making a decision, so a compiled goal that still shoots is
+    # as much a contract break as one that silently drops a requested shot.
+    if norm.get("evidence") == "off" \
+            and any(ch.get("evidence") == "screenshot"
+                    for ch in norm.get("checks") or []):
+        problems.append("the prompt declined screenshot evidence but a check "
+                        "still requests one")
+    if any(c.get("evidence_off") for c in exp.get("clauses") or []) \
+            and norm.get("evidence") != "off" \
+            and not any(ch.get("evidence") == "none"
+                        for ch in norm.get("checks") or []):
+        problems.append("the prompt declined evidence on a step but no check "
+                        "carries the opt-out")
     return {"ok": not problems, "problems": problems}
 
 

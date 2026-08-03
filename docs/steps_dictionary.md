@@ -1102,18 +1102,36 @@ stripped before the step resolves, so every step form accepts it:
 ```gherkin
 When User clicks the 'Login' button ( take a screenshot )
 Then User should see 'Welcome back' ( take a screenshot )
+When User closes the banner ( no screenshot )
 ```
+
+**You rarely write these by hand.** NOOD_0225 — the engine reads the brief
+and compiles the marker itself: a step that says *"take evidence screenshot
+on this step"*, *"attach evidence"* or *"with a screenshot"* gets one; a
+step that says *"no screenshot needed"* gets none; a brief-level *"a
+screenshot on every step"*, *"each assertion must contain an evidence
+screenshot"* or *"DO NOT ADD SCREENSHOTS"* compiles to the scenario tag
+below. Marker spelling is forgiving for the same reason — `( take a
+screenshot )`, `[take a screenshot]`, `[evidence: screenshot]`,
+`- attach evidence` and `(screenshot)` are one thing.
 
 Gates — the engine never takes random screenshots:
 
 | Control | Effect |
 |---|---|
 | `NOODLE_EVIDENCE=last` | default — final step of each passing web scenario |
+| `NOODLE_EVIDENCE=assertions` | every `Then`/`And`-under-`Then`, plus the last step |
 | `NOODLE_EVIDENCE=all` | every passed step (heavier — debugging/demo runs) |
 | `NOODLE_EVIDENCE=off` | none (markers and `@evidence` still respected: off kills only the automatic shot) |
 | `( take a screenshot )` marker | always capture that step |
+| `( no screenshot )` marker | never capture that step, overriding the mode |
 | `@evidence` tag | every passed step in that scenario |
+| `@evidence:assertions` tag | every assertion in that scenario, plus its last step |
 | `@no_evidence` tag | no evidence for that scenario, overriding everything |
+
+Strongest first: `@no_evidence` > `( no screenshot )` > `( take a
+screenshot )` / `@evidence` > the mode. An explicit refusal always wins —
+including over the always-capture-the-last default.
 
 Web area only: `@api`, `@appium`/platform and `@visual` scenarios have no
 Playwright page, so the gate skips them. Failure screenshots are unchanged
