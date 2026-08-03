@@ -4,6 +4,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a44] — 2026-08-03
+
+**NOOD_0230** — feature: the search→pick→add flow tells the truth and opens
+the cart once; duplicate features get a remove verb and a reconciliation.
+Three identical live-retail runs of the drill's TC4 (search → first result →
+add → cart → verify) gave two distinct failures and a green on unchanged
+engine code; a separate incident forked one AC into two feature files. The
+postmortems' shippable slices:
+
+**One destination click (F4).** An `item_in_destination` check emits its own
+observation navigation (settle + destination click). When the goal's own next
+action *is* that click — "5. Click cart" — both were emitted: the cart opened
+twice, the second time after the assertion, proving nothing at ~20s a lap.
+`compile_goal` now treats the goal's own adjacent click as the opener: the
+check emits after it, the settle rides immediately before it (unchanged per
+NOOD_0218 — removing it was measured RED; it protects the in-flight mutation
+request), and `intent_summary` stops claiming the click as an engine-added
+prerequisite. Deliberately adjacent-only: any action between the check's
+anchor and the click keeps today's shape.
+
+**A re-bound pick is never silent (F1-lite).** An untargeted pick whose
+landed page proves no mutation path is legally re-bound to the results card
+that carries the add action (NOOD_0212) — but the identity swap was
+invisible: `intent_verified: true` on a test that adds and asserts a
+different product than the probe picked. The evidence pass now warns
+(`pick: bound "X" but only "Y" carries an add action…`), records
+`rebound_from` on the binding, and the intent-trace entry reports
+`ok: false` with `probe:search-results (re-bound to "Y")` — so
+`intent_verified` stops over-claiming. Strict-target picks still block, as
+before. The full ordinal contract (`pick.index`, "first result" binding
+strictly or blocking) is deliberately NOT taken here — it turns a green into
+a block and needs the ticket's human decision.
+
+**The flow joins the gate on a deterministic grid (F0).**
+`noodle feature-regression` grows `tc5_search_pick_add`: the same loose,
+ordinal, anaphoric wording as the drill's TC4, on the engine's own fixture
+(a search box → three repeated-structure result cards → product page with an
+"add to cart" control → cart rendered from state). The flakiest drill shape
+is now covered from any machine. `NOODLE_REG_KEEP_ATTEMPTS=1` preserves a
+failed attempt's authoring payload and probe snapshot under
+`<workspace>/attempts/` before the re-author lap overwrites them.
+
+**An env key holding another feature's URL is never repurposed.** Two
+features of one app that start on different pages fought over the app's own
+env key: each authoring wrote `<APP>: <its base URL>`, so the second
+silently re-pointed the first's navigation `Given`, and the package run went
+red on a feature that was green an hour earlier — the new tc5 beside tc4
+reproduced it on the gate's first run. `navigation_env` key reuse is now
+value-aware (an existing key with a different URL is not this authoring's to
+take; the path-derived key is minted instead), and the authoring transaction
+leaves the app key's existing value alone when this call's navigation rides
+its own minted key.
+
+**Duplicate-feature hygiene.** A repair re-author that rewords the scenario
+title slugs a NEW filename and writes a second feature beside the first —
+one AC becomes two files, the stale one red on every future package run.
+Three closures: `noodle remove <path>` / MCP `remove_feature` deletes a
+superseded feature *with* its compiled POM sidecar, its accumulated Allure
+results (NOOD_0229 retention would otherwise keep the stale red in every
+report) and its intent contract; the overlap warning now names the two
+remedies (re-send with the existing `feature_path` + `overwrite: true`, or
+`noodle remove`); and `report_scope.note` states the app-vs-run gap
+("this run verified N of the M feature file(s) in this package") so a
+partial green is never read as a package green. The playbook records the
+rule: the feature path is the test's identity; the scenario title is
+cosmetic.
+
 ## [1.0.0a43] — 2026-08-03
 
 **NOOD_0229** — feature: a run replaces what it re-ran, and says what it

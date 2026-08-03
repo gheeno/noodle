@@ -110,6 +110,13 @@ Any case fails → phase 4. All pass → phase 5.
 
 Do these three steps in order. Nothing else.
 
+**Before any retry, preserve the failed attempt** (NOOD_0230): copy the
+case workspace's `artifacts/probe_goal.json`, the authored feature/POM and
+`.noodle/last_payload.json` to `$RUN/tc<N>-attempt<K>/` — or retry in a
+fresh `noodle init` folder. A re-run overwrites all three, and a postmortem
+reconstructed from a session transcript is guesswork; the TC4 flake
+investigation needed exactly these files and did not have them.
+
 **4a. Triage the tier.** Which case failed?
 
 - **TC3 (tier A)** — Wikipedia is automation-friendly. Red here is an engine

@@ -60,21 +60,34 @@ def navigation_urls(goal: dict) -> list[str]:
 
 
 def navigation_env(goal: dict, app: str,
-                   base_url: str | None = None) -> list[tuple[str, str]]:
+                   base_url: str | None = None,
+                   existing: dict | None = None) -> list[tuple[str, str]]:
     """Ordered (ENV_KEY, url) pairs for the goal's navigation contract — the
     compiler emits only {env:KEY} references; the URLs live in the app
     environments.yaml. Keys derive from the app + each URL's last path
     segment (universal — no site-specific names), deduplicated by suffix.
     NOOD_0209 — a navigation URL that IS the app's base URL reuses the app's
     own key instead of minting a second one (<APP>_HOME next to <APP> was
-    systematic: two keys, one value, and the extra one never pruned)."""
+    systematic: two keys, one value, and the extra one never pruned).
+    NOOD_0230 — `existing` (the app's current environments.yaml) makes key
+    reuse VALUE-AWARE: a key another feature already pinned to a different
+    URL is not this authoring's to repurpose. Two features of one app that
+    start on different pages used to fight over the app key — the second
+    authoring silently re-pointed the first's navigation Given, and the
+    package run went red on a feature that was green an hour earlier."""
     from urllib.parse import urlsplit
+
+    ex = {str(k).upper(): str(v) for k, v in (existing or {}).items()
+          if isinstance(v, str) and v.strip()}
+
+    def _free(key: str, url: str) -> bool:
+        return key not in ex or same_url(ex[key], url)
 
     taken, out = set(), []
     for u in navigation_urls(goal):
         if base_url and same_url(u, base_url):
             key = app.upper()
-            if key not in taken:
+            if key not in taken and _free(key, u):
                 taken.add(key)
                 out.append((key, u))
                 continue
@@ -84,7 +97,7 @@ def navigation_env(goal: dict, app: str,
         stem = re.sub(r"[\W_]+", "_", stem, flags=re.UNICODE).strip("_").upper() \
             or "HOME"
         key, n = f"{app.upper()}_{stem}", 2
-        while key in taken:
+        while key in taken or not _free(key, u):
             key, n = f"{app.upper()}_{stem}{n}", n + 1
         taken.add(key)
         out.append((key, u))
@@ -1440,11 +1453,24 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
                 if ctrl2 is not None:
                     chosen = ctrl2.get("item_caption") or cap
                     if chosen and chosen != cap and src in bound:
+                        # NOOD_0230 (F1-lite) — the identity swap is legal
+                        # (an untargeted pick means "any matching result")
+                        # but it is never silent: the probe's pick evidence
+                        # names a different item than the compiled steps act
+                        # on, so the payload says so and intent_trace stops
+                        # claiming the pick as fully verified.
+                        bound[src]["rebound_from"] = cap
                         bound[src]["caption"] = chosen
                         bound[src]["evidence"] = (
                             "probe:search-results (the card carrying the "
                             "add action)")
                         proven[f"pick:{src}"] = chosen
+                        warnings.append(
+                            f'pick: bound "{cap}" but only "{chosen}" '
+                            "carries an add action into "
+                            f'"{a["destination"]}" — the compiled test adds '
+                            f'and asserts "{chosen}", not the result the '
+                            "probe picked")
                     plan = {"prerequisite": None, "control": ctrl2,
                             "on_results": True, "within": chosen,
                             "evidence": "the picked result's own card action "

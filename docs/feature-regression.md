@@ -77,18 +77,21 @@ A stale install still refuses up front (`run \`noodle update\` first`): the
 folder is stamped with the **checkout's** version, so measuring a lagging
 install would file the results under code that never ran.
 
-The test cases live in `noodle/regression.py` (`PROMPTS`) — all against
-Wikipedia, live but automation-friendly, so the benchmark can go green from
-any machine. If the site drifts, update the content there; never bend the
-scoring.
+The test cases live in `noodle/regression.py` (`PROMPTS`) — tc1-tc3 against
+Wikipedia (live but automation-friendly), tc4-tc5 against the engine's own
+static fixture (`noodle/regression_fixture.py`, served on an ephemeral
+localhost port), so the benchmark can go green from any machine. If the live
+site drifts, update the content there; never bend the scoring.
 
-## The three canonical cases
+## The canonical cases
 
 | # | Mode | What it covers |
 |---|---|---|
 | `tc1_search_suggestion` | numbered prompt | typeahead suggestion, popup tolerance, plain-text assertion |
 | `tc2_account_textboxes` | numbered prompt | click-navigation across pages, multiple field assertions |
 | `tc3_api_seeds_ui_verifies` | numbered prompt | **cross-wok** — fetch over REST, assert the status, then prove the UI rendered it |
+| `tc4_multipage_checkout` | numbered prompt | NOOD_0227 — four-page flow: per-card `within:`-scoped click, same-URL DOM-mutation cart panel, three-field commit form, end-state assertions |
+| `tc5_search_pick_add` | numbered prompt | NOOD_0230 — the loose search→pick→add→verify shape on a deterministic grid: ordinal pick binding, `add_to` lowering, single deduplicated destination click |
 
 All three are the plain-English path a human or agent actually sends. tc3
 (NOOD_0191) is the other real shape: *"get the data from the API, then prove
@@ -156,6 +159,11 @@ is [llm-performance.md §7](llm-performance.md), not this benchmark.
 
 Overrides exist for a deliberately slower machine or site — set them in the
 shell, not in code.
+
+`NOODLE_REG_KEEP_ATTEMPTS=1` (NOOD_0230) preserves a failed attempt's
+authoring payload and probe snapshot under `<workspace>/attempts/` before the
+re-author lap overwrites them — the artifacts a postmortem needs, kept
+instead of reconstructed from a transcript.
 
 ## Reading the verdict
 

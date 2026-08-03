@@ -460,6 +460,17 @@ def write_feature(path: str, content: str, overwrite: bool = False,
 
 
 @_tool()
+def remove_feature(path: str, workspace: str | None = None) -> dict:
+    """Remove a superseded authored feature (NOOD_0230): the .feature file,
+    its compiled POM sidecar, its accumulated Allure results and its intent
+    contract — so a stale duplicate stops riding every future report. Path
+    must be under the tests dir. One AC = one feature file: prefer
+    re-authoring with overwrite=true on the same feature_path over authoring
+    a sibling and removing it later."""
+    return core.remove_feature(path, workspace=_ws(workspace))
+
+
+@_tool()
 def probe_page(url: str, click: list[str] | None = None,
                do: list[str] | None = None,
                search: str | None = None, suggest: str | None = None,

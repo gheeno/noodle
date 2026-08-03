@@ -2763,6 +2763,30 @@ def list_scenarios(
 
 
 @app.command()
+def remove(
+    path: str = typer.Argument(..., help="Workspace-relative .feature path to delete (see `noodle list`)"),
+    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    as_json: bool = typer.Option(False, "--json", help="Result as JSON"),
+):
+    """Remove a superseded authored feature: the file, its compiled POM
+    sidecar, its accumulated Allure results, and its intent contract
+    (NOOD_0230)."""
+    from noodle.repl import core
+    res = core.remove_feature(path, workspace=workspace)
+    if as_json:
+        _json_out(res)
+        raise typer.Exit(0 if res.get("ok") else 1)
+    if not res.get("ok"):
+        typer.echo(f"✗ {res.get('error')}")
+        raise typer.Exit(1)
+    for f in res["removed"]:
+        typer.echo(f"  removed {f}")
+    if res.get("results_purged"):
+        typer.echo(f"  purged {res['results_purged']} stale result(s) — "
+                   "regenerate the report to drop it from the served view")
+
+
+@app.command()
 def steps(
     keyword: list[str] = typer.Argument(None, help="Filter(s) — each matches the step text, its section, or its action type (e.g. 'clipboard'). Several keywords = one call, union of hits (NOOD_0169: a reviewed session paid 10 calls for 10 words)"),
 ):
