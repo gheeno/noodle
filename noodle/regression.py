@@ -88,6 +88,21 @@ PROMPTS = [
 10. Verify "Thanks for your order"
 11. Verify "Turbo Widget"
 12. Verify "$19.99\""""},
+    # NOOD_0230 (F0) — the search→pick→add→verify shape, the flakiest of the
+    # by-hand drill cases: three identical live-retail runs gave two distinct
+    # failures and a green, because its only host was a live, personalized
+    # grid. This is the same flow on the fixture's deterministic grid, so the
+    # pick binding, the add_to lowering and the destination-click dedup
+    # (NOOD_0230 F4 — one cart click, settle immediately before it) are
+    # covered by the gate on every machine. The wording mirrors the drill's
+    # TC4 on purpose: loose, ordinal, anaphoric.
+    {"id": "tc5_search_pick_add", "mode": "prompt",
+     "content": """1. Go to the URL {FIXTURE}/shop.html
+2. Search for gadget
+3. Click the first result
+4. Add it to the cart
+5. Click cart
+6. Verify: Gadget is added to cart"""},
 ]
 
 # Per-test-case ceilings — the definition of "not regressed": on time and
@@ -101,6 +116,31 @@ _DEFAULTS = {
 
 def budget() -> dict:
     return {k: float(os.getenv(env, d)) for k, (env, d) in _DEFAULTS.items()}
+
+
+def _keep_attempt(workspace: str, case_id: str, lap: int, res: dict) -> None:
+    """NOOD_0230 (F0) — preserve a failed attempt's evidence before the
+    re-author lap overwrites it. The TC4 postmortem had to reconstruct two
+    failures from a session transcript because every later lap wrote over the
+    workspace: the authoring payload and the probe snapshot are exactly the
+    artifacts a postmortem needs, and they cost nothing to keep. Opt-in via
+    NOODLE_REG_KEEP_ATTEMPTS=1 — advisory, never fails the case."""
+    if os.getenv("NOODLE_REG_KEEP_ATTEMPTS", "") != "1":
+        return
+    try:
+        import shutil
+
+        from noodle.reporting import paths as _paths
+        dest = Path(workspace) / "attempts" / f"{case_id}_lap{lap}"
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "payload.json").write_text(
+            json.dumps(res, indent=1, default=str), encoding="utf-8")
+        probe = (Path(workspace) / _paths.last_run_root(workspace)
+                 / "probe_goal.json")
+        if probe.is_file():
+            shutil.copy2(probe, dest / "probe_goal.json")
+    except OSError:
+        pass
 
 
 def _case(prompt: dict, workspace: str) -> dict:
@@ -125,6 +165,7 @@ def _case(prompt: dict, workspace: str) -> dict:
     res = core.author_test(**kw)
     reauthors = 0
     if not (res.get("author") or {}).get("ready"):
+        _keep_attempt(workspace, prompt["id"], 1, res)
         reauthors = 1
         res = core.author_test(**kw, overwrite=True)
     elapsed = time.monotonic() - t0

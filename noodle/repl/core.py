@@ -402,10 +402,18 @@ def _overlap_warnings(content: str, feat_dest: Path, app_dir: Path,
         return []
     named = "; ".join(f"'{n}' ({why})" for n, why in hits[:_cap])
     more = f" (+{len(hits) - _cap} more)" if len(hits) > _cap else ""
+    # NOOD_0230 — name the two remedies, not just the smell. The duplicate-
+    # feature incident forked one AC into two files because a repair re-author
+    # changed the scenario title (a new slug is a new file): the fix was
+    # always one field away, and this warning is where the reader is standing
+    # when they need it.
     return [f"overlaps existing feature(s) in this package — {named}{more}. "
             "One user flow belongs in ONE scenario: consider adding this "
             "test's check to that feature (anchored with `after:`) rather "
-            "than authoring a second feature for the same flow."]
+            "than authoring a second feature for the same flow. If this IS "
+            "that flow re-authored, re-send with feature_path pointing at "
+            "the existing file + overwrite: true; a superseded file is "
+            "removed with `noodle remove <path>`."]
 
 
 def _app_dir_for(feature_rel: str, workspace: str) -> Path | None:
@@ -1500,7 +1508,19 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         # NOOD_0156 — ordered navigation contract: probe EVERY requested URL
         # in order (one browser, state carries), interacting only on the last
         # — earlier URLs are setup navigation, not action pages.
-        nav_env = goal_mod.navigation_env(goal, app, base_url=base_url)
+        # NOOD_0230 — seed key derivation with the app's CURRENT env file so
+        # a key another feature pinned to a different URL is never repurposed
+        # (value-aware reuse; see navigation_env).
+        env_seed = {}
+        seed_path = app_dir / "resources" / f"{app}_environments.yaml"
+        if seed_path.is_file():
+            try:
+                env_seed = yaml.safe_load(
+                    seed_path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                env_seed = {}
+        nav_env = goal_mod.navigation_env(goal, app, base_url=base_url,
+                                          existing=env_seed)
         # NOOD_0192 — a pure-API goal has no page to probe: no browser is
         # launched here, and none is launched by the run either (@api). This
         # is the whole api wok's authoring path, and it costs one branch.
@@ -1632,7 +1652,15 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             env_map = yaml.safe_load(env_path.read_text(encoding="utf-8")) or {}
         except Exception:
             env_map = {}
-    env_map[app] = supplied_url
+    # NOOD_0230 — the app key is not this authoring's to re-point. When it
+    # already holds a DIFFERENT URL and this call's navigation rides its own
+    # minted key (navigation_env, value-aware), overwriting here would
+    # silently redirect every sibling feature's `{env:APP}` Given — the
+    # gate's own two fixture cases collided exactly this way.
+    prev_app_url = env_map.get(app) or env_map.get(app.upper())
+    if goal is None or not nav_env or prev_app_url is None \
+            or goal_mod.same_url(str(prev_app_url), supplied_url):
+        env_map[app] = supplied_url
     # NOOD_0156 — the navigation contract's ordered URLs live here; the
     # compiled feature carries only {env:KEY} references. NOOD_0209 — the
     # app's own key is already written above; re-adding it uppercase would
@@ -1806,10 +1834,17 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     # NOOD_0135 — URL fidelity: readiness must verify the URL a run will
     # actually resolve, not just that the key exists. A process env var or
     # environment_values override silently redirecting the run is a blocker.
-    resolved_url = env_after.get(app.upper())
-    if resolved_url != supplied_url:
+    # NOOD_0230 — verify the key the compiled feature ACTUALLY navigates
+    # with: value-aware reuse mints a navigation key away from the app key
+    # when a sibling feature already pinned that to a different URL, so
+    # comparing the app key here blocked every second-page feature of an
+    # app — the exact authorings the value-aware reuse exists to allow.
+    first_key = nav_env[0][0] if nav_env else app.upper()
+    first_url = normalize_url(nav_env[0][1]) if nav_env else supplied_url
+    resolved_url = env_after.get(first_key)
+    if resolved_url != first_url:
         blocking.append(
-            f"app URL mismatch — supplied '{supplied_url}' but '{app.upper()}' "
+            f"app URL mismatch — supplied '{first_url}' but '{first_key}' "
             f"resolves to '{resolved_url}' (an OS env var, environment_values, "
             "or another env file overrides the app package); align them before "
             "running")
@@ -2405,6 +2440,57 @@ def write_feature(path: str, content: str, *, overwrite: bool = False,
     if wok_tag_added:
         out["wok_tag"] = wok_tag_added
     return out
+
+
+def remove_feature(path: str, *, workspace: str = ".") -> dict:
+    """NOOD_0230 — delete a superseded authored feature AND everything that
+    would keep lying about it: its compiled POM sidecar, its accumulated
+    Allure results (which since NOOD_0229 outlive the run that wrote them —
+    a stale red would otherwise sit in every future report), and its intent
+    contract. The engine gap the duplicate-feature incident named: there was
+    no noodle verb for this, so cleanup meant a raw file removal that left
+    the results and the contract behind.
+
+    Path must stay inside tests_dir — same trust boundary as write_feature.
+    """
+    cfg = config.load(workspace)
+    tests_root = (Path(workspace) / cfg["tests_dir"]).resolve()
+    dest = (Path(workspace) / path).resolve()
+    if not dest.is_relative_to(tests_root):
+        return {"ok": False, "error": f"path must be under {cfg['tests_dir']}/"}
+    if dest.suffix != ".feature":
+        return {"ok": False, "error": "path must end in .feature"}
+    if not dest.is_file():
+        return {"ok": False, "error": f"{path} does not exist"}
+    ws = Path(workspace).resolve()
+    rel = dest.relative_to(ws).as_posix()
+    removed = [rel]
+    dest.unlink()
+    # the compiled POM sidecar (goal-mode naming: <stem>_pom.yaml)
+    pom = dest.parent.parent / "resources" / "pageobjects" \
+        / f"{dest.stem}_pom.yaml"
+    if pom.is_file():
+        pom.unlink()
+        removed.append(pom.relative_to(ws).as_posix())
+    # accumulated results for this feature, wherever this app reports to:
+    # the workspace's last run root, and the app package's own report/
+    # (NOOD_0086 reroute). last_run_root is already workspace-joined.
+    from noodle.reporting import paths as _paths
+    from noodle.reporting import scope as _scope
+    purged = 0
+    for results in {Path(_paths.last_run_root(workspace)) / "allure-results",
+                    dest.parent.parent / "report" / "allure-results"}:
+        if results.is_dir():
+            purged += _scope.purge(results, feature_files=[rel])
+    # the intent contract, so the path is authorable fresh
+    state = load_state(workspace)
+    contracts = state.get("intent_contracts") or {}
+    if contracts.pop(rel, None) is not None:
+        state["intent_contracts"] = contracts
+        save_state(state, workspace)
+    return {"ok": True, "removed": removed, "results_purged": purged,
+            "note": "already-served reports still show this feature until "
+                    "the next run regenerates them"}
 
 
 def probe_page(url: str, *, timeout_ms: int = 15000,

@@ -1163,6 +1163,58 @@ def infer_postcondition(goal: dict, ev: dict) -> dict:
 
 # --- intent provenance (NOOD_0156) -------------------------------------------
 
+def dest_openers(goal: dict, ev: dict) -> dict[int, int]:
+    """NOOD_0230 (F4) — {check index: action index} for every
+    item_in_destination check whose destination the goal's OWN next click
+    already opens.
+
+    An item_in_destination check emits its own observation navigation
+    (settle + destination click). When the goal also asks for that click —
+    the very next action after the check's anchor, or the flow's last action
+    for an unanchored check — both were emitted: the destination opened
+    twice, the second time AFTER the assertion, proving nothing and costing
+    ~20s a run on a live SPA (TC4, RC-4a). The explicit click is the opener:
+    the check emits after it, the settle rides immediately before it, and
+    the engine-added click is not emitted at all.
+
+    Deliberately adjacent-only: an action BETWEEN the anchor and the
+    matching click could change state the assertion depends on, so anything
+    but the immediate next action keeps today's shape."""
+    checks = goal.get("checks") or []
+    actions = goal.get("actions") or []
+    proven = ev.get("proven") or {}
+    out: dict[int, int] = {}
+    for ci, c in enumerate(checks):
+        dest = c.get("item_in_destination") if isinstance(c, dict) else None
+        if not dest or not isinstance(dest, str):
+            continue
+        canon = proven.get(f"destination:{dest}") or dest
+        after = c.get("after")
+        if after is None:
+            ai = len(actions) - 1
+        elif after == _START:
+            continue
+        else:
+            anchor_i = next((i for i, a in enumerate(actions)
+                             if isinstance(a, dict) and a.get("id") == after),
+                            None)
+            if anchor_i is None:
+                continue
+            ai = anchor_i + 1
+        if not (0 <= ai < len(actions)):
+            continue
+        a = actions[ai]
+        if not isinstance(a, dict) or a.get("do") != "click" \
+                or str(a.get("within") or "").strip():
+            continue
+        target = a.get("target") or ""
+        resolved = proven.get(f"click:{target}") or target
+        if _norm(resolved) == _norm(canon) or _norm(target) == _norm(canon) \
+                or _norm(target) == _norm(dest):
+            out[ci] = ai
+    return out
+
+
 def intent_summary(goal: dict, ev: dict) -> dict:
     """The three intent buckets the compiled test is built from — pure, for
     the author_test payload:
@@ -1212,9 +1264,13 @@ def intent_summary(goal: dict, ev: dict) -> dict:
                 "evidence": plan.get(
                     "evidence",
                     "click revealed the requested mutation control")})
-    for c in goal.get("checks") or []:
+    # NOOD_0230 (F4) — a destination the goal's own next click already opens
+    # is a REQUESTED action, not an engine-added prerequisite; claiming it
+    # here would double-count the very click compile_goal now deduplicates.
+    opened = set(dest_openers(goal, ev))
+    for ci, c in enumerate(goal.get("checks") or []):
         dest = c.get("item_in_destination") if isinstance(c, dict) else None
-        if dest:
+        if dest and ci not in opened:
             canon = (ev.get("proven") or {}).get(f"destination:{dest}")
             if canon:
                 prereqs.append({
@@ -1257,6 +1313,21 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
         elif do == "suggest":
             ok, evid = f'suggest:{a.get("term", "")}' in proven, "probe:typeahead"
         elif do == "pick":
+            b = bound.get(aid or "result") or {}
+            if b.get("rebound_from"):
+                # NOOD_0230 (F1-lite) — the pick's probe evidence (clicked
+                # and landed on one result) is NOT what the compiled steps
+                # use: the binding was re-bound to the card that carries the
+                # add action, and the pick compiles to no step at all. The
+                # contract the user asked for is not what this entry
+                # verified, so it must not count toward intent_verified.
+                trace.append({
+                    "requirement": f"pick {a.get('target') or ''}".strip(),
+                    "node": f"actions[{i}]",
+                    "evidence": "probe:search-results (re-bound to "
+                                f'"{b.get("caption", "")}")',
+                    "ok": False})
+                continue
             ok, evid = (aid or "result") in bound, "probe:search-results"
         elif do == "add_to":
             key = aid or f"add_to:{a.get('destination', '')}"
@@ -1838,10 +1909,22 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
         pre += 1
     bound = ev.get("bound_targets") or {}
     captions = {k: v.get("caption", "") for k, v in bound.items()}
+    # NOOD_0230 (F4) — checks whose destination the goal's own next click
+    # already opens. That click serves as the observation navigation: the
+    # check emits AFTER it, the settle rides immediately before it, and the
+    # engine adds no second destination click (the duplicate ran after the
+    # assertion, proving nothing at ~20s a lap on a live SPA).
+    _openers = dest_openers(goal, ev)
+    _moved = set(_openers)
+    _opener_checks: dict[int, list[int]] = {}
+    for _ci, _ai in _openers.items():
+        _opener_checks.setdefault(_ai, []).append(_ci)
 
-    def _emit_check(c: dict):
+    def _emit_check(c: dict, skip_opener: bool = False):
         dest = c.get("item_in_destination") if "item_in_destination" in c \
             else None
+        if dest and skip_opener:
+            dest = None            # the goal's own click just opened it
         if dest:
             # Observation navigation, not user intent: the destination must be
             # opened to verify the result there — provenance lives in
@@ -1879,8 +1962,9 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
                                f'  css: {_yaml_str(rsum["selector"])}'])
 
     def _anchored(aid):
-        for c in checks:
-            if aid is not None and c.get("after") == aid:
+        for ci, c in enumerate(checks):
+            if aid is not None and c.get("after") == aid \
+                    and ci not in _moved:
                 _emit_check(c)
 
     # NOOD_0212 — picks whose add_to bound the results-page card action. Their
@@ -1927,7 +2011,7 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
         if c.get("after") == _START:
             _emit_check(c)
 
-    for a in actions[pre:]:
+    for ai, a in enumerate(actions[pre:], start=pre):
         if a["do"] == "api":
             _append_api(a)
             _anchored(a.get("id"))
@@ -1959,10 +2043,7 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
                         ctrl["name"],
                         ctrl.get("pom") or [f'{ctrl["name"]}:',
                                             f'  css: {_yaml_str(ctrl["selector"])}'])
-            if a.get("id") is not None:
-                for c in checks:
-                    if c.get("after") == a["id"]:
-                        _emit_check(c)
+            _anchored(a.get("id"))
             continue
         if a["do"] == "pick":
             # NOOD_0156 — the bound target: one concrete result caption from
@@ -1981,11 +2062,7 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
                 if b.get("selector"):
                     pom_entries.setdefault(
                         cap, [f"{cap}:", f'  css: {_yaml_str(b["selector"])}'])
-            aid = a.get("id")
-            if aid is not None:
-                for c in checks:
-                    if c.get("after") == aid:
-                        _emit_check(c)
+            _anchored(a.get("id"))
             continue
         if a["do"] == "suggest":
             # NOOD_0141 — the canonical probe-captured spelling wins over the
@@ -1999,11 +2076,7 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
                                   f'include "{canon}"'))
             steps.append(("When", f'User selects the "{canon}" suggestion '
                                   f'for "{a["term"]}"'))
-            aid = a.get("id")
-            if aid is not None:
-                for c in checks:
-                    if c.get("after") == aid:
-                        _emit_check(c)
+            _anchored(a.get("id"))
             continue
         ctrl = None
         # NOOD_0188 — every TARGETED action resolves through the probe's
@@ -2040,6 +2113,12 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
                         a["target"],
                         [{"controls": list(ev.get("controls", {}).values())}])
         target = ctrl["name"] if ctrl else a.get("target", "")
+        if ai in _opener_checks:
+            # NOOD_0230 (F4) — this click IS the destination-open for an
+            # item_in_destination check. Settle FIRST (NOOD_0156/NOOD_0218:
+            # navigating away the instant the mutation click returns aborts
+            # its request in flight), then the goal's own click navigates.
+            steps.append(("When", "User waits for the network to be idle"))
         steps.append(("When", _action_step(a, target)))
         # POM every goal action target with a stable selector — NOT gated on
         # needs_pom (which is about probe presentation, not a runtime-lookup
@@ -2059,11 +2138,9 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
                 ctrl["name"], ctrl.get("pom")
                 or [f'{_yaml_str(ctrl["name"])}:',
                     f'  css: {_yaml_str(ctrl["selector"])}'])
-        aid = a.get("id")
-        if aid is not None:
-            for c in checks:
-                if c.get("after") == aid:
-                    _emit_check(c)
+        for ci in _opener_checks.get(ai, ()):
+            _emit_check(checks[ci], skip_opener=True)
+        _anchored(a.get("id"))
 
     # NOOD_0158 — an unanchored check observes the END state. These used to be
     # emitted BEFORE the action loop, so a goal whose checks omitted `after`
@@ -2072,8 +2149,8 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
     # run and a re-author with `after` added. A check is what proves the goal
     # worked; nothing to prove exists until the actions have run. Placement
     # before an action stays expressible — that is what `after: <id>` is for.
-    for c in checks:
-        if c.get("after") is None:
+    for ci, c in enumerate(checks):
+        if c.get("after") is None and ci not in _moved:
             _emit_check(c)
 
     # NOOD_0200 — a tag-safe slug of the scenario names the compiled POM's

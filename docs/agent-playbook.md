@@ -200,6 +200,17 @@ actually wrote it); `append_to` adds a scenario without regenerating the
 rest; `noodle task "update the <x> test …"` routes to the overwrite path
 from plain English.
 
+**The feature path is the test's identity; the scenario title is cosmetic**
+(NOOD_0230). With no `feature_path`, the filename is slugged from the title —
+so a repair re-author that rewords the title writes a NEW file beside the old
+one, and one AC becomes two features (the stale one going red on every future
+package run). Every repair re-author is `overwrite: true` on the SAME
+returned path, however the scenario is retitled. A file that did get
+superseded is removed with `noodle remove <path>` (file + compiled POM +
+accumulated results + intent contract, in one verb). Before claiming a
+package-level green, reconcile `report_scope`: `features_run_count` must
+equal `features_in_app`, and the payload's note says so when it doesn't.
+
 **Fresh or scaffold-only workspace** → author from a `goal` (§2), and anchor
 each check to the page it was observed on: `after: start` for the landing
 page, `after: <action id>` for the page an action lands on, unanchored for

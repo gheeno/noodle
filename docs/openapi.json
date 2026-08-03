@@ -1382,6 +1382,72 @@
         }
       }
     },
+    "/api/tools/remove_feature": {
+      "post": {
+        "summary": "Remove a superseded authored feature (NOOD_0230): the .feature file,",
+        "description": "Remove a superseded authored feature (NOOD_0230): the .feature file,\nits compiled POM sidecar, its accumulated Allure results and its intent\ncontract \u2014 so a stale duplicate stops riding every future report. Path\nmust be under the tests dir. One AC = one feature file: prefer\nre-authoring with overwrite=true on the same feature_path over authoring\na sibling and removing it later.",
+        "operationId": "remove_feature",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "path": {
+                    "title": "Path",
+                    "type": "string"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "title": "remove_featureArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
     "/api/tools/probe_page": {
       "post": {
         "summary": "Scout a page BEFORE authoring \u2014 fold ALL discovery into this one call;",

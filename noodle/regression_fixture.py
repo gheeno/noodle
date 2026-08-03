@@ -13,6 +13,18 @@ pages served from an ephemeral localhost port for the benchmark's lifetime:
         → checkout (three labelled fields, a commit click)
           → confirmation (phrase + item + amount, rendered from state)
 
+NOOD_0230 (F0) — a second leg, the search→pick→add→verify shape. Three
+identical live-retail runs of that flow gave three different answers (two
+distinct failures, one green) because the only host for it was a live,
+personalized, inventory-driven grid. This leg is that flow on a
+deterministic grid, so the pick binding, the mutation lowering and the
+destination-click dedup are exercised by the gate on every machine:
+
+  shop (search box)
+    → results (three repeated-structure result cards, "3 results" summary)
+      → product page (an "add to cart" control + a "cart" nav link)
+        → cart (renders the added item from state)
+
 Everything is synthetic (domain-agnostic rule); state carries through
 localStorage exactly like a real shop session. python -m http.server is
 banned for REPORTS (NOOD_0124) — this serves the system under test, the
@@ -75,7 +87,64 @@ document.getElementById('line').textContent =
   (localStorage.getItem('price')||'');
 </script></body></html>
 """,
+    # NOOD_0230 (F0) — the search leg. Result cards are the universal shape
+    # build_result_items extracts (repeated anchor class, distinct hrefs,
+    # captioned); the product page carries the mutation control the add_to
+    # lowering proves; the cart page renders the added item from state so
+    # the identity assertion has something real to find.
+    "shop.html": """<!doctype html><html><head>
+<title>Widget Depot Shop</title></head><body>
+<h1>Widget Depot Shop</h1>
+<form action="results.html" method="get">
+<input type="search" name="q" aria-label="Search products"
+ placeholder="Search products">
+<button type="submit">Search</button>
+</form></body></html>
+""",
+    "results.html": """<!doctype html><html><head>
+<title>Results — Widget Depot Shop</title>
+<style>.result{border:1px solid #999;padding:1em;margin:.5em}</style>
+</head><body>
+<h1>Search results</h1>
+<p id="result-count">3 results</p>
+<div class="result">
+<a class="result-link" href="gadget_alpha.html">Alpha Gadget</a>
+<p>$7.99</p></div>
+<div class="result">
+<a class="result-link" href="gadget_beta.html">Beta Gadget</a>
+<p>$12.99</p></div>
+<div class="result">
+<a class="result-link" href="gadget_gamma.html">Gamma Gadget</a>
+<p>$3.99</p></div>
+</body></html>
+""",
+    "cart.html": """<!doctype html><html><head>
+<title>Cart — Widget Depot Shop</title></head><body>
+<h1>Your cart</h1>
+<p id="cart-line"></p>
+<script>
+var i = localStorage.getItem('picked_item');
+document.getElementById('cart-line').textContent =
+  i ? i + ' — ' + (localStorage.getItem('picked_price')||'')
+    : 'Your cart is empty';
+</script></body></html>
+""",
 }
+
+_PRODUCT_PAGE = """<!doctype html><html><head>
+<title>{name} — Widget Depot Shop</title></head><body>
+<h1>{name}</h1><p>{price}</p>
+<button id="add-to-cart"
+ onclick="localStorage.setItem('picked_item','{name}');
+          localStorage.setItem('picked_price','{price}')">add to cart</button>
+<p><a href="cart.html">cart</a></p>
+</body></html>
+"""
+
+for _name, _price, _page in (("Alpha Gadget", "$7.99", "gadget_alpha.html"),
+                             ("Beta Gadget", "$12.99", "gadget_beta.html"),
+                             ("Gamma Gadget", "$3.99", "gadget_gamma.html")):
+    PAGES[_page] = _PRODUCT_PAGE.format(name=_name, price=_price)
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):

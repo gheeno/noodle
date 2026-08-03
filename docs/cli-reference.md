@@ -368,6 +368,26 @@ $ noodle list --json --query login        # names, for the matches only
 {"tests": [{..., "scenarios": ["User logs in"]}], "note": "1 feature(s) matching 'login'."}
 ```
 
+## noodle remove
+
+Remove a superseded authored feature — the file, its compiled POM sidecar,
+its accumulated Allure results (NOOD_0229 retention would otherwise keep a
+stale red in every future report), and its intent contract (NOOD_0230).
+
+```
+noodle remove PATH [OPTIONS]
+```
+
+| Flag | Default | Purpose | When to use |
+|---|---|---|---|
+| `PATH` | required | Workspace-relative `.feature` path (see `noodle list`) | Must be under the tests dir. |
+| `--workspace`, `-w` | `.` | Workspace dir | See top of doc. |
+| `--json` | off | Result as JSON | Scripting/agents. |
+
+One AC = one feature file: prefer re-authoring with `overwrite: true` on the
+same `feature_path` over authoring a sibling and removing it later. Already-
+served reports still show the feature until the next run regenerates them.
+
 ## noodle steps
 
 Search the built-in step dictionary and print matching example steps.

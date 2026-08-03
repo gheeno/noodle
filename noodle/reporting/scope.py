@@ -327,6 +327,17 @@ def report_scope(results_dir=None, features_root=None) -> dict:
             f"the report covers {out['features_in_report']} of "
             f"{out['features_in_app']} feature file(s) in the package — run "
             "the package for a combined report")
+    # NOOD_0230 — the reconciliation the duplicate-feature incident needed
+    # said out loud: a green run over PART of the package is not a package
+    # green. The clause above compares the report; this one compares the RUN,
+    # which is what a caller is about to make a claim from.
+    if out.get("features_in_app", 0) > out["features_run_count"] \
+            and out["features_run_count"]:
+        notes.append(
+            f"this run verified {out['features_run_count']} of the "
+            f"{out['features_in_app']} feature file(s) in this package — a "
+            "green here does not cover the rest (run the package, or remove "
+            "a superseded feature with `noodle remove`)")
     if notes:
         out["note"] = "; ".join(notes)
     return out
