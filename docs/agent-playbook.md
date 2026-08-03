@@ -174,9 +174,11 @@ app being added to an existing workspace), skip straight to Step 2.
 
 ### Reuse before you author (NOOD_0163)
 
-One glob — `<workspace>/noodle_tests/**/features/*.feature`, or
-`list_tests(query="<app>")` / `noodle list --query <app>` — decides the
-cheaper of two routes:
+One call — `list_tests(query="<app>")` / `noodle list --query <app>` (the
+query implies `--json`, NOOD_0224) — decides the cheaper of two routes. It
+is step 0 of the green path, before any probe: the reviewed NOOD_0224
+session spent 103 AIC re-authoring a flow a sibling suite already had
+green.
 
 **The workspace already has features** (anything beyond the scaffolded
 `sample_app/`) → reuse, don't re-author.
@@ -817,7 +819,8 @@ ten red runs:
    through it with `--do` (NOOD_0144).** `--do "enter <value> in <field>"
    / "select <option> from <dropdown>" / "click <name>"` / (NOOD_0222)
    `"click <name> in the row containing <text>"` for card grids —
-   resolved by the runtime's own row-climb, so probe and run agree —
+   resolved by the runtime's own row-climb, so probe and run agree, and
+   `within <text>` is read as that same row scope (NOOD_0224) —
    (repeatable, ordered, run after any `--click` reveals) executes the REAL
    transaction — fill the config field, pick the option, press Save — and
    snapshots the delta after every action, so the post-save state
@@ -1265,6 +1268,20 @@ STOPPED in, not the requested end state
 Structured consumers get `do_requested` / `do_completed`, plus `do_skipped`
 when `act_on="last"` made a setup URL snapshot-only. `4/4` is the
 confirmation; anything less is the reason to stop rewording.
+
+The related trap is the opposite one: the whole chain written as ONE `--do`
+string. `--do "click add to cart in the row containing <item>, click proceed
+to checkout"` used to parse as a SINGLE row-scoped click whose caption was
+`<item>, click proceed to checkout`, and the run died on "No row containing
+… found" — a wording failure that looked like a page failure and cost a
+reviewed session eight probes. NOOD_0224 splits a `--do` item on a comma
+followed by one of the grammar's own verbs (`click`/`enter`/`select`/
+`switch to`, optionally after `then`/`and`) before matching anything, and
+reads `within <text>` as `in the row containing <text>`. A comma inside a
+value or caption (`"enter 12 Main St, Apt 4 in address"`) never splits — no
+verb follows it. Both rewrites are reported in `do_split_note` (value-free
+labels), because the deltas below it are keyed to what was RUN, not to what
+was asked for.
 
 ### 3. A schema rejection → read `--vocabulary` once, never guess twice
 

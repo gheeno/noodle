@@ -2654,10 +2654,15 @@ def list_scenarios(
     path: str = typer.Argument(None, help="Path to scan (default: workspace tests_dir)"),
     workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Feature/tag inventory as JSON, no behave dry-run — scenario names only with --query (NOOD_0162)"),
-    query: str = typer.Option(None, "--query", help="With --json: substring match over path/feature/scenario/tag; matching features carry their scenario names"),
+    query: str = typer.Option(None, "--query", help="Substring match over path/feature/scenario/tag; matching features carry their scenario names (implies --json)"),
 ):
     """List all discovered scenarios without running them."""
-    if as_json:
+    # NOOD_0224 — --query alone used to fall through to the behave dry-run,
+    # which ignores it: the reuse check is step 0 of the green path, and a
+    # step-0 flag that silently returns the WHOLE suite reads as "nothing to
+    # reuse here". The query is only implemented on the json path, so ask for
+    # it rather than dropping the caller's filter.
+    if as_json or query:
         from noodle.repl import core
         _json_out(core.list_tests(workspace, query=query))
         return
@@ -2821,7 +2826,7 @@ def probe(
     full: bool = typer.Option(False, "--full", help="With --json, the RAW uncapped payload"),
     timeout: int = typer.Option(15000, "--timeout", help="Per-page load timeout in ms"),
     click: list[str] = typer.Option(None, "--click", help="Reveal control to click before a fresh snapshot (name or raw selector; repeatable, never mutating)"),
-    do_: list[str] = typer.Option(None, "--do", help="Transaction after --click: 'enter <v> in <field>', 'select <opt> from <dropdown>', 'click <name>[ in the row containing <text>]', 'switch to <new|original> tab'. REAL actions, deltas under revealed; {env:KEY} resolves"),
+    do_: list[str] = typer.Option(None, "--do", help="Transaction after --click: 'enter <v> in <field>', 'select <opt> from <dropdown>', 'click <name>[ in the row containing <text>]', 'switch to <new|original> tab'; chain with ', <verb>'. REAL, deltas under revealed; {env:KEY} resolves"),
     search: str = typer.Option(None, "--search", help="Run the site search and summarize the RESULTS page: new controls, 'NN results' element, count assertion"),
     suggest: str = typer.Option(None, "--suggest", help="Type this partial term per-character and capture the TYPEAHEAD rows + copy-ready steps"),
     pick: str = typer.Option(None, "--pick", help="With --search: bind 'any matching result' to ONE caption and snapshot it (ambiguity refuses); '*' = any"),

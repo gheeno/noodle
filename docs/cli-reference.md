@@ -525,6 +525,18 @@ $ noodle probe https://app.example/login --click "trigger settings panel" \
 ```
 A `--do` action that fails lands in `do_warnings` the same advisory way.
 
+One `--do` string may carry the whole chain (NOOD_0224): it is split on a
+comma followed by one of the grammar's own verbs — `click`, `enter`,
+`select`, `switch to`, with an optional `then`/`and` — before anything is
+matched, so `--do "click add to cart in the row containing <item>, click
+proceed to checkout"` is two actions, not one row caption that no page has.
+A comma *inside* a value or a row caption (`"enter 12 Main St, Apt 4 in
+address"`, `"click add in the row containing Pizza, Large"`) never splits,
+because no verb follows it. `within` is read as `in the row containing`
+(`"click add to cart within <item>"`), so the preposition agents reach for
+resolves the same way the grammar spells it. Either rewrite is reported in
+`do_split_note` — value-free labels, the same ones the payload uses.
+
 Space/comma-separate several URLs to probe them in one browser session
 (`noodle probe "https://a.example/login https://a.example/home"`). MCP
 equivalent: `probe_page(url, click=[...], do=[...])`.
