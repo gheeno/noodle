@@ -2772,16 +2772,112 @@ def unrouted_targets(blocking: list[str]) -> list[str]:
             if any(m in b for m in _UNROUTED_MARKS)]
 
 
+# NOOD_0223 — the two ACTION blocker families a repair can cure without
+# re-probing anything. Both are cases where the evidence pass already knows
+# the answer and only ever handed back the question.
+#
+#   reveal  — the control exists but is behind a trigger the goal never
+#             clicks. The blocker NAMES the trigger, so the fix is a
+#             prerequisite click, not a re-author by a human.
+#   target  — the name is simply not the page's name for the control
+#             ("add to order" vs "Add to cart"). _near_miss already ranked
+#             the probed vocabulary; taking its top pick is the same move
+#             NOOD_0218 made for see-checks, one field earlier.
+_REVEAL_HIDDEN = re.compile(r'^(\w+) "(.+?)": hidden until "(.+?)" is opened')
+_REVEAL_DISCOVERED = re.compile(
+    r'^(\w+) "(.+?)": only found via automatic discovery '
+    r'\(revealed by "(.+?)"\)')
+_ACTION_MISS = re.compile(
+    r'^(\w+) "(.+?)": no probed control matches that name')
+
+
+def _action_index(actions: list, do: str, target: str, used: set) -> int | None:
+    """The first not-yet-repaired action matching a blocker's `do "target"`."""
+    for i, a in enumerate(actions):
+        if i in used or not isinstance(a, dict):
+            continue
+        if str(a.get("do")) == do and _norm(a.get("target")) == _norm(target):
+            return i
+    return None
+
+
+def _repair_actions(goal: dict, blocking: list[str]) -> tuple[list, dict, int]:
+    """(actions, changes, matched) — `goal`'s actions with every curable
+    reveal/near-miss blocker applied. `matched` counts the blocking lines
+    consumed, so the caller can insist that NOTHING was left unexplained
+    before it offers the repair."""
+    actions = list((goal or {}).get("actions") or [])
+    pre_click: dict[int, str] = {}
+    retarget: dict[int, str] = {}
+    used, matched = set(), 0
+    for b in blocking or []:
+        m = _REVEAL_HIDDEN.match(b) or _REVEAL_DISCOVERED.match(b)
+        if m:
+            i = _action_index(actions, m.group(1), m.group(2), set())
+            if i is None or i in pre_click:
+                continue
+            # The trigger a click already opens is not a missing prerequisite;
+            # the evidence pass would not have blocked. Guard anyway — a
+            # duplicated click is a wasted step at run time.
+            if _reveal_click_before(actions, actions[i], m.group(3)):
+                continue
+            pre_click[i] = m.group(3)
+            matched += 1
+            continue
+        m = _ACTION_MISS.match(b)
+        if m and (near := _NEAR_MISS_HIT.search(b)):
+            i = _action_index(actions, m.group(1), m.group(2), used)
+            if i is None:
+                continue
+            used.add(i)
+            retarget[i] = near.group(1)
+            matched += 1
+    if not (pre_click or retarget):
+        return actions, {}, 0
+    out = []
+    for i, a in enumerate(actions):
+        if i in pre_click:
+            out.append({"do": "click", "target": pre_click[i]})
+        out.append({**a, "target": retarget[i]} if i in retarget else a)
+    changes = {}
+    if pre_click:
+        changes["prerequisite_clicks"] = [
+            {"click": t, "before": actions[i].get("target")}
+            for i, t in sorted(pre_click.items())]
+    if retarget:
+        changes["rewritten_targets"] = [
+            {"from": actions[i].get("target"), "to": t}
+            for i, t in sorted(retarget.items())]
+    return out, changes, matched
+
+
 def repair_goal(goal: dict, blocking: list[str]) -> dict | None:
-    """A ready-to-send copy of `goal` with the see-checks the probe could not
-    prove REWORDED to the near-miss the probe did find (NOOD_0218) — or
-    dropped when there is no near-miss — offered ONLY when those are the
-    goal's only blockers and at least one check survives. NOOD_0213: the
-    engine still never drops an asked-for verify itself (NOOD_0212 — the
-    wording rule that tried ate real assertions); dropping stays an explicit
-    caller choice, now one field away instead of a hand-rebuilt goal costing
-    a full lap. A reword is not a drop: the assertion survives, in the
-    page's own wording, and `rewritten_checks` says so out loud."""
+    """A ready-to-send copy of `goal` with every blocker the probe's own
+    evidence can cure already applied — offered ONLY when those are the
+    goal's ONLY blockers and at least one check survives.
+
+    Four shapes, in ascending order of how much they cost the contract:
+
+    * `rewritten_targets` (NOOD_0223) — an action target reworded to the
+      probed control name. Costs nothing: same action, page's vocabulary.
+    * `prerequisite_clicks` (NOOD_0223) — a click INSERTED before an action
+      whose control the probe found hidden behind a named trigger. Costs
+      nothing either: it adds the step a human would have taken, and the
+      probe is what proved the trigger opens it.
+    * `rewritten_checks` (NOOD_0218) — a see-check reworded to the probe's
+      near-miss. The assertion survives, in the page's wording.
+    * `dropped_checks` — no near-miss existed. This is the only shape that
+      weakens the contract, and callers force `intent_verified: false` on it.
+
+    NOOD_0213: the engine still never drops an asked-for verify on its own
+    initiative (NOOD_0212 — the wording rule that tried ate real assertions);
+    dropping stays an explicit caller choice, now one field away instead of a
+    hand-rebuilt goal costing a full lap.
+
+    ponytail: the near-miss top pick is difflib's, cutoff 0.6 — high enough
+    that "add to order" reaches "Add to cart" and low enough that two
+    unrelated controls do not. A reword is always announced, never silent, so
+    a wrong pick shows up in the payload rather than in a mystery step."""
     checks = (goal or {}).get("checks") or []
     dropped, rewritten, keep, matched = [], [], [], 0
     for c in checks:
@@ -2797,16 +2893,73 @@ def repair_goal(goal: dict, blocking: list[str]) -> dict | None:
             keep.append({**c, "see": m.group(1)})
         else:
             dropped.append(c["see"])
-    if not (dropped or rewritten) or not keep \
+    actions, act_changes, act_matched = _repair_actions(goal, blocking)
+    matched += act_matched
+    if not (dropped or rewritten or act_changes) or not keep \
             or matched != len(blocking or []):
         return None
-    return {"goal": {**goal, "checks": keep},
+    notes = []
+    if act_changes.get("rewritten_targets"):
+        notes.append("action target(s) reworded to the probed control name")
+    if act_changes.get("prerequisite_clicks"):
+        notes.append("the prerequisite click(s) the probe proved open the "
+                     "hidden control, inserted before it")
+    if rewritten:
+        notes.append("unprovable text check(s) reworded to the probe's "
+                     "near-miss")
+    if dropped:
+        notes.append("text check(s) with no near-miss dropped — or fix their "
+                     "wording to probed evidence and keep them")
+    # `actions` is set only when something in it changed: a goal that never
+    # had an actions key must not acquire an empty one here (validate reads
+    # presence, not just contents).
+    return {"goal": {**goal, "checks": keep,
+                     **({"actions": actions} if act_changes else {})},
             "dropped_checks": dropped,
             **({"rewritten_checks": rewritten} if rewritten else {}),
-            "note": "re-author with repair.goal (overwrite=true): unprovable "
-                    "text check(s) are reworded to the probe's near-miss "
-                    "where one exists and dropped otherwise — or fix their "
-                    "wording to probed evidence and keep them"}
+            **act_changes,
+            "note": "re-author with repair.goal (overwrite=true): "
+                    + "; ".join(notes)}
+
+
+def to_spec_yaml(goal: dict, unresolved: list[dict] | None = None) -> str:
+    """NOOD_0223 — the accepted goal as a paste-ready `--spec` document, with
+    every clause the engine could NOT place carried as a comment above it.
+
+    A blocked prompt used to hand back three things a caller had to reconcile
+    by hand: a free-text error, a list of `assumptions`, and a `goal_partial`
+    dict in JSON. Reconciling them meant re-typing the whole request in
+    another notation and hoping the retype matched what the engine had already
+    understood — the exact drift this ticket exists to remove. This emits ONE
+    document instead: valid YAML on its own (the comments are comments), so
+    the repair is "fill in the commented lines and send it back", not "write
+    the goal again".
+
+    The output is a spec, not a bare goal, because a spec is what `--spec`
+    takes; navigation[0] derives app_name/base_url/feature_path (NOOD_0213),
+    so nothing else has to be supplied.
+
+    ponytail: unresolved clauses land as a header block rather than inline at
+    their step position — the partial goal does not carry a clause→action
+    index, and inventing one would put a rewrite hint next to the wrong step,
+    which is worse than putting it at the top."""
+    import yaml as _yaml
+    head = []
+    for u in unresolved or []:
+        step = str(u.get("clause") or "").replace("-", " ").strip() or "clause"
+        head.append(f'# UNRESOLVED {step}: {u.get("text") or ""!r}'.rstrip())
+        if reason := u.get("reason"):
+            head.append(f"#   reason: {reason}")
+        if sug := u.get("suggested"):
+            head.append(f"#   suggested: {sug}")
+    if head:
+        head = [f"# {len(unresolved)} prompt step(s) are NOT in this goal — "
+                "add them below, then re-send:",
+                "#   noodle author --spec '<this document>' --run",
+                *head, "#"]
+    body = _yaml.safe_dump({"goal": goal or {}}, default_flow_style=False,
+                           sort_keys=False, allow_unicode=True)
+    return "\n".join([*head, body.rstrip()]) + "\n"
 
 
 # --- deterministic compiler --------------------------------------------------

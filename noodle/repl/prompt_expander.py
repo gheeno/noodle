@@ -1434,6 +1434,33 @@ def _rewrite_asks(clauses: list[dict],
                     for p in _drop_shared_noun(parts):
                         _emit(c, f"verify {_POSSESSIVE.sub('', p)}")
                     continue
+        # NOOD_0223 — narration that CARRIES its own expected values.
+        # _NARRATION (NOOD_0199) drops scene-setting prose, which is right
+        # until the sentence quotes the very strings the page must show: "the
+        # results page appears with these products: 'A' and 'B'" dropped both
+        # and authored a green test with ZERO assertions. The table form of
+        # the same brief (one value per `| cell |`) has compiled one check per
+        # value since NOOD_0199 — two notations for one intent disagreed, and
+        # the silent one won.
+        #
+        # Quoting is the escape hatch, exactly as NOOD_0221 settled it for the
+        # summary rule, and the guard is what keeps NOOD_0199 intact: only
+        # spans AFTER the narration verb count, because those are the values
+        # the narration introduces. A quote inside the lead names the
+        # instrument ('the "search" dropdown appears'), not page text, so that
+        # clause stays narration and is still dropped.
+        if (nar := _NARRATION.match(t)) \
+                and not any(rx.match(t) for _, rx in _VERBS):
+            members = [m.group("content")
+                       for m in _QUOTED_MEMBER.finditer(t[nar.end():])]
+            if members:
+                assumptions.append(
+                    f"step {c.get('line', '?')} '{t}': narration introducing "
+                    f"{len(members)} quoted value(s) — the framing is dropped, "
+                    "the quoted text is asserted")
+                for p in members:
+                    _emit(c, f'verify "{p}"')
+                continue
         if _BARE_CLICK.match(t) and len(t.split()) <= 6 \
                 and not any(rx.match(t) for _, rx in _VERBS):
             _emit(c, f"click {t}")

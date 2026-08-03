@@ -87,6 +87,100 @@ Sample:
 $ noodle run --tag smoke --headless
 ```
 
+### Workspace strict mode (NOOD_0223)
+
+Every file an author transaction writes — the `.feature`, the POM, the app's
+`environments.yaml` — is recorded with its sha256 in `.noodle/authored.json`.
+Secrets are deliberately excluded: filling a credential placeholder by hand is
+the documented workflow, not drift.
+
+Strict mode re-hashes those files before a run and **refuses to launch** if any
+changed underneath the engine, naming the file and the way back. It is off by
+default and arms two ways:
+
+```yaml
+# noodle.yaml
+workspace_strict: true
+```
+```
+$ NOODLE_WORKSPACE_STRICT=1 noodle run
+```
+
+Why it exists: a hand-edited feature is discarded by the next `author
+--overwrite`, contradicted by the next probe-derived POM, and cannot be
+regenerated — so a green run on one proves a file nobody can reproduce. It
+**detects and refuses; it cannot prevent** — this is not a security control,
+and nothing here stops a text editor. What it removes is the *silent* version.
+
+Untracked files never count as drift: a workspace scaffolded by `noodle init`
+ships sample features the engine never wrote, and a mode whose first act is to
+condemn the scaffold gets switched off before it catches a real edit.
+
+There is no `--workspace-strict` flag on purpose. `noodle run --help` is a
+capped always-on instruction surface ([NOOD_0159 ledger](llm-performance.md))
+with ~98 bytes of headroom; a Typer flag row costs ~250, so the flag would have
+been paid for by deleting guidance agents read on every call. The env var gives
+the same one-off ergonomics from the shell for free.
+
+## noodle ship
+
+Probe → author → run → serve, in one command, from raw acceptance criteria.
+
+```
+noodle ship "<raw AC>" [OPTIONS]
+```
+
+A thin alias for `noodle author --prompt <AC> --run --overwrite --auto-fix 1` —
+not a second pipeline. What it adds is a name for the finished outcome: a
+caller who wants "a green test from this AC" no longer needs to know the
+command is spelled `author`, nor which flags turn authoring into shipping.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `GOAL` (argument) | required | The AC — numbered plain-English steps, inline, a file path, or `-` for stdin (same grammar as `author --prompt`). |
+| `--auto-fix` | `1` | Engine-only self-heal laps allowed on a red run — see below. |
+| `--workspace`, `-w` | `.` | Workspace dir. |
+| `--json` | off | One structured payload for agents/CI. |
+
+Overwrite is on by default here, and that is the one real difference from
+`author`: re-shipping the same AC is the expected motion, and the blocked-
+authoring fix-in-place contract (NOOD_0129) leaves files behind that a
+non-overwriting retry would refuse.
+
+### `--auto-fix N` — the bounded self-heal lap (NOOD_0223)
+
+Available on `noodle author --run` too (default `0` there, `1` on `ship`).
+
+On a **red** run the engine may take up to N laps: re-derive the goal from the
+run's own failure evidence → re-probe → re-author (`overwrite`) → re-run. No
+user-side edit, no step suggestion to copy, no hand-written locator. The
+payload's `auto_fix.engine_edits` lists every file each lap rewrote, and the
+terminal prints the same audit trail — an engine that edits a test on your
+behalf owes you the list of what it edited.
+
+A lap runs **only** when every failure in the run classifies as test-side:
+
+| Auto-fixable | Never auto-fixed |
+|---|---|
+| `assertion-wording` — the page rendered a near twin; the check is reworded to it | `app-regression`, `app-rejected-action`, `mutation-failed` |
+| `locator-rot`, `wrong-action-target`, `ambiguous-item-click`, `blocked-by-overlay` — a fresh probe re-resolves them | `navigation-mismatch`, `test-data`, `environment-flap`, `config-gap`, `unknown` |
+
+One failure from the right-hand column and **no lap runs at all**, even for the
+fixable half of a mixed run: those are facts about the app or the environment,
+and re-authoring against them is the green-forcing retry loop
+`config.dev_fix_attempts` forbids. Papering over half a red run ships a green
+report for a broken app.
+
+Default 0 on `author` because a lap costs a probe plus a run — on a slow site
+the single most expensive thing the engine does.
+
+Sample:
+```
+$ noodle ship "1. go to https://app.example
+2. search for widgets
+3. verify the results show 'Widget Pro'"
+```
+
 ## noodle init
 
 Scaffold a test workspace.

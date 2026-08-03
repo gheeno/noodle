@@ -2695,11 +2695,88 @@ def _skeleton_steps(pg: dict) -> list[str]:
     return steps
 
 
+# NOOD_0223 — the probe names a permission prompt the way the browser does;
+# the goal schema names the dismissal. One map, so the skeleton it emits is
+# accepted verbatim by validate().
+_PERM_TO_DISMISSAL = {"geolocation": "location_prompt",
+                      "notifications": "notifications_prompt"}
+
+# NOOD_0223 — probe `do` triples → goal actions. The verbs are the same moves
+# in two notations; the map is here rather than in the goal module because
+# this is the probe's half of the contract.
+_DO_TO_GOAL = {
+    "click": lambda t, v: {"do": "click", "target": t},
+    "click_row": lambda t, v: {"do": "click", "target": t, "within": v},
+    "enter": lambda t, v: {"do": "enter", "target": t, "value": v},
+    "select": lambda t, v: {"do": "select", "target": t, "option": v},
+}
+
+
+def _goal_skeleton(pg: dict, do_actions: list | None) -> dict:
+    """NOOD_0223 — the probe's findings as a GOAL, not as Gherkin.
+
+    `_skeleton_steps` above emits a scenario opening in step sentences, which
+    is the older handoff: the agent pastes those into `feature_content` and
+    hand-writes the rest. Every hand-written line between the probe and the
+    run is a place the two can disagree — the probe proves control "Add to
+    cart" and the pasted step says "Add to Cart", and the failure surfaces a
+    run later.
+
+    This is the same evidence in the notation the engine COMPILES. Paste it
+    under `goal:` and `author --spec` re-derives the steps, the POM and the
+    selectors from the probe's own names, so there is nothing left to retype
+    and nothing to drift.
+
+    Emitted only on the `author_ready: true` path (the caller sets it), so
+    what it describes is a transaction the probe actually completed.
+
+    ponytail: `checks` carries only what the probe PROVED — expectation hits
+    and a results floor. It never guesses the assertion the goal wanted; an
+    invented check is the one thing worse than no check, because it passes."""
+    skel: dict = {}
+    if url := pg.get("url"):
+        skel["navigation"] = [url]
+    dismissals = [_PERM_TO_DISMISSAL[p] for p in pg.get("permission_prompts", [])
+                  if p in _PERM_TO_DISMISSAL]
+    if pg.get("popups_closed"):
+        dismissals.append("popups")
+    if dismissals:
+        skel["dismissals"] = list(dict.fromkeys(dismissals))
+    actions = []
+    sg = pg.get("suggest")
+    if sg and sg.get("suggestions"):
+        # the typeahead pick is ONE goal action; as steps it was two lines
+        actions.append({"do": "suggest", "term": sg["term"],
+                        "option": sg["suggestions"][0]})
+    sr = pg.get("search")
+    if sr and sr.get("term") and not sr.get("followed_from"):
+        actions.append({"do": "search", "term": sr["term"]})
+    for verb, target, value in do_actions or ():
+        if fn := _DO_TO_GOAL.get(verb):
+            actions.append(fn(target, value))
+    if actions:
+        skel["actions"] = actions
+    checks = [{"see": e["text"]} for e in pg.get("expect", []) if e.get("found")]
+    if sr and sr.get("results_summary"):
+        # NOOD_0125 — the stable floor: a probed count is a snapshot, "at
+        # least one result" is the claim that survives the catalogue changing.
+        checks.insert(0, {"count": "results", "min": 1})
+    if checks:
+        skel["checks"] = checks
+    return skel
+
+
 def _skeleton_lines(pg: dict, indent: str = "  ") -> list[str]:
     out = [f"{indent}scenario skeleton (paste, keep the steps the goal needs, "
            "add assertions from the exact texts above; <APP> = author_test's "
            "base_url_key):"]
     out += [f"{indent}  {s}" for s in _skeleton_steps(pg)]
+    if gs := pg.get("goal_skeleton"):
+        # NOOD_0223 — one line, because it is one paste: this is the same
+        # skeleton in the notation `author --spec` compiles, which needs no
+        # transcription and therefore cannot drift from what was probed.
+        out.append(f"{indent}goal skeleton (paste under `goal:` — "
+                   f"author --spec re-derives steps/POM): {json.dumps(gs)}")
     return out
 
 
@@ -2896,6 +2973,11 @@ def probe(urls: list[str], timeout_ms: int = 15000,
                         else:
                             _expect(page, pg, expect)
                     pg["author_ready"] = _author_ready(pg)
+                    # NOOD_0223 — the mutation-path contract: on the ready
+                    # path ONLY, the same findings in goal notation, so the
+                    # handoff to author is a paste and not a transcription.
+                    if pg["author_ready"]:
+                        pg["goal_skeleton"] = _goal_skeleton(pg, do_actions)
                     pages.append(pg)
                 except Exception as e:
                     errors.append({"url": url, "error": _origin_error(url, e)})
@@ -3725,6 +3807,11 @@ def _compact_page(pg: dict, max_controls: int, brief: bool = False) -> dict:
         if not out["author_ready"]:
             out["author_blocking"] = _author_blockers(pg, max_controls)
         out["skeleton"] = _skeleton_steps(pg)
+        # NOOD_0223 — rides the ready path only, by construction (the producer
+        # sets it there), so a blocked probe never hands over a "runnable"
+        # skeleton that isn't.
+        if pg.get("goal_skeleton"):
+            out["goal_skeleton"] = pg["goal_skeleton"]
     if pg.get("revealed"):
         # NOOD_0137 Fix A — discovered blocks are signals, not catalogs; the
         # per-block `truncated` note points at compact=False for the full dump.

@@ -298,6 +298,21 @@ def run(
         install_check.warn_if_stale(typer.echo)
     workspace, path = _resolve_run_target(workspace, path)
     cfg = config.load(workspace)
+    # NOOD_0223 — the strict gate runs before anything launches. Armed by
+    # `workspace_strict: true` in noodle.yaml or NOODLE_WORKSPACE_STRICT=1, NOT
+    # by a --flag: `noodle run --help` is a capped always-on surface with 98
+    # bytes of headroom and a Typer flag row costs ~250, so a flag here would
+    # have been funded by deleting guidance that agents read on every call.
+    # The env var gives the same one-off ergonomics from the shell for free.
+    from noodle import workspace_policy
+    _gate = workspace_policy.gate(workspace)
+    if not _gate["ok"]:
+        if json_out:
+            _json_out({"ok": False, "error": _gate["error"],
+                       "workspace_drift": _gate["drift"]})
+        else:
+            typer.echo(f"  ✗ {_gate['error']}")
+        raise typer.Exit(2)
     # No path given → run the workspace's tests dir. browser/headless fall
     # back to the workspace config when the flags aren't set.
     if path is None:
@@ -1933,6 +1948,74 @@ def install_extension(
                "files.associations that keeps this from colliding with Cucumber.")
 
 
+def _echo_auto_fix(audit: dict | None) -> None:
+    """NOOD_0223 — the self-heal laps, in the caller's terminal. An engine that
+    edits a test on your behalf owes you the list of what it edited."""
+    if not audit:
+        return
+    if audit.get("skipped"):
+        typer.echo(f"  · auto-fix: no lap — {audit['skipped']}")
+        return
+    for lap in audit.get("laps") or []:
+        what = "; ".join(f'"{w["from"]}" → "{w["to"]}"'
+                         for w in lap.get("rewritten_checks") or []) \
+            or lap.get("basis", "recompiled")
+        typer.echo(f"  ↻ auto-fix lap {lap['lap']}"
+                   f" [{', '.join(lap.get('categories') or [])}]: {what}")
+    for p in audit.get("engine_edits") or []:
+        typer.echo(f"    engine rewrote {p}")
+
+
+@app.command(short_help="One call: prompt → probe → author → run → serve, with N engine-only self-heal laps.")
+def ship(
+    goal: str = typer.Argument(..., help="The raw acceptance criteria — numbered plain-English steps, inline or a file path / '-' for stdin (same grammar as `author --prompt`)."),
+    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    auto_fix: int = typer.Option(1, "--auto-fix", help="Engine-only self-heal laps allowed on a red run (see `author --auto-fix`). Default 1."),
+    as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
+):
+    """NOOD_0223 — the whole pipeline as one command.
+
+    This is deliberately a THIN alias for
+    `noodle author --prompt <goal> --run --overwrite --auto-fix 1`, not a
+    second implementation: the pipeline it names has been one call since
+    NOOD_0137, and a parallel code path would be two things to keep honest.
+    What it adds is a name for the finished outcome — a caller who wants "a
+    green test from this AC" no longer has to know that the command for it is
+    spelled `author`, nor which three flags turn authoring into shipping.
+
+    Overwrite is on by default here, and that is the one real difference from
+    `author`: re-shipping the same AC is the expected motion, and the blocked
+    -authoring fix-in-place contract (NOOD_0129) leaves files behind that a
+    non-overwriting retry would refuse."""
+    from noodle.repl import core
+    text, _ = _arg_text(goal)
+    result = core.author_test(prompt=text, run_after_author=True,
+                              auto_fix=auto_fix, overwrite=True,
+                              workspace=workspace)
+    result = core.collapse_green(result, workspace=workspace)
+    if as_json:
+        _json_out(result)
+        raise typer.Exit(0 if result["ok"] else 1)
+    for a in (result.get("prompt_expansion") or {}).get("assumptions", []):
+        typer.echo(f"  ~ {a}")
+    a = result.get("author") if isinstance(result.get("author"), dict) else result
+    r = result.get("run") or {}
+    typer.echo(f"  {'✓' if a.get('ready') else '✗'} authored {a.get('feature')}")
+    for b in a.get("blocking", []):
+        typer.echo(f"    {b}")
+    if a.get("next"):
+        typer.echo(f"  → {a['next']}")
+    if r.get("skipped"):
+        typer.echo(f"  ✗ run skipped: {r['skipped']}")
+    elif r:
+        typer.echo(f"  {'✓' if r.get('ok') else '✗'} run: "
+                   f"{r.get('passed', 0)} passed, {r.get('failed', 0)} failed")
+        for u in (r.get("served") or {}).get("urls", []):
+            typer.echo(f"    {u}")
+    _echo_auto_fix(result.get("auto_fix"))
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
 @app.command()
 def author(
     spec: str = typer.Option(None, "--spec", help="A JSON or YAML spec: a file path, '-' for stdin, or the document itself inline (NOOD_0197 — no heredoc or temp file needed: --spec \"$(cat)\" style plumbing is never required, quote the YAML directly). Fields: app_name, base_url, feature_path, and EITHER feature_content (one Gherkin string; pom_content is likewise one YAML string, never a filename map) OR goal (NOOD_0137 constrained mode — the engine probes and compiles the feature/POM itself; see author_test). Optionally: environment_values, required_secret_keys, secret_values, overwrite."),
@@ -1942,6 +2025,7 @@ def author(
     run: bool = typer.Option(False, "--run", help="NOOD_0137 — atomic author+run: after a ready author, run once (headless, retries=0), serve both reports, and fail when 0 scenarios passed. Blocked authoring launches no browser."),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing .feature at the target path. A blocked authoring attempt leaves its files behind (fix-in-place contract) — without this flag the retry refuses. Spec key `overwrite` works too; prompt mode has only this flag."),
     vocabulary: bool = typer.Option(False, "--vocabulary", help="NOOD_0197 — print the goal vocabulary, a minimal example, and the prompt grammar as JSON, then exit. The schema on demand instead of discoverability-by-rejection (no more scraping --help for it)."),
+    auto_fix: int = typer.Option(0, "--auto-fix", help="NOOD_0223 — with --run, let the engine take up to N self-heal laps on a RED run: re-derive the goal from the run's own failure evidence, re-probe, re-author, re-run. Engine-only — no hand edits, no step suggestions to copy — and every file each lap rewrote is listed under auto_fix.engine_edits. Bounded and narrow: a lap runs ONLY when every failure classifies as test-side (assertion wording, locator rot, wrong/ambiguous target, overlay); one app-regression, app-rejected-action, test-data or environment failure in the run and no lap runs at all, because re-authoring against a broken app is a green-forcing retry. Default 0 — a lap costs a probe plus a run."),
 ):
     """NOOD_0128 — write a whole test package in one transaction (app package +
     environments.yaml + POM + feature + missing secret placeholders), validated,
@@ -1990,6 +2074,7 @@ def author(
         # NOOD_0198 — ...and the steps may arrive as a file path or on stdin
         prompt, _ = _arg_text(prompt)
         result = core.author_test(prompt=prompt, run_after_author=run,
+                                  auto_fix=auto_fix,
                                   overwrite=overwrite, workspace=workspace)
     else:
         # NOOD_0197 — --spec accepts the document inline: an argument
@@ -2032,7 +2117,7 @@ def author(
             environment_values=data.get("environment_values"),
             required_secret_keys=data.get("required_secret_keys"),
             secret_values=data.get("secret_values"),   # NOOD_0130 — write-only, never echoed
-            goal=data.get("goal"), run_after_author=run,
+            goal=data.get("goal"), run_after_author=run, auto_fix=auto_fix,
             overwrite=overwrite or bool(data.get("overwrite", False)),
             # NOOD_0156 — explicit expert override for the manual-fallback gate;
             # autonomous agents must never set it.
@@ -2069,6 +2154,10 @@ def author(
                        + (f" — {r['error']}" if r.get("error") else ""))
             for u in (r.get("served") or {}).get("urls", []):
                 typer.echo(f"    {u}")
+        # NOOD_0223 — the audit trail of what the ENGINE changed on the
+        # caller's behalf. Printed whether the laps helped or not: a silent
+        # self-heal is the same trust problem as a silent hand edit.
+        _echo_auto_fix(result.get("auto_fix"))
         raise typer.Exit(0 if result["ok"] else 1)
     if not result["ok"]:
         typer.echo(f"  ✗ {result['error']}")

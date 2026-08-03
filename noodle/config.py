@@ -70,6 +70,10 @@ DEFAULTS = {
     "reports_dir": "artifacts/reports",
     "browser": "chromium",
     "headless": True,
+    # NOOD_0223 — opt-in: refuse to run engine-authored files that were
+    # hand-edited (see workspace_policy). Off by default; a blocking gate the
+    # user did not ask for has no business in their project.
+    "workspace_strict": False,
 }
 # No pageobjects_dir: page objects live at <tests_dir>/<type>/<app>/resources/
 # pageobjects/, one folder per app-under-test — see docs/feature-packages.md.

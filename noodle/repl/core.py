@@ -240,6 +240,7 @@ def run_test(target: str | None = None, *, tag: str | None = None,
              browser: str | None = None, retries: int | None = None,
              parallel: int | None = None,
              parallel_scheme: str = "feature",
+             workspace_strict: bool | None = None,
              _resolved: str | None = None) -> dict:
     """Run a feature (or a tag filter). target=None resolves via state (see
     resolve_target). headless=None defers to the workspace's .env/noodle.yaml
@@ -257,6 +258,13 @@ def run_test(target: str | None = None, *, tag: str | None = None,
     if parallel_scheme not in ("feature", "scenario"):
         return {"ok": False, "error": f"unsupported parallel_scheme "
                 f"{parallel_scheme!r}; valid: feature, scenario"}
+    # NOOD_0223 — strict mode gates BEFORE the browser: the whole point is to
+    # refuse a run whose inputs the engine no longer recognises, and doing it
+    # after the launch would cost the very minutes the mode exists to save.
+    from noodle import workspace_policy
+    g = workspace_policy.gate(workspace, workspace_strict)
+    if not g["ok"]:
+        return {"ok": False, "error": g["error"], "workspace_drift": g["drift"]}
     mode_flag = [] if headless is None else (["--headless"] if headless else ["--headed"])
     if browser:
         mode_flag += ["--browser", browser]
@@ -506,7 +514,8 @@ def run_and_report(target: str | None = None, *, tag: str | None = None,
                    browser: str | None = None, retries: int | None = None,
                    parallel: int | None = None, parallel_scheme: str = "feature",
                    preflight_check: bool = True, compact_rca: bool = True,
-                   serve_reports: bool = False) -> dict:
+                   serve_reports: bool = False,
+                   workspace_strict: bool | None = None) -> dict:
     """One bounded payload for the whole run→report→(serve) loop (NOOD_0128).
     Preflights secrets first (no browser on missing creds), runs, folds the
     compact RCA in on red, and optionally serves — so a driving agent needs one
@@ -537,7 +546,10 @@ def run_and_report(target: str | None = None, *, tag: str | None = None,
                     f"missing/placeholder secrets: {', '.join(pf['missing_secret_keys'])}"}
     result = run_test(target, tag=tag, workspace=ws, headless=headless,
                       browser=browser, retries=retries, parallel=parallel,
-                      parallel_scheme=parallel_scheme, _resolved=resolved)
+                      parallel_scheme=parallel_scheme,
+                      workspace_strict=workspace_strict, _resolved=resolved)
+    if result.get("workspace_drift"):       # NOOD_0223 — gated, never launched
+        return result
     root = _paths.last_run_root(ws)
     reports = root / "reports"
     builder.ensure_fresh_reports(str(root / "allure-results"), str(reports))
@@ -710,7 +722,8 @@ def author_test(*, prompt: str | None = None,
                 app_name: str | None = None, base_url: str | None = None,
                 feature_path: str | None = None,
                 goal: dict | None = None,
-                feature_content: str | None = None, **kw) -> dict:
+                feature_content: str | None = None,
+                auto_fix: int = 0, **kw) -> dict:
     """NOOD_0169 — the public author door, adding `prompt` mode: plain-
     English steps compiled through the three-pass deterministic prompt
     compiler (see prompt_expander). Routing is bounded: deterministic fast
@@ -780,6 +793,15 @@ def author_test(*, prompt: str | None = None,
                     # the goal built from the clauses that DID parse, so a
                     # re-author only has to fill the unresolved ones.
                     "goal_partial": exp.get("goal_partial"),
+                    # NOOD_0223 — ...and the same work as ONE paste-ready
+                    # document. `goal_partial` still had to be translated into
+                    # spec notation by hand before it could be sent anywhere;
+                    # this IS the next call's argument, unresolved clauses
+                    # commented in place.
+                    **({"goal_yaml": goal_mod.to_spec_yaml(
+                        exp["goal_partial"],
+                        (exp.get("unresolved") or []) + (exp.get("conflicts") or []))}
+                       if exp.get("goal_partial") else {}),
                     "example": goal_mod.EXAMPLE,
                     **goal_mod.vocabulary_hint(),
                     "planner": {"state": ("NEEDS_INTERPRETATION" if needs
@@ -848,8 +870,21 @@ def author_test(*, prompt: str | None = None,
                                feature_path=feature_path, goal=goal,
                                feature_content=feature_content, **kw)
     if kw.get("run_after_author"):
+        before = result
         result = _auto_repair(result, app_name=app_name, base_url=base_url,
                               feature_path=feature_path, kw=kw)
+        if result is not before:
+            # The repair lap re-authored from a DIFFERENT goal; auto-fix must
+            # continue from that one, not from the goal that was superseded.
+            rep = (before.get("author") if isinstance(before.get("author"), dict)
+                   else before).get("repair") or {}
+            goal = rep.get("goal") or goal
+        # NOOD_0223 — the running half of the loop (the authoring half is
+        # _auto_repair above). Opt-in: default 0 laps, so no caller silently
+        # pays for a second probe+run.
+        result = _autofix_run(result, goal=goal, app_name=app_name,
+                              base_url=base_url, feature_path=feature_path,
+                              kw=kw, max_laps=auto_fix)
     if discovery is not None and isinstance(result, dict) and base_url:
         # provenance: this URL was discovered, not user-supplied
         result["discovered_base_url"] = base_url
@@ -907,6 +942,24 @@ def _auto_repair(result: dict, *, app_name: str, base_url: str,
     # NOOD_0218 — three repair shapes, each named for what it changed. Only a
     # DROP weakens the contract (intent_verified false); a navigation fix or
     # a near-miss reword keeps every asked-for assertion, in probed wording.
+    # NOOD_0223 adds two more, both contract-neutral for the same reason: they
+    # change HOW the flow reaches the control, never WHAT it proves.
+    if targets := rep.get("rewritten_targets"):
+        warnings.append(
+            f"{len(targets)} action target(s) reworded to the probed control "
+            "name: "
+            + "; ".join(f'"{t["from"]}" → "{t["to"]}"' for t in targets)
+            + " — the test drives the page's own control, not the brief's "
+            "wording for it")
+        r_author["rewritten_targets"] = targets
+    if clicks := rep.get("prerequisite_clicks"):
+        warnings.append(
+            f"{len(clicks)} prerequisite click(s) inserted to reach a hidden "
+            "control (probe evidence — clicking the named trigger is what "
+            "reveals it): "
+            + "; ".join(f'click "{c["click"]}" before "{c["before"]}"'
+                        for c in clicks))
+        r_author["prerequisite_clicks"] = clicks
     if rep.get("navigation_added"):
         warnings.append(
             "navigation repaired to finish this call in one lap: the blocked "
@@ -931,6 +984,138 @@ def _auto_repair(result: dict, *, app_name: str, base_url: str,
             "keep the block, or reword the check to probed evidence.")
     r_author["warnings"] = warnings + list(r_author.get("warnings") or [])
     return retry
+
+
+# NOOD_0223 — the failure categories a re-author lap may act on, and nothing
+# else. Every one of these is a fact about the TEST (its wording, its
+# selectors, how it reaches a control); the excluded ones — app-regression,
+# app-rejected-action, mutation-failed, test-data, environment-flap,
+# navigation-mismatch, config-gap, unknown — are facts about the APP or the
+# environment, and re-authoring against them is the green-forcing retry loop
+# config.dev_fix_attempts explicitly forbids. A red that means "the app is
+# broken" must stay red on the first run, not on the third.
+_AUTOFIX_CATEGORIES = frozenset({
+    "assertion-wording",        # the page answered: rewrite the check to it
+    "locator-rot",              # fresh probe re-resolves the selector
+    "wrong-action-target",
+    "ambiguous-item-click",
+    "blocked-by-overlay",
+})
+
+
+def _autofix_goal(goal: dict, rewrites: list[dict]) -> tuple[dict, list[dict]]:
+    """(goal, applied) — `goal` with every see-check the run proved is worded
+    wrong rewritten to what the page actually rendered.
+
+    Matched by normalized equality against the check's own text, never by
+    position: a goal with three see-checks and one wording failure must repair
+    that one. An expected string matching no check is left alone and reported
+    as unapplied — the lap then has nothing to change and declines."""
+    from noodle.repl import goal as goal_mod
+    checks, applied = list(goal.get("checks") or []), []
+    by_expected = {goal_mod._norm(r["expected"]): r for r in rewrites
+                   if r.get("rendered")}
+    out = []
+    for c in checks:
+        r = by_expected.get(goal_mod._norm(c.get("see"))) \
+            if isinstance(c, dict) and c.get("see") else None
+        if not r:
+            out.append(c)
+            continue
+        pick = r["rendered"][0]
+        applied.append({"from": c["see"], "to": pick})
+        out.append({**c, "see": pick})
+    return {**goal, "checks": out}, applied
+
+
+def _autofix_run(result: dict, *, goal: dict | None, app_name: str,
+                 base_url: str, feature_path: str, kw: dict,
+                 max_laps: int) -> dict:
+    """NOOD_0223 — up to `max_laps` ENGINE-ONLY laps on a red run.
+
+    `_auto_repair` above closes the authoring half of the loop: a goal the
+    probe cannot prove gets one repaired re-author. This closes the running
+    half, which had no engine lap at all — a red run came back with an RCA and
+    a fix-it-yourself instruction, and the cheapest-looking way to act on that
+    instruction is to hand-edit the .feature. Every manual patch path this
+    ticket removes starts at that payload.
+
+    A lap is: re-derive the goal from the run's OWN failure evidence →
+    re-author with a fresh probe (overwrite) → re-run. No user-side edit, no
+    step suggestion to copy, no hand-written locator. `engine_edits` names
+    every file each lap rewrote, so the audit trail says exactly what the
+    engine changed on the caller's behalf.
+
+    The gate is deliberately narrow (_AUTOFIX_CATEGORIES): if ANY failure in
+    the run classifies outside it, no lap runs at all. A mixed run — one
+    wording miss plus one genuine app regression — is a red run, and papering
+    over half of it would ship a green report for a broken app.
+
+    ponytail: laps are bounded by the caller (default 0, `--auto-fix N`), not
+    by a timeout. A lap costs a probe + a run, which on a slow site is the
+    single most expensive thing the engine does; making it implicit would have
+    doubled the wall clock of every red run in exchange for a fix that only
+    lands on some of them."""
+    from noodle.reporting import paths as _p
+    from noodle.reporting import rca_report
+    audit = {"max_laps": max_laps, "laps_used": 0, "engine_edits": []}
+    if max_laps < 1:
+        return result
+    if goal is None:
+        audit["skipped"] = ("auto-fix needs a goal to re-derive — "
+                            "feature_content mode has nothing to recompile")
+        result["auto_fix"] = audit
+        return result
+    ws = kw.get("workspace", ".")
+    current = goal
+    for _ in range(max_laps):
+        run = result.get("run") if isinstance(result.get("run"), dict) else None
+        if run is None or run.get("ok") or run.get("skipped"):
+            break
+        entries = rca_report.collect(str(_p.last_run_root(ws) / "allure-results"))
+        if not entries:
+            audit["skipped"] = "no classified failure to act on"
+            break
+        cats = sorted({rca_report.classify(e)["category"] for e in entries})
+        audit["classified"] = cats
+        if blocked := [c for c in cats if c not in _AUTOFIX_CATEGORIES]:
+            audit["skipped"] = (
+                "not auto-fixable — " + ", ".join(blocked)
+                + ": that is a fact about the app or the environment, not the "
+                "test. Read rca_compact and fix the cause; a re-author lap "
+                "would only re-prove the same failure.")
+            break
+        rewrites = [r for e in entries
+                    if (r := rca_report.assertion_rewrite(e))]
+        current, applied = _autofix_goal(current, rewrites)
+        if not applied and "assertion-wording" in cats:
+            audit["skipped"] = (
+                "the page's wording does not match any goal check — nothing "
+                "to rewrite without guessing which assertion was meant")
+            break
+        retry = _author_test_impl(app_name=app_name, base_url=base_url,
+                                  feature_path=feature_path, goal=current,
+                                  **{**kw, "overwrite": True})
+        r_author = retry.get("author") if isinstance(retry.get("author"), dict) \
+            else retry
+        if not r_author.get("ready"):
+            audit["skipped"] = ("the re-derived goal does not author cleanly; "
+                                "keeping the original run's diagnosis")
+            break
+        audit["laps_used"] += 1
+        lap = {"lap": audit["laps_used"], "categories": cats,
+               "rewritten_checks": applied,
+               "feature": r_author.get("feature")}
+        if not applied:
+            lap["basis"] = ("re-probed and recompiled against fresh page "
+                            "evidence — no goal text changed")
+        audit.setdefault("laps", []).append(lap)
+        audit["engine_edits"] = sorted(set(
+            audit["engine_edits"] + [p for p in (r_author.get("feature"),
+                                                 r_author.get("pom")) if p]))
+        result = retry
+    result["auto_fix"] = audit
+    return result
 
 
 def _route_repair(goal: dict, goal_ev: dict, probe_result: dict,
@@ -1372,6 +1557,13 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     ws_res = Path(workspace).resolve()
     def rel(p):
         return Path(os.path.relpath(p, ws_res)).as_posix()
+    # NOOD_0223 — claim ownership of exactly what this transaction wrote, so
+    # a later strict run can tell an engine artifact from a hand-patched one.
+    # After the writes, never before: a rolled-back transaction must leave
+    # ownership untouched. Secrets are excluded by design — filling a
+    # credential placeholder by hand is the documented workflow.
+    from noodle import workspace_policy
+    workspace_policy.record(workspace, [env_path, feat_dest, pom_path])
     state = load_state(workspace)
     state.update(last_feature=rel(feat_dest), last_pom=rel(pom_path), last_app=app)
     save_state(state, workspace)
