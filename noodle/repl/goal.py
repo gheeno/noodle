@@ -1039,6 +1039,80 @@ def _evidence_gate(actions: list) -> int | None:
     return None
 
 
+def _reach_gate(actions: list) -> int | None:
+    """NOOD_0226 — index of the LAST action whose page the probe snapshotted.
+    Every action AFTER it runs on a page the probe never loaded, so an
+    unmatched name there is a statement about the probe's reach, not about the
+    app — and a name that DOES match came off a page this step never visits.
+
+    Two boundaries, whichever comes first:
+
+    * `_evidence_gate` — the first state-writing verb the probe never performs
+      (NOOD_0207); everything past it was already deferred on these terms.
+    * the first COMMIT click — a click at or after the runtime gate.
+      probe_args forwards only the clicks BEFORE that gate, by its own rule:
+      "a click after data entry is a commit (save/submit) — probing it would
+      mutate application state". So the page such a click lands on was never
+      loaded, and nothing after it has evidence either.
+
+    The login prelude is the everyday case and it had no boundary at all:
+    enter / enter / click sign-in gates the runtime at index 0 and names no
+    state-writing verb, so `_evidence_gate` was None, no click was forwarded
+    to the probe, and every post-login step blocked with the SIGN-IN page's
+    controls offered as near misses. Measured on `main` @ d34a902: the goal
+    compiled correctly and the engine refused to admit it.
+
+    The boundary action itself stays fully verified — its own control is on a
+    page the probe did see (the sign-in button is on the sign-in page), so
+    NOOD_0156's "an unprobed control after a pick still blocks" is untouched;
+    only what follows it moves to the run."""
+    eg = _evidence_gate(actions)
+    rg = _runtime_gate(actions)
+    commit = None if rg is None else next(
+        (i for i, a in enumerate(actions)
+         if i > rg and a.get("do") == "click"), None)
+    gates = [g for g in (eg, commit) if g is not None]
+    return min(gates) if gates else None
+
+
+def _reach_clause(actions: list, reach: int | None, i: int) -> str:
+    """NOOD_0226 — the one sentence a blocker needs when the goal walks past
+    the probe's reach: which step the evidence ends on.
+
+    Without it the probed vocabulary a blocker carries reads as "the app's
+    controls", and the repair it invites is renaming a LATER step to an
+    earlier page's control — the exact wrong move, and the one the login
+    repro handed the reader (`username`, `password`, `login` offered as near
+    misses for an add-to-cart click). Emitted only where it changes the
+    repair: on the boundary step when later steps exist, and on any step past
+    it that still blocks (a stated ambiguity/reachability note). A goal that
+    ends at the boundary gets nothing — bytes on a payload with nothing to
+    say."""
+    if reach is None or reach >= len(actions) - 1 or i < reach:
+        return ""
+    label = _reach_label(actions, reach)
+    where = f" ({label})" if label else ""
+    if i > reach:
+        return (f" — the probe's page evidence ends at step {reach + 1}"
+                f"{where}; this step runs on a page it never loaded, so the "
+                "controls named above are that earlier page's, not this one's")
+    return (" — this is the last step the probe has page evidence for"
+            + where
+            + f"; the {len(actions) - reach - 1} step(s) after it run on pages "
+              "it never loaded and are resolved by the run")
+
+
+def _reach_label(actions: list, reach: int | None) -> str:
+    """The boundary action in the goal's own words, for a blocker that has to
+    say where the evidence stops."""
+    if reach is None or not (0 <= reach < len(actions)):
+        return ""
+    a = actions[reach] if isinstance(actions[reach], dict) else {}
+    what = a.get("target") or a.get("destination") or a.get("term") or ""
+    do = str(a.get("do") or "")
+    return f'{do} "{what}"' if what else do
+
+
 def _runtime_gate(actions: list) -> int | None:
     """Index of the first action whose effect the probe does NOT perform:
     enter/select values are never typed, and everything AFTER a pick runs on
@@ -1498,6 +1572,13 @@ def _near_miss(target: str, blocks: list, kind: str = "control") -> str:
             + (f", +{len(ranked) - 8} more" if len(ranked) > 8 else "") + ")")
 
 
+# NOOD_0226 — deliberately narrow: an attribute selector, or an id selector
+# that cannot be read as a caption. Bare class selectors are NOT here — ".NET
+# SDK" and "#1 Best Seller" are control names on real pages, and treating
+# either as a selector would block a legitimate target.
+_SELECTOR_SHAPED = re.compile(r'^(\[.+\]|#[A-Za-z_][\w-]*)$')
+
+
 def _locate(target: str, blocks: list, scoped: bool = False,
             pinned: bool = False) \
         -> tuple[dict | None, str | None, str | None, str | None]:
@@ -1528,6 +1609,23 @@ def _locate(target: str, blocks: list, scoped: bool = False,
     t = _norm(target)
     if not t:
         return None, None, None, None
+    # NOOD_0226 — a selector is an exact instruction, so resolve it as one.
+    # _norm strips punctuation ('[id="add-to-cart"]' → 'id add to cart'), so
+    # the substring pass below matched ANY control merely NAMED "add to cart"
+    # and bound ITS selector — a different element, chosen by luck. Measured:
+    # a target naming one product page's CTA id resolved to a result card's
+    # button, compiled that card's selector into the POM, and ran green for
+    # the wrong reason. Exact selector match or nothing.
+    if _SELECTOR_SHAPED.match(target.strip()):
+        want = target.strip()
+        hit = next((x for x in _iter_controls(blocks)
+                    if str(x[0].get("selector") or "").strip() == want), None)
+        if hit:
+            return (*hit, None)
+        return None, None, None, (
+            "no probed control carries that selector — this is a selector, "
+            "not a name, so it is never matched by wording; use the visible "
+            "caption the probe reported, or pin the selector in pom_content")
     exact = [(c, phase, trigger) for c, phase, trigger in
              _iter_controls(blocks) if _norm(c.get("name")) == t]
     if exact:
@@ -1841,6 +1939,9 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
     narrowed: list[dict] = []      # NOOD_0199 — see-checks cut to their
                                    # probe-proven substring, never silently
     mplans: dict[str, dict] = {}
+    # NOOD_0226 — the last action index the probe has page evidence for; read
+    # once, used by every gate below so they cannot drift apart.
+    reach = _reach_gate(actions)
     if nav_block:
         blocking.append(nav_block)
     for i, a in enumerate(actions):
@@ -1874,6 +1975,25 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
                 ctrl, why = mutation_control(cand, a["destination"],
                                              scoped=True)
                 if ctrl is None:
+                    if reach is not None and i > reach:
+                        # NOOD_0226 — past the probe's reach there is no
+                        # mutation control to find: the page carrying it was
+                        # never loaded. Saying "the page offers: username,
+                        # password, login" invites a repair onto the SIGN-IN
+                        # page, which is never right. `add_to` cannot defer
+                        # like a click can — it lowers to a control whose name
+                        # only the author knows — so it still blocks, but with
+                        # the two repairs that actually work.
+                        blocking.append(
+                            f'add_to "{a["destination"]}": the mutation '
+                            f"control is behind step {reach + 1} "
+                            f'({_reach_label(actions, reach)}), which the '
+                            "probe does not perform — so it was never probed "
+                            "and no candidate here is one. Name the control "
+                            'instead: click "<its name>" with within: '
+                            f'"{scope}", or opt in with probe: {{perform: '
+                            "true}} to let the probe walk the flow first")
+                        continue
                     names = list(dict.fromkeys(
                         c["name"] for c in cand if c.get("name")))[:8]
                     blocking.append(
@@ -2077,9 +2197,8 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
         # ordering there is. Region words (header, nav, footer) are the common
         # miss: they name a part of the page, which `within:` cannot express.
         # Deferred on the same terms as a missing control below: after a pick,
-        # or past the evidence gate, the probe never saw this page at all.
-        _eg = _evidence_gate(actions)
-        if (scope and not after_pick and (_eg is None or i <= _eg)
+        # or past the probe's reach, the probe never saw this page at all.
+        if (scope and not after_pick and (reach is None or i <= reach)
                 and not _find_text(scope, [blk for blk, _, _ in blocks])):
             blocking.append(
                 f'{a["do"]} "{a["target"]}" within "{scope}": no probed text '
@@ -2109,21 +2228,38 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
             ctrl, phase, trigger, note = _locate(a["target"], blocks,
                                                  bool(scope), is_pinned)
         if ctrl is None:
-            # NOOD_0207 — past the evidence gate the probe never snapshotted
-            # this page at all, so "no probed control matches" is a fact about
-            # the probe, not the app: defer to the run, as checks in the same
+            # NOOD_0207 — past the probe's reach it never snapshotted this
+            # page at all, so "no probed control matches" is a fact about the
+            # probe, not the app: defer to the run, as checks in the same
             # position already are. Only for a plain missing name — a stated
             # ambiguity/reachability `note` is real evidence and still blocks.
-            eg = _evidence_gate(actions)
-            if note is None and eg is not None and i > eg:
+            # NOOD_0226 — `reach` replaces the evidence gate here. It was the
+            # only boundary, and it recognises three state-writing verbs, so a
+            # flow whose page change is an ordinary COMMIT CLICK (sign in,
+            # continue, place order) had no boundary at all and every step
+            # after it blocked.
+            if note is None and reach is not None and i > reach:
                 # No probe evidence to record, and none to invent: the step
                 # compiles with the author's own wording and the runtime's
                 # find() resolves it — proven by the run or red by the run.
                 proven_phase[f'{a["do"]}:{a["target"]}'] = "runtime"
                 continue
+            # NOOD_0226 — after a pick, the near miss comes off the LANDED
+            # page, which is the only page this step runs on. Ranking the
+            # whole probe meant a blocked add-to-cart on a product page was
+            # answered with the RESULTS page's filter names ("electric fans",
+            # "sesame street (2)"), measured on a 1000-control listing: an
+            # agent told to read `blocking` as probe evidence (NOOD_0214) is
+            # then holding a shortlist from a page it never visits, and every
+            # candidate in it is a wrong repair. Falls back to the full probe
+            # only when the landed page yielded no vocabulary at all.
+            scope_blocks = ([(picked_blk, "picked", None)]
+                            if after_pick and picked_blk is not None
+                            and _block_texts(picked_blk) else blocks)
             blocking.append(f'{a["do"]} "{a["target"]}": '
                             + (note or "no probed control matches that name"
-                               + _near_miss(a["target"], blocks)))
+                               + _near_miss(a["target"], scope_blocks))
+                            + _reach_clause(actions, reach, i))
             continue
         if ctrl.get("collapsed_from"):
             # NOOD_0212 — resolved, not guessed: every instance links to the
@@ -2717,7 +2853,19 @@ def intent_trace(goal: dict, ev: dict) -> list[dict]:
             # intent_verified false for every goal that used one.
             ok, evid = True, "deterministic:no-control"
         else:
-            ok, evid = f'{do}:{a.get("target", "")}' in proven, "probe:control"
+            key = f'{do}:{a.get("target", "")}'
+            if key in proven:
+                ok, evid = True, "probe:control"
+            elif (ev.get("proven_phase") or {}).get(key) == "runtime":
+                # NOOD_0226 — deferred past the probe's reach (NOOD_0207/0226):
+                # proven by the RUN, exactly like the api arm above and
+                # NOOD_0188's no-control verbs. Reporting it "missing" dragged
+                # intent_verified false for every multi-page flow — including
+                # the ones the deferral exists to make authorable — and the
+                # evidence label is what says which proof this step rests on.
+                ok, evid = True, "runtime:control"
+            else:
+                ok, evid = False, "missing"
         what = a.get("target") or a.get("term") or a.get("destination") \
             or a.get("key") or a.get("url") or ""
         trace.append({"requirement": f"{do} {what}".strip(),

@@ -135,7 +135,18 @@ _WEBSITE_REF = re.compile(
     r"(?:web\s?site|site|page|app(?:lication)?|url|"
     r"home\s?page|browser|ui|front\s?-?end|web\s?app)$", re.I)
 _PAREN = re.compile(r"\(([^()]{3,})\)")
-_CONJ = re.compile(r"\s+(?:and(?:\s+then)?|then)\s+", re.I)
+# NOOD_0226 — a COMMA joins actions too, and it was not a connector here.
+# "enter <user> in username, enter <pass> in password, and click Login" split
+# at the ` and ` only: the first enter's greedy target swallowed the second
+# clause whole ("username, enter <pass> in password") and authoring blocked
+# as ambiguous. Multi-action steps are how briefs are written; NOOD_0224
+# settled the same split for the probe's own `--do` chain, and this is that
+# rule one layer up. Safe because _split_compound cuts ONLY where BOTH halves
+# carry a grammar verb: "search for cat, dog toys", "verify A, subtotal is
+# $5" and a comma inside a URL or a quoted literal all keep their clause.
+_CONJ = re.compile(
+    r"\s*,\s*(?:(?:and(?:\s+then)?|then)\s+)?|\s+(?:and(?:\s+then)?|then)\s+",
+    re.I)
 
 # NOOD_0197 — phrasing families normalized BEFORE verb matching. The verb
 # table is ^-anchored, so an unstripped preamble hides a perfectly parseable
@@ -580,6 +591,19 @@ _VERBS = [
         r"(Enter|Return|Tab|Escape|Esc|Space|Backspace|Delete|"
         r"Arrow\s*Up|Arrow\s*Down|Arrow\s*Left|Arrow\s*Right)"
         r"(?:\s+key)?$", re.I)),
+    # NOOD_0226 — the ROW-SCOPED click, which only the prompt grammar lacked:
+    # the goal schema has `within:` and the step dictionary has `User clicks
+    # "X" in the row containing "Y"` (NOOD_0222), so a brief that named a row
+    # was the one door that could not reach either. The generic click below
+    # swallowed the whole phrase as the target and the run died on a control
+    # named "Add to Cart in the row containing <title>". Must precede it.
+    ("click_within", re.compile(
+        r"^(?:click|press|tap)s?\s+(?:on\s+)?[\"']?(.+?)[\"']?\s+"
+        r"(?:in|within|on|from)\s+(?:the\s+)?"
+        r"(?:row|card|line|item|entry|tile)\s+"
+        r"(?:containing|with|for|labell?ed(?:\s+as)?|named|showing|"
+        r"that\s+(?:says|shows|contains))\s+"
+        r"[\"']?(.+?)[\"']?$", re.I)),
     ("click", re.compile(
         r"^(?:click|press|tap)s?\s+(?:on\s+)?(.+)$", re.I)),
 ]
@@ -1191,6 +1215,12 @@ def _parse_clause(c: dict) -> dict:
             node["rest"] = m.group(1).strip()
         elif kind == "click":
             node["target"] = _target_clean(m.group(1))
+        elif kind == "click_within":
+            # NOOD_0226 — a click that names its row. Kept a distinct kind so
+            # the suggestion-flow rewrite below (which reads `target` alone)
+            # can never mistake a row anchor for a typeahead option.
+            node["target"] = _target_clean(m.group(1))
+            node["within"] = _clean(m.group(2)).strip("\"'")
         return node
     # NOOD_0212 — last stop before a refusal. No verb matched, so the only
     # remaining question is whether this is a step nobody can parse or brief
@@ -1634,6 +1664,9 @@ def expand(text: str, base_url: str | None = None) -> dict:
     adds: dict[int, dict] = {}          # node index → add_to action
     consumed: set[str] = set()          # search ids already feeding a pick
     pre_action_checks: list[dict] = []  # NOOD_0199 — checks written first
+    # NOOD_0226 — (check, actions-so-far) for every check written BETWEEN two
+    # actions; anchored in the post-pass once we know another action followed.
+    mid_flow_checks: list[tuple[dict, int]] = []
     api_calls: list[dict] = []          # NOOD_0192 — in prompt order
     meta_urls: list[str] = []           # NOOD_0209 — URLs on metadata lines
     counters = {"search": 0, "pick": 0, "add": 0, "api": 0}
@@ -1892,6 +1925,12 @@ def expand(text: str, base_url: str | None = None) -> dict:
             else:
                 actions.append({"do": "click", "target": n["target"]})
                 _cover(n, "action")
+        elif n["kind"] == "click_within":
+            # NOOD_0226 — one action, scoped: `within:` is what makes a
+            # repeated per-row control addressable (NOOD_0207/0222).
+            actions.append({"do": "click", "target": n["target"],
+                            "within": n["within"]})
+            _cover(n, "action")
         elif n["kind"] == "enter":
             actions.append({"do": "enter", "target": n["target"],
                             "value": n["value"]})
@@ -2316,6 +2355,18 @@ def expand(text: str, base_url: str | None = None) -> dict:
                 # blocked a fact the probe had proven. Only anchored once an
                 # action actually follows — see the post-pass below.
                 pre_action_checks.append(check)
+            elif actions and "after" not in check:
+                # NOOD_0226 — the same rule, MID-flow. An unanchored check
+                # compiles after the LAST action (NOOD_0158), so a brief that
+                # says "5. open the cart 6. verify the item and total 7. check
+                # out" asserted the cart's contents on the page checkout left
+                # behind — the cart it had just emptied. Measured live: three
+                # correct assertions, all run one page too late, and the run
+                # is red for a flow that worked. Recorded now, anchored in the
+                # post-pass only if another action actually follows: a
+                # TRAILING check is already in the right place, and anchoring
+                # it would change compiled order for every existing flow.
+                mid_flow_checks.append((check, len(actions)))
             checks.append(check)
             _cover(n, "check")
         if n.get("evidence") and n["kind"] != "verify":
@@ -2334,6 +2385,17 @@ def expand(text: str, base_url: str | None = None) -> dict:
         # at all: there is no later page for them to be confused with.
         for c in pre_action_checks:
             c["after"] = "start"
+        # NOOD_0226 — anchor a check to the action it was written after, but
+        # only when the brief goes on to DO something else: that is the whole
+        # class of "assert, then act again" flows, and the only one whose
+        # compiled order is wrong today.
+        for check, n_before in mid_flow_checks:
+            if n_before >= len(actions):
+                continue                    # nothing followed — already last
+            anchor = actions[n_before - 1]
+            if not anchor.get("id"):
+                anchor["id"] = f"step{n_before}"
+            check["after"] = anchor["id"]
 
     if unrecognized:
         # NOOD_0197 — a partial parse is returned, never discarded: the goal
