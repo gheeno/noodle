@@ -37,7 +37,11 @@ _GOAL_KEYS = {"scenario", "actions", "checks", "dismissals", "probe",
               # ( take a screenshot ) marker pasted onto every line.
               "evidence"}
 
-_EVIDENCE_MODES = {"assertions", "off"}
+# NOOD_0225 — "all" (every passed step) joins the enum. The runtime tag
+# @evidence has meant this since NOOD_0153; the goal schema simply couldn't
+# say it, so a brief asking for "a screenshot on each step" compiled to the
+# narrower per-assertion mode and the action steps shipped nothing.
+_EVIDENCE_MODES = {"all", "assertions", "off"}
 _ACTION_KEYS = {"search": {"do", "id", "term"},
                 # NOOD_0141 — typeahead pick: type `term`, click the row whose
                 # text matches `option`. Compiles to the composite suggestion
@@ -214,7 +218,12 @@ def vocabulary() -> dict:
         "check_keys": sorted(_CHECK_KEYS),
         "dismissals": sorted(_DISMISSALS),
         "notes": "one of " + "|".join(_CHECK_KINDS) + " per "
-                 "check; evidence: 'screenshot' on any check; after: "
+                 "check; evidence: 'screenshot'|'none' on any check (ask for "
+                 "or decline a shot on THAT step); goal-level evidence: "
+                 + "|".join(sorted(_EVIDENCE_MODES))
+                 + " sets the whole run (default: one shot on the last step) "
+                 "— never hand-write a screenshot step or tag, the engine "
+                 "reads the brief and compiles both; after: "
                  "start|<action id> anchors a check to its page; "
                  "item_in_destination pairs with expected_from: <pick id>; "
                  "navigation: [<url>, ...] = ordered URLs, actions run on "
@@ -274,6 +283,26 @@ def normalize(goal) -> tuple[dict, list[str]]:
     if not isinstance(goal, dict):
         return goal, []
     g, notes = dict(goal), []
+    # NOOD_0225 — the run-wide evidence policy in the caller's words. A host
+    # LLM writes `evidence: "screenshot"`, `"every step"`, `"none"` or `false`
+    # far more often than the three enum values, and rejecting those cost a
+    # whole author round trip to learn a word list the engine can just read.
+    ev = g.get("evidence")
+    if ev is not None and ev not in _EVIDENCE_MODES:
+        low = str(ev).casefold()
+        canon = None
+        if isinstance(ev, bool):
+            canon = "all" if ev else "off"
+        elif re.search(r"\b(?:no|none|off|without|skip|never|false)\b", low):
+            canon = "off"
+        elif re.search(r"\b(?:step|steps|all|every|always|true)\b", low):
+            canon = "all"
+        elif re.search(r"\b(?:assert\w*|check\w*|verif\w*|screenshots?)\b",
+                       low):
+            canon = "assertions"
+        if canon:
+            g["evidence"] = canon
+            notes.append(f"evidence {ev!r} → {canon!r}")
     dis = g.get("dismissals")
     if isinstance(dis, list):
         out = []
@@ -391,11 +420,25 @@ def normalize(goal) -> tuple[dict, list[str]]:
                 notes.append("item_in_destination without expected_from → "
                              f"expected_from {pick_ids[0]!r} (the sole pick)")
             # evidence: any phrase that asks for a screenshot means screenshot
+            # NOOD_0225 — and any phrase that DECLINES one means 'none'. The
+            # negative is tested first: "no screenshot" contains "screenshot".
             ev = c.get("evidence")
-            if isinstance(ev, str) and ev != "screenshot" \
-                    and "screenshot" in ev.casefold():
+            if isinstance(ev, str) and ev not in ("screenshot", "none"):
+                low = ev.casefold()
+                if re.search(r"\b(?:no|none|off|without|skip|never|false)\b",
+                             low):
+                    c["evidence"] = "none"
+                    notes.append(f"evidence {ev!r} → 'none'")
+                elif "screenshot" in low or "evidence" in low \
+                        or "capture" in low:
+                    c["evidence"] = "screenshot"
+                    notes.append(f"evidence {ev!r} → 'screenshot'")
+            elif ev is False:
+                c["evidence"] = "none"
+                notes.append("evidence false → 'none'")
+            elif ev is True:
                 c["evidence"] = "screenshot"
-                notes.append(f"evidence {ev!r} → 'screenshot'")
+                notes.append("evidence true → 'screenshot'")
             new_checks.append(c)
         g["checks"] = new_checks
     return g, notes
@@ -663,9 +706,10 @@ def validate(goal) -> list[str]:
                         + " | ".join(_CHECK_KINDS))
             continue
         kind = kinds[0]
-        if "evidence" in c and c["evidence"] != "screenshot":
-            errs.append(f"checks[{i}]: evidence must be 'screenshot' "
-                        "(the NOOD_0153 step marker) when present")
+        if "evidence" in c and c["evidence"] not in ("screenshot", "none"):
+            errs.append(f"checks[{i}]: evidence must be 'screenshot' (the "
+                        "NOOD_0153 step marker) or 'none' (this step declines "
+                        "one) when present")
         if kind == "item_in_destination":
             # Identity intent: the bound pick result must appear in the
             # destination. expected_from is the provenance link back to the
@@ -3056,6 +3100,11 @@ def _check_step(c: dict, captions: dict | None = None) -> tuple[str, str | None]
             "the new kind (a fallthrough would compile a wrong assertion)")
     if c.get("evidence") == "screenshot":
         body += " ( take a screenshot )"
+    elif c.get("evidence") == "none":
+        # NOOD_0225 — the opt-out has to be ON the step. The run-wide default
+        # ('last') shoots whichever step ends the scenario, so a check that
+        # declined a picture and happened to land last still got one.
+        body += " ( no screenshot )"
     return body, pom
 
 
@@ -3454,7 +3503,8 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
     # alternative the engine used to force — `( take a screenshot )` appended
     # to every assertion — put run configuration into the step text of every
     # line, which reads as noise and is trivially forgotten on step nine.
-    evidence_tag = {"assertions": " @evidence:assertions",
+    evidence_tag = {"all": " @evidence",
+                    "assertions": " @evidence:assertions",
                     "off": " @no_evidence"}.get(goal.get("evidence"), "")
     tag = ("@web" if web else "@api") \
         + (f" @page:{slug}" if web and pom_entries else "") \

@@ -15,7 +15,8 @@ Gates (the engine never takes random screenshots):
                   passing web scenario), 'all' (every passed step), 'off'.
   * per step    — a trailing "( take a screenshot )" marker in the step text
                   (stripped before resolution; see resolver/patterns._pre_clean)
-                  always captures that step, regardless of mode.
+                  always captures that step, regardless of mode. Its opposite,
+                  "( no screenshot )", declines one for that step (NOOD_0225).
   * per scenario — @evidence tag = every passed step; @no_evidence = none,
                   overriding mode and markers both.
   * area        — web only: no Playwright page (api/appium/visual) → no shot.
@@ -42,7 +43,7 @@ def mode() -> str:
 
 
 def wanted(tags, requested: bool, is_last_step: bool, has_page: bool,
-           is_assertion: bool = False) -> bool:
+           is_assertion: bool = False, suppressed: bool = False) -> bool:
     """Pure gate — should this passed step get an evidence shot? Unit-tested
     without a browser. `tags` is the scenario's effective tag set.
 
@@ -54,24 +55,33 @@ def wanted(tags, requested: bool, is_last_step: bool, has_page: bool,
     expressing something the step's own keyword already says. `@evidence:
     assertions` / NOODLE_EVIDENCE=assertions now says it once.
 
+    NOOD_0225 — `suppressed` is the per-step opt-out ("( no screenshot )"),
+    the missing half of the per-step marker. Without it a step could ask for
+    a shot but never decline one, so a tester who wrote "no screenshot on
+    this step" still got one whenever that step ended the scenario.
+
     Precedence, strongest first: @no_evidence (silence, overriding everything
     — an explicit "no screenshots" must not be second-guessed by the
-    always-capture-the-last rule) > explicit marker / @evidence > mode.
+    always-capture-the-last rule) > per-step opt-out > explicit marker /
+    @evidence > mode.
     """
     if not has_page:
         return False
     tags = set(tags or ())
-    if "no_evidence" in tags:
+    if "no_evidence" in tags or suppressed:
         return False
     if requested or "evidence" in tags:
         return True
     if "evidence:assertions" in tags:
-        return is_assertion
+        # The last step still gets one: "a shot on every assertion" asks for
+        # more evidence than the default, never for less, and a scenario
+        # whose final step is an action would otherwise end with none.
+        return is_assertion or is_last_step
     m = mode()
     if m == "off":
         return False
     if m == "assertions":
-        return is_assertion
+        return is_assertion or is_last_step
     return m == "all" or (m == "last" and is_last_step)
 
 

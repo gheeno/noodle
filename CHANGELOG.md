@@ -4,6 +4,72 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a39] — 2026-08-02
+
+**NOOD_0225** — feature: the engine decides when a step gets an evidence
+screenshot, by reading the brief. A reviewed AC whose step 2 read *"Verify
+pizza banner logo is present - take evidence screenshot on this step"* was
+authored by a model that did not know what to do with the phrase: it invented
+`[evidence: screenshot]`, argued with itself over whether that was "step
+decorator syntax", and shipped a step that resolved green with **no picture
+attached**. Nothing failed — the worst outcome there is, because the brief
+asked for proof and the report had none. The rule the engine now holds, in
+both directions: the last step always carries evidence; a step or brief that
+*asks* for a screenshot gets one, in whatever words; a step or brief that
+*declines* one gets none, in whatever words.
+
+- **Fixed: a refusal the engine ignored.** The run-wide off-pattern accepted
+  only `take`/`capture`/`include`, so `DO NOT ADD SCREENSHOTS` and
+  `don't attach any evidence` — the two most natural spellings — read as no
+  directive at all and the default still shot the last step. An explicit
+  refusal the engine overrides is worse than no feature: the brief said one
+  thing and the report showed another. The negation vocabulary now covers
+  add/attach/save/collect/provide/grab (and `no need for…`, `evidence is not
+  required`, `never add…`).
+- **Fixed: a per-step evidence note deleted the step.** Any line an evidence
+  pattern touched was classified as a run-wide directive and dropped, so
+  *"Verify the banner is present - no screenshot needed"* lost its assertion
+  outright **and** switched the whole run's evidence off — the tester asked
+  for one step without a picture and got neither the picture nor the check.
+  A directive is now judged per brief unit: it configures the run only when
+  nothing recognizable survives the directive span, and a step that merely
+  carries an evidence note keeps its step.
+- **Fixed: a negative phrase turned the shot ON.** `no screenshot needed`
+  contains the word the positive marker looks for, so the marker matched and
+  requested the very shot the tester declined. The negative is now read
+  first, everywhere — prompt clause, step marker, check normalization.
+- **Added: the per-step opt-out.** `( no screenshot )` (plus the bracket and
+  dash spellings) is the missing half of `( take a screenshot )`: without it
+  a step could ask for a picture but never decline one, so the
+  always-capture-the-last default overrode a tester who had said not to.
+  Compiles from a goal check's `evidence: none`; outranked only by
+  `@no_evidence`.
+- **Added: "a screenshot on every step" means every step.** The runtime has
+  had the `@evidence` tag since NOOD_0153, but `steps?` sat in the
+  per-*assertion* pattern and the goal schema had no `all` mode — so the
+  brief asking for the most evidence quietly compiled to the narrower one and
+  every action step shipped none. `evidence: all` joins the enum and
+  compiles to `@evidence`.
+- **Added: forgiving marker syntax.** `( take a screenshot )`,
+  `[take a screenshot]`, `[evidence: screenshot]`, `- take a screenshot`,
+  `- attach evidence` and `(screenshot)` are now one thing — the shapes a
+  model reaches for all mean what they say instead of silently resolving to
+  nothing. Guarded against false positives: the span is *stripped*, so a
+  separator is required, the phrase is anchored to end-of-line, and quoted
+  step text (`should see "no evidence found"`) is never touched.
+- **Fixed: `@evidence:assertions` could end a scenario with nothing.** "A
+  shot on every assertion" asks for more evidence than the default, never
+  less; a scenario whose final step is an action now still carries one.
+- **Lenient goal input.** `evidence: "every step" | "none" | true | false`
+  and check-level `evidence: "no screenshot" | "take a screenshot"`
+  canonicalize onto the enum with a note, instead of costing an author round
+  trip to learn a word list the engine can just read. The prompt contract now
+  polices both directions — a compiled goal that shoots after the brief
+  declined is as much a break as one that drops a requested shot.
+- Docs: steps_dictionary § Evidence screenshots gains the opt-out, the
+  assertions mode and the precedence order; the playbook and the scaffolded
+  AGENTS.md both say evidence is compiled from the ask — never hand-written.
+
 ## [1.0.0a38] — 2026-08-02
 
 **NOOD_0224** — fix: the transaction an agent writes is the transaction the
