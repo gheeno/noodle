@@ -126,6 +126,7 @@ driving agent.
 | `development_s` | **derived:** `elapsed_s − run_s` | How long *generation* took. This is what the time budget applies to. |
 | `corrections` | `run.healing_events` + `run.flaky` + re-author passes | The engine's own repair signals: a locator that needed self-healing, a scenario that needed a retry, a re-author because `ready` came back false. Never a self-report — last session tc1 claimed `corrections: 0` while the run log recorded a real heal (`locator 'search', strategy visible-filter, multiple matches, exactly one visible`). The engine knew; the old protocol never asked. |
 | `lines` | `author.compiled.feature` + `author.compiled.pom` line count | The simplicity signal: *are we still generating simple `.feature` files*. Reported, not gated — if generation starts padding features with extra steps or POM entries, this moves. `—` for a `feature_content` case: nothing was generated, so there is nothing to count, and it is excluded from the average rather than counted as zero. Since NOOD_0192 all three cases are prompts, so all three report a number. |
+| `payload_tokens` | the authoring payload at the agent door (`collapse_payload`), per lap, bytes ÷ 4 | The cost signal: what generating this test case cost the *driving agent to read*. Engine-side only, so it is the same number on every machine and needs no billing API. See "The cost column" below. |
 | `green` / `verified` | `run.failed`, `run.verified`, `author.intent_verified` | The run contract: `failed == 0` **and** `verified: true` **and** the intent contract held. A pass held up by fuzzy healing or lenient matching is not a pass. `intent_verified` asks "did the *compiled* goal match probe evidence", so it applies to the prompt cases — which, since NOOD_0192, is all three. (A `feature_content` case states its intent literally, with nothing inferred to verify against; there `run.verified` alone is the bar.) |
 
 Accuracy has a human half too: the HIL (or a reviewing agent) reads the
@@ -139,16 +140,34 @@ assert what was asked, nothing invented.
 what a real user does. Still not ready → the case is red and the verdict is
 REGRESSED. The correction budget (2) bounds it either way.
 
-### No cost column
+### The cost column, and the one that stayed dead
 
 NOOD_0190 removed the host AIC/token accounting **and** the engine LLM
 ledger. The host figure measured how lost the *driving agent* got, not
 whether the engine regressed, and on a host with no billing API it could only
 be guessed. The engine figure read `none` every run — the deterministic fast
 path makes zero model calls (`translation_mode: deterministic-fast-path`,
-`interpretation_model_calls: 0`). Generated line count is the size signal
-that actually moves. If you want to compare *agent* cost across hosts, that
-is [llm-performance.md §7](llm-performance.md), not this benchmark.
+`interpretation_model_calls: 0`). Both stay gone.
+
+NOOD_0231 added a different one. **`payload_tokens`** is the size of what the
+*engine* hands the driving agent for one test case: the authoring payload as
+it leaves the agent door — `collapse_payload` applied, which is exactly what
+an MCP tool call or `noodle author --json` returns — summed over that case's
+laps, at bytes ÷ 4.
+
+It survives where the host figure did not, for four reasons: it is
+deterministic, it needs no billing API, it is identical on every machine, and
+it moves the moment a payload grows. It measures **the only part of an
+agent's token bill the engine controls**. The host's own preamble and the
+model's reasoning are deliberately *not* in it — the engine cannot change
+them, and a number nobody can act on is what got the old column dropped.
+
+A blocked lap is summed, not overwritten: an agent that has to read a
+rejection before re-authoring pays for both, and that is precisely the spend
+the column exists to expose.
+
+For *agent-side* cost across hosts, [llm-performance.md
+§7](llm-performance.md) is still the right document.
 
 ## Budget
 
@@ -156,6 +175,15 @@ is [llm-performance.md §7](llm-performance.md), not this benchmark.
 |---|---|---|
 | Per-TC **development time** (`elapsed_s − run_s`) | 120 s | `NOODLE_REG_MAX_ELAPSED_S` |
 | Per-TC corrections | 2 | `NOODLE_REG_MAX_CORRECTIONS` |
+| Per-TC **payload tokens** | 2500 | `NOODLE_REG_MAX_PAYLOAD_TOKENS` |
+
+The cost ceiling is set a little over 2× the measured worst case. Baseline on
+1.0.0a45 — 978 / 1029 / 1033 / 1092 / 1239, average 1074, with tc1 and tc5
+already carrying a re-author lap each. It is a **regression** gate: loose
+enough that ordinary drift never cries wolf, tight enough that the
+~3,000-token blocked authoring payload NOOD_0231 removed would trip it the
+moment it came back. An older `results.json` written before the column
+existed is re-scored without it, never against it.
 
 Overrides exist for a deliberately slower machine or site — set them in the
 shell, not in code.

@@ -1473,6 +1473,13 @@ _REVEAL_DISCOVERED = re.compile(
     r'\(revealed by "(.+?)"\)')
 _ACTION_MISS = re.compile(
     r'^(\w+) "(.+?)": no probed control matches that name')
+# NOOD_0231 (P-5) — the third curable family: the target named card TEXT, and
+# the evidence pass already resolved which control inside that card was meant
+# AND which caption scopes it. The blocker states the whole prescription, so
+# the repair is a retarget PLUS a `within:` — strictly more than the
+# near-miss repair could offer, and it lands in the same lap.
+_TEXT_NODE_FIX = re.compile(
+    r'^(\w+) "(.+?)": .*?use \{do: \w+, target: "(.+?)", within: "(.+?)"\}')
 
 
 def _action_index(actions: list, do: str, target: str, used: set) -> int | None:
@@ -1493,8 +1500,18 @@ def _repair_actions(goal: dict, blocking: list[str]) -> tuple[list, dict, int]:
     actions = list((goal or {}).get("actions") or [])
     pre_click: dict[int, str] = {}
     retarget: dict[int, str] = {}
-    used, matched = set(), 0
+    rescope: dict[int, str] = {}      # NOOD_0231 — the `within:` that comes
+    used, matched = set(), 0          # with a text-node retarget
     for b in blocking or []:
+        m = _TEXT_NODE_FIX.match(b)
+        if m:
+            i = _action_index(actions, m.group(1), m.group(2), used)
+            if i is None:
+                continue
+            used.add(i)
+            retarget[i], rescope[i] = m.group(3), m.group(4)
+            matched += 1
+            continue
         m = _REVEAL_HIDDEN.match(b) or _REVEAL_DISCOVERED.match(b)
         if m:
             i = _action_index(actions, m.group(1), m.group(2), set())
@@ -1522,7 +1539,12 @@ def _repair_actions(goal: dict, blocking: list[str]) -> tuple[list, dict, int]:
     for i, a in enumerate(actions):
         if i in pre_click:
             out.append({"do": "click", "target": pre_click[i]})
-        out.append({**a, "target": retarget[i]} if i in retarget else a)
+        fix = {}
+        if i in retarget:
+            fix["target"] = retarget[i]
+        if i in rescope:
+            fix["within"] = rescope[i]
+        out.append({**a, **fix} if fix else a)
     changes = {}
     if pre_click:
         changes["prerequisite_clicks"] = [
@@ -1531,6 +1553,7 @@ def _repair_actions(goal: dict, blocking: list[str]) -> tuple[list, dict, int]:
     if retarget:
         changes["rewritten_targets"] = [
             {"from": actions[i].get("target"), "to": t}
+            | ({"within": rescope[i]} if i in rescope else {})
             for i, t in sorted(retarget.items())]
     return out, changes, matched
 

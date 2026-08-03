@@ -184,6 +184,34 @@ Ceiling accounting (moved verbatim from the retired test asserts):
   read the page telling it how. The `--do` comma-chain clause rides inside
   the existing probe bullet, and `noodle probe --help` paid for its own
   chaining note by compressing two phrases (6335 B, unchanged cap).
+- NOOD_0231: NO cap moved, and every surface ends with MORE headroom than it
+  started with (AGENTS.md 517 → 523, claude card 64 → 75, copilot 157 → 168,
+  `probe --help` 65 → 65). Three cost-control flags — `--brief`, `--delta`,
+  `--find` — are now named on both cards and in AGENTS.md. `--brief` is the
+  case that justifies the spend: it would have collapsed the reviewed
+  session's 12× repeated step template entirely, it had existed since
+  NOOD_0179, and it appeared on no surface. That is the NOOD_0179 argument
+  exactly — an agent has to know a capability exists before it will spend a
+  call looking it up, and there was no round trip to intercept.
+  What paid for them, in the order the §7 rule prefers (a surface routes, a
+  doc carries): the locator resolution order stated TWICE inside one card
+  (the POM section owns it); the workspace directory catalog sitting beside
+  `noodle workspace inspect`, which is the command that prints it; the
+  `--spec` key list, which is `author_test`'s own schema and
+  `noodle author --vocabulary`; and three over-long `probe --help` strings.
+  test_nood_0231 pins the resulting headroom as a FLOOR, the NOOD_0160
+  mechanism, so the next branch cannot quietly spend this back.
+
+  Also recorded here because the next cost review will need it: the
+  ALWAYS-ON SURFACES ARE ~13% OF A SESSION PREAMBLE, NOT 51%. A reviewed
+  37.4-AIC session measured a 26,465-token preamble and attributed the
+  majority of the bill to it; ~3,500 of those tokens are AGENTS.md plus the
+  skill card, and the rest is the host's system prompt and tool schemas,
+  which this repo does not own. A plan that proposes to save 6-8 AIC by
+  trimming these two files is asking for more than deleting both would
+  yield. The lever that works is the PAYLOAD side (NOOD_0217 green diet,
+  NOOD_0231 blocked diet and probe dedup), which is measured per test case
+  by regression.py's `payload_tokens`.
 """
 from __future__ import annotations
 

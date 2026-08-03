@@ -840,6 +840,50 @@ def _closest_first(target: str, names: list[str]) -> list[str]:
         reverse=True)
 
 
+def _tuples(blocks: list) -> list:
+    """Provenance tuples from either shape a caller holds — (block, phase,
+    trigger) as _page_blocks builds them, or plain block dicts."""
+    return [b if isinstance(b, tuple) else (b, "initial", None)
+            for b in blocks or ()]
+
+
+def repeat_count(name: str, blocks: list) -> int:
+    """NOOD_0231 (P-6) — how many probed controls answer to this exact name.
+
+    The same two proofs _locate's ambiguity gate uses, so the up-front warning
+    and the eventual hard block can never disagree: N distinct selectors
+    sharing one name, and the probe's own `unique: False` / `matches: N`
+    verdict on a card family it collapsed to a single representative control.
+    The max of the two — a collapsed family is one entry in the inventory and
+    still twenty elements on the page."""
+    n = _norm(name)
+    if not n:
+        return 0
+    hits = [c for c, _, _ in _iter_controls(_tuples(blocks))
+            if _norm(c.get("name")) == n]
+    if not hits:
+        return 0
+    sels = {c.get("selector") for c in hits if c.get("selector")}
+    proved = max((c.get("matches") or 0) for c in hits
+                 if c.get("unique") is False) if any(
+                     c.get("unique") is False for c in hits) else 0
+    return max(len(sels) or 1, proved)
+
+
+def _ambiguity_tag(name: str, blocks: list) -> str:
+    """NOOD_0231 (P-6) — the `(×N …)` tail on a SUGGESTED name that is itself
+    repeated.
+
+    The measured lap this removes: lap 1 answered five unmatched targets with
+    a candidate list, lap 2 adopted one of those candidates verbatim, and lap
+    3 was the first to learn it matched twenty per-card controls. Every one of
+    those twenty was already in lap 1's inventory. Saying it beside the
+    suggestion costs ~12 bytes and removes a whole round trip."""
+    n = repeat_count(name, blocks)
+    return (f" (×{n} — repeated per row/card; needs within:)"
+            if n > _DUPLICATE_CEILING else "")
+
+
 def _near_miss(target: str, blocks: list, kind: str = "control") -> str:
     """NOOD_0207 — ' — did you mean "X"? (probed here: …)', or ''.
 
@@ -847,6 +891,12 @@ def _near_miss(target: str, blocks: list, kind: str = "control") -> str:
     fixes it and shipped only the problem statement, so the repair was a
     re-probe instead of a one-word edit. The `suggest:` branch already did
     exactly this for typeahead options; this is that pattern, everywhere.
+
+    NOOD_0231 (P-5/P-6) — two corrections measured on a 37.4-AIC session:
+    the suggestion is never the string that was just rejected (`did you mean
+    "BBQ Chicken"?` in answer to `click "BBQ Chicken"` reads as an engine
+    fault and cost four exploratory probes), and a suggested name that is
+    itself repeated says so where it is read.
 
     ponytail: difflib over the probed names, cap 8 — the names ride the
     payload, and a shortlist longer than that is a probe dump, not a hint."""
@@ -858,11 +908,77 @@ def _near_miss(target: str, blocks: list, kind: str = "control") -> str:
     if not names:
         return ""
     ranked = _closest_first(target, names)
-    near = difflib.get_close_matches(target or "", names, 1, 0.6)
-    shown = ", ".join(f'"{n}"' for n in ranked[:8])
+    # NOOD_0231 — a "did you mean X?" whose X normalizes to the target is not
+    # a hint; it is the engine restating the rejection. _block_texts spans
+    # headings and card captions as well as control names, so an exact TEXT
+    # hit lands here every time the caller named something unclickable —
+    # which is the diagnosis _text_node_hint gives instead.
+    tn = _norm(target)
+    near = [n for n in difflib.get_close_matches(target or "", names, 2, 0.6)
+            if _norm(n) != tn]
+    # Tagged in the candidate list, ONCE — every listed name carries its own
+    # count, so whichever the caller adopts is warned, and the top suggestion
+    # (always in this list) is not warned twice. The ' — did you mean "X"?
+    # (probed ' shape stays byte-exact: goal.py's _NEAR_MISS_HIT reads X back
+    # out to build the offered repair, so no tag may sit inside it.
+    shown = ", ".join(f'"{n}"' + _ambiguity_tag(n, blocks) for n in ranked[:8])
     return ((f' — did you mean "{near[0]}"?' if near else "")
             + f" (probed {kind}s here: {shown}"
             + (f", +{len(ranked) - 8} more" if len(ranked) > 8 else "") + ")")
+
+
+def _text_node_hint(target: str, blocks: list, do: str = "click") -> str:
+    """NOOD_0231 (P-5) — 'that is TEXT, not a control; the control is X', or ''.
+
+    The self-contradictory blocker this replaces, emitted verbatim by a
+    reviewed session:
+
+        click "BBQ Chicken": no probed control matches that name — did you
+        mean "BBQ Chicken"?
+
+    Both halves were true and neither was useful. `BBQ Chicken` is a card
+    CAPTION; the actionable control inside that card is its own button, which
+    the probe had already captured under `result_items[].actions[]`. The
+    engine held every fact needed to say so and connected none of them, so the
+    control inventory read as untrustworthy and the session bought four more
+    probes.
+
+    Recommends a rewrite ONLY when exactly one actionable control sits inside
+    the matched caption's own card — the nearest-actionable heuristic picks
+    the wrong sibling on a dense grid, and a wrong-row click can still pass,
+    which is the worst outcome available here. With several, the candidates
+    are listed and the choice stays with the caller."""
+    t = _norm(target)
+    if not t:
+        return ""
+    for blk in (b[0] if isinstance(b, tuple) else b for b in blocks or ()):
+        for it in blk.get("result_items") or []:
+            cap = it.get("caption") or ""
+            if not cap or not (_norm(cap) == t or _contains(t, _norm(cap))):
+                continue
+            acts = list(dict.fromkeys(
+                a["name"] for a in it.get("actions") or [] if a.get("name")))
+            head = (f'"{target}" is card TEXT the probe read on this page, '
+                    "not an actionable control")
+            if len(acts) == 1:
+                return (f'{head} — the one control inside that card is '
+                        f'"{acts[0]}": use {{do: {do}, target: "{acts[0]}", '
+                        f'within: "{cap}"}}')
+            if acts:
+                return (f'{head} — that card carries '
+                        + ", ".join(f'"{a}"' for a in acts[:6])
+                        + f'; pick the one you meant and scope it with '
+                        f'within: "{cap}"')
+            return (f'{head}, and the probe captured no control of its own '
+                    f'inside that card — use "{cap}" as a `within:` anchor '
+                    "for a control named elsewhere on the page, or click the "
+                    "card's own link if the probe listed one")
+        for h in blk.get("headings") or []:
+            if _norm(h) == t:
+                return (f'"{target}" is a HEADING on this page, not an '
+                        "actionable control — name the control you meant, or "
+                        f'use it as a `within:` anchor')
+    return ""
 
 
 def _do_label_target(label: str) -> str:
@@ -1169,6 +1285,48 @@ def _check_scope(check: dict, goal: dict) -> str:
     return "search" if anchor_i >= search_i else "initial"
 
 
+def _provisional(actions: list, blocks: list, blocking: list[str],
+                 pinned=frozenset()) -> list[str]:
+    """NOOD_0231 (P-4/P-6) — every problem the inventory ALREADY proves,
+    reported in this lap even when the action never blocked in it.
+
+    The measured failure: goal validation resolves each action against the
+    state the probe reached, so an action past a halted chain — or past the
+    reach gate, where NOOD_0226 correctly defers it to the run — contributes
+    nothing to `blocking`. Its problem surfaces one lap later, when an earlier
+    fix lets validation walk that far. Five blockers on lap 1, one on lap 2,
+    one on lap 3: n ambiguous steps cost n laps, and every fact needed to say
+    so was in lap 1's control inventory.
+
+    These are ADVISORY, never a hard fail, and they live in their own key —
+    the plan's own risk note is the reason: a provisional finding can be wrong
+    (a control genuinely may not exist until an earlier action fires), and an
+    advisory that is wrong costs a reading, while a hard block that is wrong
+    costs the whole flow. Only the one class the inventory can prove without
+    reaching the page is emitted: a repeated control name with nothing to
+    scope it.
+    """
+    out: list[str] = []
+    for a in actions or []:
+        if not isinstance(a, dict) or not a.get("target"):
+            continue
+        if a.get("within") or _norm(a.get("target")) in pinned:
+            continue                    # already answered "which one?"
+        target = str(a["target"])
+        # Already said in this lap's `blocking` — a provisional twin of a
+        # confirmed finding is noise, and reads as two problems.
+        if any(f'"{target}"' in b for b in blocking or []):
+            continue
+        n = repeat_count(target, blocks)
+        if n > _DUPLICATE_CEILING:
+            out.append(
+                f'{a["do"]} "{target}": {n} probed controls share this exact '
+                "name. This action was not reached in this lap, so it is not "
+                "blocking yet — it will be, on the lap that reaches it. Scope "
+                'it now: within: "<text unique to the intended row/card>"')
+    return out
+
+
 def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
     """Match every requested action/check against what the probe proved.
 
@@ -1180,7 +1338,7 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
     is never dropped or broadened — EXCEPT a check anchored after data the probe
     never entered, which becomes a `runtime_asserted` check the run must pass."""
     def _empty(blocking: list[str]) -> dict:
-        return {"blocking": blocking,
+        return {"blocking": blocking, "provisional": [],
                 "proven": {}, "runtime_asserted": [], "permission_prompts": [],
                 "popups_closed": 0, "results_summary": None, "controls": {},
                 "bound_targets": {}, "resolved_controls": {},
@@ -1649,9 +1807,14 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
             scope_blocks = ([(picked_blk, "picked", None)]
                             if after_pick and picked_blk is not None
                             and _block_texts(picked_blk) else blocks)
+            # NOOD_0231 (P-5) — the target is text, not a control? Say THAT,
+            # and name the control inside its card. The generic near miss is
+            # what produced `did you mean "<the string you just rejected>"?`.
+            text_hint = _text_node_hint(a["target"], scope_blocks, a["do"])
             blocking.append(f'{a["do"]} "{a["target"]}": '
-                            + (note or "no probed control matches that name"
-                               + _near_miss(a["target"], scope_blocks))
+                            + (note or (text_hint
+                               or "no probed control matches that name"
+                               + _near_miss(a["target"], scope_blocks)))
                             + _searched_clause(scope_blocks)
                             + _reach_clause(actions, reach, i)
                             + (_do_fail_clause(do_failed, pg)
@@ -1929,7 +2092,9 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
     headings = [h for blk, ph, _ in blocks
                 if ph in ("initial", "reveal", "search", "performed")
                 for h in blk.get("headings", []) if str(h).strip()]
-    return {"blocking": blocking, "proven": proven,
+    provisional = _provisional(actions, blocks, blocking, pinned)
+    return {"provisional": provisional,
+            "blocking": blocking, "proven": proven,
             "proven_phase": proven_phase, "runtime_asserted": runtime,
             "permission_prompts": pg.get("permission_prompts", []),
             "popups_closed": pg.get("popups_closed", 0),

@@ -1344,7 +1344,10 @@ def _route_repair(goal: dict, goal_ev: dict, probe_result: dict,
 # NOOD_0217 — on a green result these keys are failure-diagnosis provenance:
 # they earn their bytes exactly when something is wrong, and cost ~5 KB per
 # call when nothing is. The failure path keeps every one of them.
-_GREEN_AUTHOR_DROP = ("compiled", "intent", "intent_trace", "probe_summary")
+# NOOD_0231 — provisional_* goes too: a green, verified run is the proof the
+# deferred action resolved, so the advisory it earned is answered.
+_GREEN_AUTHOR_DROP = ("compiled", "intent", "intent_trace", "probe_summary",
+                      "provisional_blocking", "provisional_means")
 _GREEN_RUN_DROP = ("output", "healing_events")
 
 
@@ -1384,6 +1387,16 @@ def collapse_green(result: dict, workspace: str = ".") -> dict:
         out["prompt_expansion"] = {
             k: v for k, v in out["prompt_expansion"].items()
             if k not in ("coverage", "inferences", "goal")}
+    _spill(result, out, workspace)
+    return out
+
+
+def _spill(result: dict, out: dict, workspace: str) -> None:
+    """Write the FULL envelope beside the workspace and point the diet at it.
+
+    Nothing a collapse drops is lost — it is moved off the per-call token
+    bill. Best-effort: an unwritable workspace means a slightly fatter
+    payload, never a failed authoring call."""
     try:
         p = Path(workspace) / ".noodle" / "last_payload.json"
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -1392,7 +1405,81 @@ def collapse_green(result: dict, workspace: str = ".") -> dict:
         out["full_payload"] = str(p.resolve())
     except OSError:
         pass
+
+
+# NOOD_0231 (P-2) — the mirror of _GREEN_AUTHOR_DROP for a BLOCKED lap.
+# Measured on a reviewed 37.4-AIC session: two blocked laps returned ~3,000
+# tokens each and ~6 lines of it were actionable. Every key here is either a
+# verbatim echo of what the caller just submitted (`intent`), a trace of it
+# (`intent_trace`), the compiled artifacts that are already on disk at
+# `feature`/`pom` (`compiled`), a one-line narration of a probe whose findings
+# `blocking` already quotes (`probe_summary`), or the proven-facts ledger for
+# a test that is not going to run (`evidence`). What survives is the repair:
+# `blocking`, `next`, `next_action`, `repair`, the file paths and the reports.
+_BLOCKED_AUTHOR_DROP = ("compiled", "intent", "intent_trace", "probe_summary",
+                        "evidence")
+
+
+def _verbose_blocked() -> bool:
+    """NOOD_0231 — opt back into the full blocked payload.
+
+    The skill card already forbids hand-authoring around a blocker, so the
+    compiled Gherkin is not on the repair path; a caller who genuinely wants
+    to read it has the `feature`/`pom` paths and `full_payload`. This is the
+    escape hatch for the case that argument doesn't cover."""
+    return os.getenv("NOODLE_VERBOSE_BLOCKED", "").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
+def collapse_blocked(result: dict, workspace: str = ".",
+                     verbose: bool | None = None) -> dict:
+    """NOOD_0231 (P-2) — the agent-door diet for a BLOCKED authoring payload.
+
+    Symmetric with collapse_green: a lap that produced no runnable test pays
+    only for the reason it didn't. Handles both shapes the doors see — the
+    atomic `{ok, author, run}` envelope and the bare authoring result
+    (run_after_author=False, where `ok` is True and `ready` is False) — and
+    de-duplicates `blocking`, which used to ride in BOTH `author.blocking`
+    and `run.blocking` on the same payload.
+
+    Never touches a payload that is not blocked, and never touches the
+    internal result: regression.py and the REPL envelope read the full shape.
+
+    `verbose` is the caller's explicit opt-out (the CLI flag); None falls
+    back to the env var, which is how an MCP host asks. A flag must never
+    reach this by writing os.environ — a process-wide mutation from one
+    command leaks into everything that runs after it.
+    """
+    if verbose is None:
+        verbose = _verbose_blocked()
+    if not isinstance(result, dict) or verbose:
+        return result
+    author = result.get("author") if isinstance(result.get("author"), dict) \
+        else result
+    if author.get("ready") is not False or not author.get("blocking"):
+        return result
+    slim = {k: v for k, v in author.items() if k not in _BLOCKED_AUTHOR_DROP}
+    if author is result:
+        out = slim
+    else:
+        out = {**result, "author": slim}
+        run = result.get("run")
+        if isinstance(run, dict) and run.get("blocking") == author["blocking"]:
+            # NOOD_0212 kept `run.blocking` because a BLOCKED-CONTRACT refusal
+            # reports a different list than this lap's. Identical lists are
+            # the other case — a pure duplicate — and only those are dropped.
+            out["run"] = {k: v for k, v in run.items() if k != "blocking"}
+    _spill(result, out, workspace)
     return out
+
+
+def collapse_payload(result: dict, workspace: str = ".",
+                     verbose_blocked: bool | None = None) -> dict:
+    """The agent-door diet, both halves: a green lap collapses to the verdict
+    (NOOD_0217), a blocked lap to the repair (NOOD_0231). Exclusive by
+    construction — a payload is one or the other — so composing is safe."""
+    return collapse_blocked(collapse_green(result, workspace=workspace),
+                            workspace=workspace, verbose=verbose_blocked)
 
 
 def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
@@ -1950,6 +2037,15 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     }
     if wok_tag_added:
         result["wok_tag"] = wok_tag_added
+    # NOOD_0231 (P-4/P-6) — problems the probe's inventory already proves for
+    # actions this lap never reached. Its own key, never folded into
+    # `blocking`: advisory by contract, and `ready` must not move on it.
+    if goal_ev and goal_ev.get("provisional"):
+        result["provisional_blocking"] = list(goal_ev["provisional"])
+        result["provisional_means"] = (
+            "not blocking THIS lap — the actions above were not reached, so "
+            "this is what the probe already proves will block a later one. "
+            "Advisory: fix them in the same edit and skip the lap.")
     # NOOD_0213 — a goal blocked ONLY by unprovable see-checks carries a
     # ready-to-send repaired goal, so the drop-or-reword decision costs one
     # field, not a hand-rebuilt goal (the drill's TC1 lap).

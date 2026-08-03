@@ -9,9 +9,8 @@ Universal BDD, plain-English Gherkin on a curated pattern table (no
 step code). Independent woks, none a sub-mode of another: **web** UI
 (Playwright) · **api** REST, browserless, `@api`
 (`read_docs('steps_dictionary', query='REST')`) · mobile · desktop ·
-perf. Never say Noodle can't — check the wok first. Locators: accessible-name → POM yaml →
-self-heal; every run writes Allure + RCA. Deep dive:
-`read_docs('agent-playbook')`.
+perf. Never say Noodle can't — check the wok first. Every run writes
+Allure + RCA. Deep dive: `read_docs('agent-playbook')`.
 
 Nouns: engine = framework repo/install; workspace = `noodle init` test
 project; wok = capability work area, tag-routed
@@ -39,6 +38,9 @@ engine gap to report — a shell command only hides it.
   `--do` transaction into ONE probe — never per stage or re-probe to
   grep. One `--do` chains on `, <verb>` (`click A in the row containing
   X, click B`). `suggested_steps`/`pom_yaml` are copy-ready — paste.
+  Cost flags, on by choice: `--brief` (templates once), `--delta`
+  (chained `--do`: newest stage only), `--find`, `--max-controls`.
+  Repeated step + `(×N)` = one control per card; scope with `within:`.
 - Goal mode is the rule for a new single-flow test: spec `goal:` +
   `--run` (`run_after_author=True`) — probes, compiles feature+POM,
   runs once, serves; 0 passed = failure; budget = 1 probe, 1 run.
@@ -53,8 +55,7 @@ engine gap to report — a shell command only hides it.
   stand in); `evidence: screenshot` attaches the capture to that
   verify Then, never a standalone shot step. Checks anchor per page:
   `after: start` = landing, `after: <id>` = that action's page, none
-  = end state. Unproven extras block —
-  blockers are hard stops.
+  = end state. Unproven extras block; blockers are hard stops.
 
 ```yaml
 goal:  # an OBJECT, never a string; rejections return this example
@@ -78,9 +79,8 @@ Every `do:` — inventing one is rejected (`target` = a control name,
   misspelled and the prompt right.
 
 - `--spec <inline|file|->`; multi-line → `--spec-text '<doc>'`, one
-  argument — no file, no redirection. Keys = `author_test` args: app_name,
-  base_url, feature_path, feature_content, pom_content, brief,
-  environment_values, secret_values, overwrite.
+  argument — no file, no redirection. Keys = `author_test` args
+  (`noodle author --vocabulary`).
 - Evidence the user asked for → `--brief "<ask>"` (`brief=`), which works
   WITH feature_content; engine emits `@evidence:steps=`. A screenshot
   request inside step text is refused at parse time.
@@ -96,7 +96,7 @@ Every `do:` — inventing one is rejected (`target` = a control name,
   extra RCA/report/serve calls repeat it. Never claim green past
   `report_scope.features_run` — the report accumulates, the run doesn't.
 - "run feature-regression" → `noodle feature-regression`. ONE call:
-  generates the three test cases, runs, serves, prints the table.
+  generates every test case, runs, serves, prints the table.
   Never hand-build `results.json` or read host telemetry.
 - Fastest path first: only standard-visible-control pages skip the
   probe; hidden/config/custom/SPA probe first (`--discover`,
@@ -142,10 +142,10 @@ Wrong element? `noodle inspect <url> "<phrase>"` (`inspect_locator`).
 
 ## Workspace
 
-`noodle init <ws>` scaffolds; each app self-contained:
-`features/`, `resources/` (env yaml, gitignored `<app>_secrets.env`,
-`pageobjects/*_pom.yaml`), `report/`. `noodle workspace inspect`
-(`list_workspace_resources`) lists it — never `ls`.
+`noodle init <ws>` scaffolds; each app self-contained (features,
+resources incl. the gitignored `<app>_secrets.env`, report).
+`noodle workspace inspect` (`list_workspace_resources`) lists it —
+never `ls`.
 
 ## Fixing failures
 
@@ -158,6 +158,6 @@ Wrong element? `noodle inspect <url> "<phrase>"` (`inspect_locator`).
 4. Locator/state failure? Reproduce the state ONCE (`probe --do
    "<flow>"`), re-author from its delta — never a guessed fix per lap.
 
-`@quarantine` (with a comment) a confirmed external bug; Operation 3 already serves; re-host
-an older run: `noodle report serve <stamp>` (`serve_report`) —
-never `allure serve`, `http.server`, or `file://`.
+`@quarantine` (with a comment) a confirmed external bug; re-host an
+older run: `noodle report serve <stamp>` (`serve_report`) — never
+`allure serve`, `http.server`, or `file://`.

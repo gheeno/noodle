@@ -14,6 +14,22 @@ ledger: the first measured how lost the DRIVING AGENT got (and on a host
 with no billing API could only be guessed), the second read "none" every
 run because the engine takes the deterministic fast path. The benchmark
 measures the engine. Generated line count is the size signal that moves.
+
+NOOD_0231 puts a COST column back — but an engine-side one, which is why
+it survives where the host-AIC column did not. `payload_tokens` is the
+size of what the engine hands the driving agent for one test case: the
+authoring payload as it leaves the agent door (collapse_payload applied,
+exactly what an MCP/CLI caller reads), plus every probe payload the same
+lap produced. It is deterministic, needs no billing API, is identical on
+every machine, and it moves the moment a payload grows — which is the
+only part of an agent's token bill the engine controls. The host's own
+preamble and the model's reasoning are NOT in it and must not be: the
+engine cannot change them, and a number nobody can act on is the reason
+the old column was dropped.
+
+Tokens are bytes ÷ 4 — the standard English approximation, stated as an
+approximation. A tokenizer dependency would buy a second decimal place
+on a number whose only job is to move when a payload does.
 """
 import json
 import os
@@ -105,17 +121,49 @@ PROMPTS = [
 6. Verify: Gadget is added to cart"""},
 ]
 
-# Per-test-case ceilings — the definition of "not regressed": on time and
-# accurate. Each is overridable with its env var when a deliberately slower
-# machine or site is in play.
+# Per-test-case ceilings — the definition of "not regressed": on time,
+# accurate, and CHEAP. Each is overridable with its env var when a
+# deliberately slower machine or site is in play.
+#
+# NOOD_0231 — max_payload_tokens is the cost ceiling. Measured baseline on
+# 1.0.0a45: 978 / 1029 / 1033 / 1092 / 1239 tokens, average 1074 (tc1 and tc5
+# include a re-author lap, so the worst case already carries two payloads).
+# 2500 is a little over 2× the worst case: loose enough that ordinary drift
+# never cries wolf, tight enough that the ~3,000-token blocked lap this
+# ticket removed would trip it the moment it came back. The gate is for a
+# payload REGRESSION, not for litigating ±10%.
 _DEFAULTS = {
     "max_elapsed_s": ("NOODLE_REG_MAX_ELAPSED_S", 120),
     "max_corrections": ("NOODLE_REG_MAX_CORRECTIONS", 2),
+    "max_payload_tokens": ("NOODLE_REG_MAX_PAYLOAD_TOKENS", 2500),
 }
 
 
 def budget() -> dict:
     return {k: float(os.getenv(env, d)) for k, (env, d) in _DEFAULTS.items()}
+
+
+def payload_tokens(res: dict, workspace: str) -> int:
+    """NOOD_0231 — approximate tokens the DRIVING AGENT reads for one lap.
+
+    Measured at the agent door, not on the internal result: `collapse_payload`
+    is what an MCP tool call and `noodle author --json` actually return, so
+    this is the bill a caller pays, and the P-2 blocked-payload diet shows up
+    in it. Bytes ÷ 4, the standard English approximation — see the module
+    docstring for why that is the right precision here.
+
+    Never fails a benchmark run: an unserializable payload scores 0 rather
+    than taking the case down, because cost is a secondary AC.
+    """
+    from noodle.repl import core
+    try:
+        # Round-trip first: collapse must never see (or mutate) the live
+        # result dict the rest of the case still reads.
+        copy = json.loads(json.dumps(res, default=str))
+        door = core.collapse_payload(copy, workspace=workspace)
+        return round(len(json.dumps(door, default=str).encode()) / 4)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _keep_attempt(workspace: str, case_id: str, lap: int, res: dict) -> None:
@@ -163,11 +211,16 @@ def _case(prompt: dict, workspace: str) -> dict:
         kw = {"prompt": prompt["content"], "run_after_author": True,
               "workspace": workspace}
     res = core.author_test(**kw)
+    # NOOD_0231 — cost accrues per LAP, like time and corrections do. A
+    # blocked first lap that the agent then has to read is exactly the spend
+    # this column exists to expose, so it is summed, never overwritten.
+    tokens = payload_tokens(res, workspace)
     reauthors = 0
     if not (res.get("author") or {}).get("ready"):
         _keep_attempt(workspace, prompt["id"], 1, res)
         reauthors = 1
         res = core.author_test(**kw, overwrite=True)
+        tokens += payload_tokens(res, workspace)
     elapsed = time.monotonic() - t0
     author, run = res.get("author") or {}, res.get("run") or {}
     compiled = author.get("compiled") or {}
@@ -184,6 +237,9 @@ def _case(prompt: dict, workspace: str) -> dict:
             "corrections": reauthors + len(run.get("healing_events") or [])
                            + len(run.get("flaky") or []),
             "lines": lines,
+            # NOOD_0231 — the cost AC: what generating THIS test case cost the
+            # driving agent to read, summed over its laps.
+            "payload_tokens": tokens,
             "green": bool(res.get("ok")) and not run.get("failed"),
             # `intent_verified` answers "did the COMPILED goal match probe
             # evidence" — it is `goal is not None and not blocking`, so it is
@@ -324,6 +380,15 @@ def score(results: dict, workspace: str | None = None) -> dict:
                          f"{b['max_elapsed_s']:.0f}s (run time excluded)")
         if tc.get("corrections") is not None and tc["corrections"] > b["max_corrections"]:
             fails.append(f"inaccurate: {tc['corrections']} corrections > {b['max_corrections']:.0f}")
+        # NOOD_0231 — the cost AC. Absent (a results.json from an older
+        # build) is not a breach: re-scoring an archived run must not
+        # manufacture a regression out of a column that did not exist.
+        if tc.get("payload_tokens") and \
+                tc["payload_tokens"] > b["max_payload_tokens"]:
+            fails.append(
+                f"expensive: {tc['payload_tokens']:.0f} payload tokens > "
+                f"{b['max_payload_tokens']:.0f} — the agent-door payload for "
+                "this test case grew")
         if tc.get("green") is False:
             # NOOD_0208 — carry the cause, not just the verdict. "final run
             # not green" is a restatement of the column the reader is already
@@ -336,7 +401,8 @@ def score(results: dict, workspace: str | None = None) -> dict:
         tcs.append({"id": tc.get("id", f"tc{i + 1}"), "pass": not fails, "failures": fails,
                     "development_s": dev,
                     **{k: tc.get(k) for k in ("elapsed_s", "run_s", "corrections",
-                                              "lines", "green", "verified",
+                                              "lines", "payload_tokens",
+                                              "green", "verified",
                                               "error")}})
         regressions += [f"{tcs[-1]['id']}: {f}" for f in fails]
     if len(tcs) < len(PROMPTS):
@@ -348,7 +414,8 @@ def score(results: dict, workspace: str | None = None) -> dict:
 
     average = {"development_s": _avg("development_s"), "run_s": _avg("run_s"),
                "elapsed_s": _avg("elapsed_s"), "corrections": _avg("corrections"),
-               "lines": _avg("lines")}
+               "lines": _avg("lines"),
+               "payload_tokens": _avg("payload_tokens")}
     # NOOD_0188 — the artifacts get the last word on the pass claims.
     audit_notes = audit(results, workspace) if workspace is not None else []
     regressions += [n for n in audit_notes if n.startswith("self-report")]
@@ -374,11 +441,13 @@ def render_html(verdict: dict) -> str:
     for t in v["test_cases"]:
         rows += (
             "<tr><td>{id}</td><td>{ok}</td><td><b>{dev}</b></td><td>{run}</td>"
-            "<td>{corr}</td><td>{lines}</td><td>{fails}</td></tr>".format(
+            "<td>{corr}</td><td>{lines}</td><td>{tok}</td><td>{fails}</td></tr>"
+            .format(
                 id=t["id"], ok="✅" if t["pass"] else "❌",
                 dev=f"{t['development_s']}s" if t.get("development_s") is not None else "—",
                 run=f"{t['run_s']}s" if t.get("run_s") is not None else "—",
                 corr=t.get("corrections", "—"), lines=t.get("lines", "—"),
+                tok=t.get("payload_tokens") or "—",
                 fails="; ".join(t["failures"]) or "—"))
     b = v["budget"]
     return f"""<!doctype html><meta charset="utf-8">
@@ -391,14 +460,18 @@ table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #d0d7de;padd
 case — <b>development time</b> (how long generation took: total wall clock
 minus the generated test's own run time), <b>accuracy</b> (engine corrections
 needed + green&amp;verified run), <b>size</b> (generated .feature + POM
-lines — is the engine still generating simple tests):</p>
+lines — is the engine still generating simple tests), <b>cost</b>
+(approximate tokens the driving agent reads for this test case, summed over
+its authoring laps — engine-side only, so it is the same on every machine):</p>
 <table><tr><th>test case</th><th>pass</th><th>development</th><th>run</th>
-<th>corrections</th><th>lines</th><th>why not</th></tr>{rows}</table>
+<th>corrections</th><th>lines</th><th>tokens</th><th>why not</th></tr>{rows}</table>
 <p><b>Averages:</b> {v["average"]["development_s"]}s development,
 {v["average"]["run_s"]}s run, {v["average"]["corrections"]} corrections,
-{v["average"]["lines"]} generated lines per test case.
+{v["average"]["lines"]} generated lines, {v["average"].get("payload_tokens")}
+payload tokens per test case.
 <b>Budget:</b> ≤{b["max_elapsed_s"]:.0f}s development,
-≤{b["max_corrections"]:.0f} corrections per TC.</p>
+≤{b["max_corrections"]:.0f} corrections,
+≤{b["max_payload_tokens"]:.0f} payload tokens per TC.</p>
 {"".join(f"<p>⚠ {r}</p>" for r in v["regressions"])}
 {"".join(f'<p style="color:#57606a">🔎 audit: {a}</p>' for a in v.get("audit") or [])}
 <p><a href="allure-report/index.html">Allure report</a> · <a href="rca.html">RCA report</a></p>
@@ -418,17 +491,18 @@ def render_table(verdict: dict) -> str:
     rows = [f"🧪 feature-regression — noodle {v.get('engine') or 'unknown'}",
             f"   workspace: {v.get('workspace') or '—'}", "",
             f"   {'TEST CASE':<26}{'GENERATE':>9}{'RUN':>7}{'CORR':>7}"
-            f"{'LINES':>7}  {'GREEN':<7}{'VERIFIED'}"]
+            f"{'LINES':>7}{'TOKENS':>8}  {'GREEN':<7}{'VERIFIED'}"]
     for t in v["test_cases"]:
         rows.append(
             f"   {t['id']:<26}{_s(t.get('development_s')):>9}"
             f"{_s(t.get('run_s')):>7}{_n(t.get('corrections')):>7}"
-            f"{_n(t.get('lines')):>7}"
+            f"{_n(t.get('lines')):>7}{_n(t.get('payload_tokens')):>8}"
             f"  {'✅' if t.get('green') else '❌':<6}{'✅' if t.get('verified') else '❌'}")
     a = v["average"]
     rows += ["   " + "─" * 72,
              f"   {'average':<26}{_s(a['development_s']):>9}{_s(a['run_s']):>7}"
-             f"{_n(a['corrections']):>7}{_n(a['lines']):>7}",
+             f"{_n(a['corrections']):>7}{_n(a['lines']):>7}"
+             f"{_n(a.get('payload_tokens')):>8}",
              "", f"   VERDICT: {v['verdict']}"]
     rows += [f"   ⚠ {r}" for r in v["regressions"]]
     rows += [f"   🔎 audit: {n}" for n in v.get("audit") or []]

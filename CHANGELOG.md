@@ -4,6 +4,125 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a45] — 2026-08-03
+
+**NOOD_0231** — feature: the engine stops charging an agent twice for what it
+already said. A reviewed session authored ONE green scenario for 37.4 AIC.
+The post-mortem split the bill: 51% was paid before any noodle command ran
+(uncached preamble writes — not engine-owned, see the honest arithmetic
+below), 4% was a harness-level skill re-injection, and 44% was nine round
+trips whose payloads grew 14,041 tokens. Everything the engine owns in that
+44% is fixed here.
+
+**Repeated step templates collapse (P-3).** A 12-card grid printed
+`selects "<option>" from "size:"` twelve times — ~350 tokens per probe to
+convey one fact — and, worse, the byte-identical twins ate the display cap,
+so the DISTINCT steps behind them fell off the list and the next lap
+re-probed to find them. `_step_lines` and `_compact_page` now dedup by the
+step sentence BEFORE the cap and carry `(×N)` plus a `within:` hint instead.
+The count is not decoration: it is the same ambiguity the goal compiler would
+otherwise raise a lap later. JSON callers get `repeated_steps` (entry →
+count) and one `repeated_steps_note` per payload.
+
+**A blocked lap pays only for the repair (P-2).** Each blocked authoring lap
+returned ~3,000 tokens of which roughly six lines were actionable, and
+shipped `blocking` twice — once under `author`, once under `run`.
+`core.collapse_blocked` is the mirror of NOOD_0217's green diet: it drops
+`compiled` (already on disk at `feature`/`pom`), `intent` (a verbatim echo of
+the submitted spec), `intent_trace`, `probe_summary` and `evidence`, and
+de-duplicates `blocking` — but only when the two lists are identical, so
+NOOD_0212's blocked-CONTRACT refusal keeps reporting the contract's own
+blockers. Nothing is lost: the full envelope is written to
+`.noodle/last_payload.json` and the payload points at it. Both shapes are
+handled (the atomic `{ok, author, run}` envelope and the bare authoring
+result, whose `ok` is True while `ready` is False). `--verbose-blocked` /
+`NOODLE_VERBOSE_BLOCKED=1` opts all the way back in. Measured 85% smaller on
+the reviewed payload shape.
+
+**"Did you mean" stops repeating the rejection (P-5).** The measured blocker,
+verbatim: `click "BBQ Chicken": no probed control matches that name — did you
+mean "BBQ Chicken"?` Both halves were true and neither was useful.
+`BBQ Chicken` is a card CAPTION; the actionable control inside that card was
+in the probe's own `result_items[].actions[]` all along. The engine held every
+fact and connected none of them, so the control inventory read as
+untrustworthy and the session bought four more probes — the single largest
+work-phase cost. `_text_node_hint` now diagnoses text-vs-control and, when
+exactly ONE actionable control sits inside the matched caption's card,
+prescribes `{do: …, target: "…", within: "<caption>"}`. With several it lists
+them and recommends none: the nearest-actionable heuristic picks the wrong
+sibling on a dense grid, and a wrong-row click can still pass, which is the
+worst outcome available. The prescription is machine-readable —
+`goal._TEXT_NODE_FIX` turns it into an offered repair carrying the `within:`
+too, strictly more than the near-miss repair could offer.
+
+**Ambiguity is declared where it is read (P-6).** Lap 1 answered five
+unmatched targets with a candidate list, lap 2 adopted one verbatim, and lap
+3 was the first to learn it matched twenty per-card controls — all twenty
+already in lap 1's inventory. A suggested name that is itself repeated now
+carries `(×N — repeated per row/card; needs within:)` beside it, once, using
+the same two proofs `_locate`'s hard gate uses so the warning and the block
+can never disagree. The `— did you mean "X"? (probed ` wording is byte-exact
+by construction: `goal._NEAR_MISS_HIT` reads X back out of it.
+
+**Provisional findings, in the lap that can prove them (P-4).** Goal
+validation resolves each action against the state the probe reached, so an
+action past a halted chain — or past the reach gate, where NOOD_0226
+correctly defers it — contributed nothing to `blocking` and surfaced one lap
+later. `evidence()` now also returns `provisional`, surfaced as
+`provisional_blocking` + `provisional_means`. Advisory by contract: it never
+moves `ready`, it lives in its own key, and it covers only the one class the
+inventory can prove without reaching the page. A provisional finding can be
+wrong; a wrong advisory costs a reading, a wrong hard block costs the flow.
+
+**`noodle probe --delta` (P-7).** Walking a 7-verb chain needs one probe per
+verb (the next control's name is unknowable until the prior one executes),
+and each probe reprinted every stage before it — O(n²) output for O(n) new
+facts. `--delta` prints the newest reveal stage in full and collapses the
+landing page and each earlier stage to one line; JSON callers get
+`delta_skipped`. Opt-in, and a no-op when there are no reveal stages, so a
+single-shot probe can never be summarised away. Verdict keys (`author_ready`,
+`do_failed`, warnings) are never touched by it.
+
+**The cost flags exist on the surfaces that decide to use them (P-9).**
+`--brief` would have collapsed the 12× repeat entirely and appeared in no
+skill card; an agent does not look up a flag it has never heard of. `--brief`,
+`--delta`, `--find` and `--max-controls` are now named on both skill cards
+and in the scaffolded AGENTS.md — paid for, not borrowed: the resolution
+order stated twice in one card, the workspace directory catalog that
+`noodle workspace inspect` prints, the `--spec` key list that
+`author_test`'s own schema carries, and three over-long `probe --help`
+strings funded every byte. Every always-on surface ends this branch with MORE
+headroom than it started with (AGENTS.md 517→523, claude card 64→75, copilot
+157→168) and no cap moved — `probe --help` gained a flag inside its unchanged
+6400. A unit test pins the exact-byte surfaces as floors and the caps as
+constants; rendered help is not floored, because Windows measures 8 bytes more
+than macOS for the same command.
+
+**The benchmark measures cost again (`payload_tokens`).** NOOD_0190 dropped
+the host-AIC column because it measured how lost the driving agent got and,
+without a billing API, could only be guessed. This one is engine-side and
+therefore survives: the authoring payload as it leaves the agent door
+(`collapse_payload` applied — exactly what an MCP/CLI caller reads), summed
+over the case's laps, bytes ÷ 4. Deterministic, identical on every machine,
+zero LLM cost, and it moves the moment a payload grows. It is a scored AC
+(`max_payload_tokens`, `NOODLE_REG_MAX_PAYLOAD_TOKENS`) and a column in both
+the terminal table and `verdict.html`. An older `results.json` with no such
+column is not scored as a regression.
+
+**On P-1's arithmetic, corrected.** The plan projected −6 to −8 AIC from
+deduplicating AGENTS.md against the skill card, on the reading that the
+26,465-token preamble is engine-owned. It is not: AGENTS.md (5,621 B) and the
+skill card (8,629 B) are ~3,500 tokens of it — 13% — and the rest is the
+host's system prompt and tool schemas, which this repo cannot change. A total
+deletion of both surfaces could therefore not reach the projected saving, and
+the remaining overlap between them is not verbatim (test_nood_0131's shingle
+guard already forbids that) but semantic, with essentially every load-bearing
+clause pinned by a regression test recording a measured failure. Cutting
+those is the move NOOD_0191's ledger note refuses. So P-1 shipped as
+compression + a headroom floor rather than a trim, and the honest expected
+saving from it is ~0.2 AIC, not 6-8. P-8 (suppressing a redundant `skill`
+re-injection) is harness-level and cannot be implemented from this repo.
+
 ## [1.0.0a44] — 2026-08-03
 
 **NOOD_0230** — feature: the search→pick→add flow tells the truth and opens

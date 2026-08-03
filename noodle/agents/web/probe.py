@@ -3235,15 +3235,52 @@ def _rank_ready(controls: list[dict]) -> list[dict]:
                   else 2)
 
 
+# NOOD_0231 (P-3) — a card GRID stamps the same control into every card, so
+# the copy-ready list re-sent one byte-identical sentence per card: a 12-card
+# menu printed `selects "<option>" from "size:"` twelve times, ~350 tokens per
+# probe to convey one fact. Worse, the identical twins ate the cap, so the
+# DISTINCT steps below them fell off the list entirely and the next lap
+# re-probed to find them. Collapsing to one line + a count is strictly more
+# informative than N copies: the count IS the ambiguity warning the goal
+# compiler would otherwise raise a lap later (NOOD_0231 P-6 says the same
+# thing at validation time), and the freed cap slots carry real steps.
+_REPEATED_HINT = ('one control per repeated row/card — scope each of these '
+                  'actions with within: "<text unique to that row/card>"')
+
+
+def _repeat_suffix(n: int) -> str:
+    """The `(×N …)` tail on a collapsed step line, or '' when it is unique."""
+    return (f'  (×{n} — one per repeated row/card; scope with within: '
+            '"<text unique to that row/card>")') if n > 1 else ""
+
+
+def _collapse_repeats(items: list, key=lambda x: x) -> tuple[list, dict]:
+    """Order-preserving dedup of `items` by `key(item)`.
+
+    Returns (first occurrence of each key, {key: count}) — counted over the
+    WHOLE list, before any cap, so the count is the page's truth and not an
+    artifact of where the cap fell."""
+    first: dict = {}
+    counts: dict = {}
+    for it in items:
+        k = key(it)
+        counts[k] = counts.get(k, 0) + 1
+        first.setdefault(k, it)
+    return list(first.values()), counts
+
+
 def _step_lines(controls: list[dict], indent: str = "  ",
                 cap: int | None = None, brief: bool = False) -> list[str]:
     """NOOD_0131 — compact mode: copy-ready steps for the controls that need
     NO POM entry (visible, readable name). The needs-POM list filters those
     out, and hiding their steps made the baseline re-probe `steps`/`revealed`
-    per control. Bounded by the same cap as the control lists."""
+    per control. Bounded by the same cap as the control lists.
+
+    NOOD_0231 — repeats collapse to one line + `(×N)` BEFORE the cap."""
     ready = _rank_ready([c for c in controls
                          if not _compact_keep(c) and not _tile_caption(c)
                          and not _is_consent_noise(c)])
+    ready, counts = _collapse_repeats(ready, key=lambda c: c.get("step") or "")
     shown, hidden = _cap(ready, cap)
     if not shown:
         return []
@@ -3260,21 +3297,26 @@ def _step_lines(controls: list[dict], indent: str = "  ",
         for key, group in by_kind.items():
             out.append(f"{indent}  {STEP_TEMPLATES[key]}")
             out.append(f"{indent}    names: "
-                       + "; ".join(f'"{c["name"]}"' for c in group))
+                       + "; ".join(f'"{c["name"]}"'
+                                   + _repeat_suffix(counts.get(c.get("step")
+                                                               or "", 1))
+                                   for c in group))
             for c in group:
                 if c.get("options"):
                     out.append(f'{indent}    "{c["name"]}" options: '
                                + ", ".join(f'"{o}"' for o in c["options"]))
         for c in shown:      # machine-named rows keep the proven wording
             if _keeps_exact_step(c):
-                out.append(f'{indent}  {c["step"]}')
+                out.append(f'{indent}  {c["step"]}'
+                           + _repeat_suffix(counts.get(c.get("step") or "", 1)))
         if hidden:
             out.append(f"{indent}  … (+{hidden} more — raise --max-controls)")
         return out
     out = [f"{indent}copy-ready steps (no POM entry needed — use as-is, do "
            "not re-derive them via dictionary searches):"]
     for c in shown:
-        out.append(f'{indent}  {c["step"]}')
+        out.append(f'{indent}  {c["step"]}'
+                   + _repeat_suffix(counts.get(c.get("step") or "", 1)))
         if c.get("options"):
             out.append(f'{indent}    options: '
                        + ", ".join(f'"{o}"' for o in c["options"]))
@@ -3472,8 +3514,21 @@ def _suggest_lines(sg: dict, indent: str = "  ") -> list[str]:
     return out
 
 
+def _delta_line(blk: dict, n: int, indent: str = "  ") -> str:
+    """NOOD_0231 (P-7) — one prior stage of a chained --do, in one line."""
+    label = blk.get("revealed_by") or blk.get("opened_by") or "(landing page)"
+    # A compacted page has already traded `controls` for `total_controls`;
+    # a raw one still carries the list. Read whichever this block is.
+    count = blk.get("total_controls")
+    if count is None:
+        count = len(blk.get("controls") or [])
+    return (f"{indent}stage {n} {label!r}: {count} controls "
+            "(already reported — re-run without --delta for it)")
+
+
 def render(result: dict, compact: bool = False, section: str = "all",
-           max_controls: int | None = None, brief: bool = False) -> str:
+           max_controls: int | None = None, brief: bool = False,
+           delta: bool = False) -> str:
     """Human/agent-readable text for the CLI.
 
     NOOD_0117 knobs, all token-savers for agent callers:
@@ -3485,6 +3540,15 @@ def render(result: dict, compact: bool = False, section: str = "all",
       max_controls  — cap each control list, noting how many were hidden.
       brief         — NOOD_0179: print the step templates once instead of a
                       full sentence per control row (compact only).
+      delta         — NOOD_0231: only the NEWEST reveal stage's inventory;
+                      the landing page and every earlier stage collapse to
+                      one line each. Walking a 7-verb chain needs one probe
+                      per verb (the next control's name is unknowable until
+                      the prior one executes) and each probe re-emitted every
+                      stage before it — O(n²) output for O(n) new facts.
+                      Opt-in, because an agent whose earlier output has
+                      fallen out of context cannot recover it from here;
+                      the same probe without --delta prints everything.
     """
     # W1 — compact mode caps each list by default; explicit --max-controls wins,
     # full (non-compact) render stays uncapped (it is opt-in verbose).
@@ -3547,27 +3611,42 @@ def render(result: dict, compact: bool = False, section: str = "all",
         # hard unless the caller explicitly widened with --max-controls.
         diet = compact and task_probe and max_controls is None
         page_cap = 8 if diet else cap
-        controls = (_compact_controls(pg["controls"])
-                    if compact else pg["controls"])
-        shown, hidden = _cap(controls, page_cap)
-        label = ("needing a POM entry, of "
-                 f"{len(pg['controls'])} total — --section controls for all"
-                 if compact else "* = needs POM entry")
-        out.append(f"  controls ({len(controls)}; {label}):")
-        out += _control_lines(shown, brief=brief and compact)
-        if hidden:
-            out.append(f"    … (+{hidden} more — raise --max-controls)")
-        if compact and not diet:
-            out += _tile_lines(pg["controls"], cap=page_cap)
-            out += _step_lines(pg["controls"], cap=page_cap, brief=brief)
-        elif diet:
-            out.append("    initial-page tiles/steps dieted (task flags "
-                       "active) — pass --max-controls or re-probe without "
-                       "--suggest/--search/--expect for the full inventory")
-        out += _section_lines(pg, compact=compact, cap=page_cap)
+        revealed = pg.get("revealed") or []
+        # NOOD_0231 (P-7) — with --delta only the LAST stage is new. The
+        # landing page and every earlier stage were reported by the probe that
+        # ended there, so they collapse to one line each. With no reveal
+        # stages at all there is no "prior" to skip and --delta is a no-op:
+        # a single-shot probe must never return a page summarised away.
+        skip_prior = delta and bool(revealed)
+        if skip_prior:
+            out.append(_delta_line(pg, 0))
+        else:
+            controls = (_compact_controls(pg["controls"])
+                        if compact else pg["controls"])
+            shown, hidden = _cap(controls, page_cap)
+            label = ("needing a POM entry, of "
+                     f"{len(pg['controls'])} total — --section controls for all"
+                     if compact else "* = needs POM entry")
+            out.append(f"  controls ({len(controls)}; {label}):")
+            out += _control_lines(shown, brief=brief and compact)
+            if hidden:
+                out.append(f"    … (+{hidden} more — raise --max-controls)")
+            if compact and not diet:
+                out += _tile_lines(pg["controls"], cap=page_cap)
+                out += _step_lines(pg["controls"], cap=page_cap, brief=brief)
+            elif diet:
+                out.append("    initial-page tiles/steps dieted (task flags "
+                           "active) — pass --max-controls or re-probe without "
+                           "--suggest/--search/--expect for the full inventory")
+            out += _section_lines(pg, compact=compact, cap=page_cap)
         # NOOD_0116 — controls only visible AFTER a --click, labelled apart so
         # an agent doesn't author against them as if visible on load
-        for rev in pg.get("revealed", []):
+        for stage, rev in enumerate(revealed, start=1):
+            if skip_prior and stage < len(revealed):
+                out.append(_delta_line(rev, stage))
+                # A warning is a verdict, not inventory — it never collapses.
+                out += [f"    ⚠ {w}" for w in rev.get("warnings", [])]
+                continue
             diet = compact and rev.get("discovered")
             rev_cap = (DISCOVER_COMPACT_CAP
                        if diet and max_controls is None else cap)
@@ -3780,22 +3859,34 @@ def _compact_page(pg: dict, max_controls: int, brief: bool = False) -> dict:
     ranked = [c for c in _rank_ready(pg["controls"])
               if not _is_consent_noise(c)]
     step_names: dict[str, list] = {}
+    # NOOD_0231 (P-3) — collapse byte-identical entries BEFORE the cap and
+    # carry the count instead. Same information in one line, and the cap slots
+    # the twins used to eat now carry distinct steps.
+    repeated: dict[str, int] = {}
     if brief:
         # NOOD_0179 — exact steps only where the wording is load-bearing;
         # everything else travels as a name under its template key.
-        steps, steps_hidden = _cap(
-            [c["step"] for c in ranked if _keeps_exact_step(c)], max_controls)
+        exact, exact_counts = _collapse_repeats(
+            [c["step"] for c in ranked if _keeps_exact_step(c)])
+        steps, steps_hidden = _cap(exact, max_controls)
+        repeated |= {s: n for s, n in exact_counts.items()
+                     if n > 1 and s in steps}
         by_kind: dict[str, list] = {}
         for c in ranked:
             if not _keeps_exact_step(c):
                 by_kind.setdefault(_template_key(c.get("kind")),
                                    []).append(c["name"])
         for key, names in by_kind.items():
-            shown, hid = _cap(names, max_controls)
+            uniq, counts = _collapse_repeats(names)
+            shown, hid = _cap(uniq, max_controls)
             step_names[key] = shown
+            repeated |= {n: k for n, k in counts.items()
+                         if k > 1 and n in shown}
             steps_hidden += hid
     else:
-        steps, steps_hidden = _cap([c["step"] for c in ranked], max_controls)
+        uniq, counts = _collapse_repeats([c["step"] for c in ranked])
+        steps, steps_hidden = _cap(uniq, max_controls)
+        repeated |= {s: n for s, n in counts.items() if n > 1 and s in steps}
     headings = pg["headings"]
     if pg.get("term"):        # search block — Fix B: no result-echo headings
         headings = [h for h in headings if not _is_search_echo(h, pg["term"])]
@@ -3805,6 +3896,11 @@ def _compact_page(pg: dict, max_controls: int, brief: bool = False) -> dict:
            "headings": headings, "pom_yaml": _compact_pom(pg, max_controls)}
     if step_names:
         out["step_names"] = step_names
+    if repeated:
+        # NOOD_0231 (P-3) — {the collapsed entry: how many controls carry it}.
+        # Keyed by whatever was deduped in the list above it: the step
+        # sentence normally, the control name under `step_names` (brief).
+        out["repeated_steps"] = repeated
     tiles = [c for c in pg["controls"] if _tile_caption(c)]  # W3a
     if tiles:
         # NOOD_0137 — the one uncapped list left; families collapse like the
@@ -3920,8 +4016,27 @@ COMPACT_BUDGET_BYTES = payload_budget.DEFAULT_BUDGET_BYTES
 _COMPACT_CAP_LADDER = (40, 25, 15, 8, 4)
 
 
+def _delta_trim(page: dict) -> dict:
+    """NOOD_0231 (P-7) — the JSON twin of _delta_line: keep the newest reveal
+    stage whole, replace the landing inventory and every earlier stage with a
+    one-line `stage N: M controls` note. Verdict keys (author_ready,
+    do_failed, warnings, expect, …) are untouched — a diet that could hide a
+    failed transaction would be a different bug entirely."""
+    revealed = page.get("revealed") or []
+    if not revealed:
+        return page                        # nothing prior to skip
+    out = {k: v for k, v in page.items()
+           if k not in ("needs_pom", "suggested_steps", "step_names",
+                        "repeated_steps", "tile_captions", "pom_yaml")}
+    out["delta_skipped"] = [_delta_line(page, 0, indent="").strip()] + [
+        _delta_line(r, i, indent="").strip()
+        for i, r in enumerate(revealed[:-1], start=1)]
+    out["revealed"] = [revealed[-1]]
+    return out
+
+
 def compact_payload(result: dict, max_controls: int = 40,
-                    brief: bool = False) -> dict:
+                    brief: bool = False, delta: bool = False) -> dict:
     """NOOD_0117 — the MCP-default probe payload: everything an author needs
     (needs-POM controls, paste-ready POM YAML, suggested steps, exact heading
     texts, search/reveal blocks) minus the full selector dump and next-pages
@@ -3932,11 +4047,25 @@ def compact_payload(result: dict, max_controls: int = 40,
     probe cannot blow a caller's context. Trimming is honest — the surviving
     payload carries `budget_trimmed` naming the cap it settled on."""
     def _build(cap: int) -> dict:
-        out = {"pages": [_compact_page(pg, cap, brief)
-                         for pg in result.get("pages", [])],
-               "errors": result.get("errors", [])}
+        pages = [_compact_page(pg, cap, brief)
+                 for pg in result.get("pages", [])]
+        if delta:
+            pages = [_delta_trim(p) for p in pages]
+        out = {"pages": pages, "errors": result.get("errors", [])}
         if brief:   # NOOD_0179 — the three sentences, once per payload
             out["step_templates"] = dict(STEP_TEMPLATES)
+        # NOOD_0231 (P-3) — one hint per payload, not one per collapsed entry.
+        # Recursive: a card grid usually lives on a REVEALED or search block,
+        # never the landing page, so a top-level-only check would print the
+        # hint exactly where it is least needed.
+        def _has_repeats(node) -> bool:
+            if isinstance(node, dict):
+                return bool(node.get("repeated_steps")) or any(
+                    _has_repeats(v) for v in node.values())
+            return isinstance(node, list) and any(_has_repeats(v) for v in node)
+
+        if _has_repeats(out["pages"]):
+            out["repeated_steps_note"] = _REPEATED_HINT
         return out
 
     ladder = [c for c in _COMPACT_CAP_LADDER if c < max_controls]

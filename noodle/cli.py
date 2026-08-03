@@ -1406,9 +1406,9 @@ can't": read the wok.
 
 1. Probe — ONLY for an unfamiliar page or SPA: `probe_page`
    (`noodle probe <url> --compact`). Fold ALL discovery into ONE probe
-   per flow; never re-probe to grep. The flag catalog — panels, `--do`
-   fill→save transactions, typeahead, native dropdowns, `--discover`,
-   `--find` (matches whole — never grep payloads) — is in the
+   per flow; never re-probe to grep. Flag catalog — `--find` (never
+   grep a payload), `--brief`, `--delta` (chained `--do`: newest stage
+   only), panels, typeahead, dropdowns, `--discover` — in the
    playbook. Output is author-ready unless
    `author_ready: false` — a STOP: fix the named gap, never
    hand-author around it. A gate `--do` can't cross? Budget ONE
@@ -2004,7 +2004,7 @@ def ship(
     result = core.author_test(prompt=text, run_after_author=True,
                               auto_fix=auto_fix, overwrite=True,
                               workspace=workspace)
-    result = core.collapse_green(result, workspace=workspace)
+    result = core.collapse_payload(result, workspace=workspace)
     if as_json:
         _json_out(result)
         raise typer.Exit(0 if result["ok"] else 1)
@@ -2045,6 +2045,7 @@ def author(
     section: str = typer.Option(None, "--section", help="NOOD_0227 — with --vocabulary: print ONE schema section (checks | actions | goal | probe | dismissals | prompt) instead of the whole blob, so one fact never costs a python3 pipe."),
     reset_intent: str = typer.Option(None, "--reset-intent", help="NOOD_0227 — clear the recorded intent contract for a feature (path or filename; 'all' clears every one), then exit. The recovery for a stale BLOCKED contract that refuses auto-runs — no more hand-editing agent_state.json."),
     run_scope: str = typer.Option("feature", "--run-scope", help="NOOD_0229 — with --run: 'feature' (default) runs the feature just authored; 'app' runs its whole package, so every feature in the served report was verified by THIS run. The report is combined either way — a run now replaces only the scenarios it re-ran instead of wiping the package's results — and run.report_scope names which features this run actually executed."),
+    verbose_blocked: bool = typer.Option(False, "--verbose-blocked", help="NOOD_0231 — keep the full payload on a BLOCKED lap. By default a blocked author returns the repair (blocking, next_action, repair, paths, reports) and drops the intent echo, intent_trace, inline compiled feature/POM and evidence ledger — ~3,000 tokens of which ~6 lines were actionable. Everything dropped is still on disk at `full_payload`, and the compiled artifacts at `feature`/`pom`. Env: NOODLE_VERBOSE_BLOCKED=1."),
     auto_fix: int = typer.Option(0, "--auto-fix", help="NOOD_0223 — with --run, let the engine take up to N self-heal laps on a RED run: re-derive the goal from the run's own failure evidence, re-probe, re-author, re-run. Engine-only — no hand edits, no step suggestions to copy — and every file each lap rewrote is listed under auto_fix.engine_edits. Bounded and narrow: a lap runs ONLY when every failure classifies as test-side (assertion wording, locator rot, wrong/ambiguous target, overlay); one app-regression, app-rejected-action, test-data or environment failure in the run and no lap runs at all, because re-authoring against a broken app is a green-forcing retry. Default 0 — a lap costs a probe plus a run."),
 ):
     """NOOD_0128 — write a whole test package in one transaction (app package +
@@ -2152,6 +2153,12 @@ def author(
     if (spec is None) == (prompt is None):
         raise typer.BadParameter("pass exactly one of --spec or --prompt",
                                  param_hint="'--spec' / '--prompt'")
+    # NOOD_0231 — `is True`, never truthiness: called as a plain function
+    # (which the tests and the repl router both do) an unpassed typer.Option
+    # arrives as its OptionInfo, and OptionInfo is truthy. The value is passed
+    # to collapse_payload rather than written to os.environ — a flag that
+    # mutates the process environment leaks into everything after it.
+    verbose_blocked = verbose_blocked is True
     if prompt is not None:
         # NOOD_0169 — prompt mode: expansion + derivation happen engine-side
         # NOOD_0198 — ...and the steps may arrive as a file path or on stdin
@@ -2208,9 +2215,11 @@ def author(
             # autonomous agents must never set it.
             allow_unverified_intent=bool(data.get("allow_unverified_intent", False)),
             run_scope=run_scope, workspace=workspace)
-    # NOOD_0217 — green atomic results collapse to the verdict + pointers;
-    # the full envelope is on disk at `full_payload`. Red keeps everything.
-    result = core.collapse_green(result, workspace=workspace)
+    # NOOD_0217/0231 — green atomic results collapse to the verdict +
+    # pointers, blocked ones to the repair; the full envelope is on disk at
+    # `full_payload`. A RED RUN keeps everything.
+    result = core.collapse_payload(result, workspace=workspace,
+                                   verbose_blocked=verbose_blocked or None)
     if as_json:
         _json_out(result)
         raise typer.Exit(0 if result["ok"] else 1)
@@ -2950,8 +2959,9 @@ def probe(
     open_native: bool = typer.Option(False, "--open-native", help="Enumerate native <select> options and click-open custom comboboxes too"),
     max_reveal_depth: int = typer.Option(1, "--max-reveal-depth", help="With --open-native, levels of combobox-in-combobox to follow"),
     discover: bool = typer.Option(False, "--discover", help="Trigger NAMES unknown? Clicks bounded disclosure candidates, deltas under revealed. Only for an unnamed control gating needed UI"),
-    find: str = typer.Option(None, "--find", help="Only controls/result-items matching this text, pre-cap — replaces payload greps"),
-    brief: bool = typer.Option(False, "--brief", help="Step templates once, not one sentence per control"),
+    find: str = typer.Option(None, "--find", help="Only controls/result-items matching this text — no payload greps"),
+    brief: bool = typer.Option(False, "--brief", help="Step templates once, not once per control"),
+    delta: bool = typer.Option(False, "--delta", help="Chained --do: only the NEWEST stage"),
     # NOOD_0222 — every other command takes -w; probe rejecting it cost a
     # reviewed session a retry lap. It also does real work: {env:KEY} in --do
     # resolves against THIS workspace's env chain, not the cwd's.
@@ -2991,12 +3001,14 @@ def probe(
         # keys compact hands over whole. --full opts back into the dump.
         from noodle.agents.web.probe import compact_payload
         payload = (result if full
-                   else compact_payload(result, max_controls or 40, brief=brief))
+                   else compact_payload(result, max_controls or 40,
+                                        brief=brief, delta=delta))
         _json_out(payload)
     else:
         from noodle.agents.web.probe import render
         typer.echo(render(result, compact=compact, section=section,
-                          max_controls=max_controls, brief=brief))
+                          max_controls=max_controls, brief=brief,
+                          delta=delta))
     if not result["pages"]:
         raise typer.Exit(1)
 
