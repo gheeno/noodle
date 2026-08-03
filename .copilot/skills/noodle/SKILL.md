@@ -63,8 +63,10 @@ engine gap to report — a shell command only hides it.
 goal:  # an OBJECT, never a string; rejections return this example
   scenario: Search returns matching results
   dismissals: [location_prompt, popups]
-  actions: [{do: search, term: "<term>"}]
-  checks: [{count: results, min: 1}, {any_of: ["<text>", "<alt text>"]}]
+  actions: [{do: search, term: "<term>", id: searched}]
+  checks: [{any_of: ["<landing text>"], after: start},
+           {count: results, min: 1, after: searched},
+           {any_of: ["<text>"], after: searched, evidence: screenshot}]
 ```
 
 Every `do:` — inventing one is rejected (`target` = a control name,
@@ -94,7 +96,8 @@ Every `do:` — inventing one is rejected (`target` = a control name,
   source (black-box; source selectors are implementation-coupled).
   Identical payload twice = change the mechanism, not the wording.
 - Execute payload: report paths, served URLs and, on red, `rca_compact`;
-  extra RCA/report/serve calls repeat it.
+  extra RCA/report/serve calls repeat it. Never claim green past
+  `report_scope.features_run` — the report accumulates, the run doesn't.
 - "run feature-regression" → `noodle feature-regression`. ONE call:
   generates the three test cases, runs, serves, prints the table. Never
   hand-build `results.json` or read host telemetry.

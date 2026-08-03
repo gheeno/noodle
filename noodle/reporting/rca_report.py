@@ -149,21 +149,17 @@ def _history_note(entry: dict) -> str:
 
 
 def _latest_results(results_dir: str = None) -> list[dict]:
-    """All scenario results from allure-results, deduplicated by historyId
-    (auto-retry writes one result per attempt — keep the last)."""
-    d = Path(results_dir or _paths.results_dir())
-    files = sorted(d.glob("*-result.json")) if d.is_dir() else []
-    latest: dict = {}
-    for f in files:
-        try:
-            r = json.loads(f.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        key = r.get("historyId") or r.get("fullName") or f.name
-        prev = latest.get(key)
-        if prev is None or r.get("stop", 0) >= prev.get("stop", 0):
-            latest[key] = r
-    return list(latest.values())
+    """This run's scenario results from allure-results, deduplicated by
+    historyId (auto-retry writes one result per attempt — keep the last).
+
+    NOOD_0229 — run-scoped, the single choke point every collect_* below
+    reads through. The results directory accumulates across runs so the
+    Allure report can cover the whole app package; the RCA is the diagnosis
+    of the run that just happened and must not narrate a failure some earlier
+    run recorded and this one never re-ran. A dir with no run marker reads
+    whole, exactly as before."""
+    from noodle.reporting import summary as _summary
+    return _summary.latest_results(results_dir)
 
 
 def collect(results_dir: str = None) -> list[dict]:

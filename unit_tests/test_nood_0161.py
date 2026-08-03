@@ -38,7 +38,10 @@ def test_example_stays_domain_neutral():
     # It teaches the SHAPE. A real product/site value would get copied into
     # tests verbatim and would read as engine-endorsed vocabulary.
     assert goal.EXAMPLE["actions"][0]["term"].startswith("<")
-    assert all(t.startswith("<") for t in goal.EXAMPLE["checks"][1]["any_of"])
+    # NOOD_0229 — index-free: the example gained anchored checks, and pinning
+    # a position made a shape change look like a neutrality regression.
+    assert all(t.startswith("<") for c in goal.EXAMPLE["checks"]
+               for t in c.get("any_of", []))
 
 
 def test_a_string_goal_says_what_arrived():

@@ -324,6 +324,7 @@ def before_all(context):
     _loaded_package_dirs.clear()
     _suite_results.clear()
     _attempts.clear()          # NOOD_0202 — fresh retry counters per run
+    _purged.clear()            # NOOD_0229 — fresh retention bookkeeping per run
     globals()["_certs_warned"] = False   # NOOD_0202 — say the TLS notice once per run
     if os.getenv("NOODLE_PARALLEL_WORKER") == "1":
         # Each behavex worker is its own process — give it a private results
@@ -345,7 +346,7 @@ def before_all(context):
         from noodle import runlock as _runlock
         log.bind(worker=os.getpid(), lane=_runlock.worker_index())
     else:
-        _clean_allure_results()
+        _begin_run_results()
         _paths.clean_worker_leaves()   # NOOD_0187 — stale p<pid>/ leaves from a prior parallel run
         log.attach_file_handler(str(_paths.logs_dir() / "noodle.log"))
     # NOOD_0187 — a core-only install (no [reporting]/[all] extra) silently
@@ -384,30 +385,64 @@ def before_all(context):
     _run_hooks("before_all", context)
 
 
-def _clean_allure_results():
-    """Delete stale per-scenario JSON + junit from a previous run so the report
-    and the quarantine exit-code scan (cli.py) only reflect THIS run. Keeps the
-    dir itself and reports/allure-history/ (trend data lives there)."""
+def _begin_run_results():
+    """Open this run's results.
+
+    NOOD_0229 — this used to delete every `*-result.json` and
+    `*-attachment.*` in the directory, which is why authoring a second
+    feature into an app package destroyed the first one's result AND its
+    evidence image, then rebuilt the report from what survived. Now the run
+    only stamps its identity and clears the per-run ledgers that must not
+    accumulate; stale results are replaced per feature/scenario, as they are
+    re-run, by _purge_prior_results() below. `NOODLE_FRESH_RESULTS=1`
+    restores the full wipe on purpose for one run (`noodle report reset`
+    does it once, out of band). An env var and not a `--flag`: `noodle run
+    --help` is a capped always-on surface with under 100 bytes of headroom
+    and a Typer row costs ~250, so the flag would have been funded by
+    deleting guidance agents read on every call (same call as NOOD_0223).
+
+    Trend data still lives in reports/allure-history/ and is untouched either
+    way.
+    """
+    from noodle.reporting import scope as _scope
     results = _paths.results_dir()
-    if not results.is_dir():
+    if os.getenv("NOODLE_FRESH_RESULTS", "").strip().lower() in ("1", "true", "yes", "on"):
+        _scope.clean_all(results)
+    else:
+        _scope.clean_run_ledgers(results)
+    _scope.begin_run(results)
+
+
+# NOOD_0229 — feature files / scenario keys whose prior results this process
+# has already replaced. A retry re-enters before_scenario, and purging again
+# would delete the failed first attempt that makes the pass read as flaky.
+_purged: set = set()
+
+
+def _scenario_filter_active(context) -> bool:
+    """True when this run selects SOME scenarios of a feature (--name/--tags),
+    so re-running the file must not evict the siblings it never touched."""
+    cfg = getattr(context, "config", None)
+    if cfg is None:
+        return True                      # unknown → the narrower purge
+    if getattr(cfg, "name", None):
+        return True
+    return bool(getattr(getattr(cfg, "tags", None), "ands", None))
+
+
+def _purge_prior_results(*, keys=(), feature_files=()):
+    """Replace what this run re-runs, keep what it doesn't (NOOD_0229)."""
+    from noodle.reporting import scope as _scope
+    fresh = [x for x in (*keys, *feature_files) if x and x not in _purged]
+    if not fresh:
         return
-    for f in results.glob("*-result.json"):
-        f.unlink(missing_ok=True)
-    for f in results.glob("*-attachment.*"):
-        f.unlink(missing_ok=True)
-    # junit.xml now lives in reports/, but clean a pre-move leftover too —
-    # allure generate would ingest it and double-count every scenario.
-    (results / "junit.xml").unlink(missing_ok=True)
-    # NOOD_0187 — per-feature junit slices + cost ledgers from a previous
-    # parallel run: load_total() rglobs llm_cost*.json, so stale ones from a
-    # killed run inflated the reported spend of the next.
-    for f in (*results.glob("junit.*.xml"), *results.glob("llm_cost*.json"),
-              *results.glob("healing-report*.txt")):
-        f.unlink(missing_ok=True)
-    import shutil
-    for d in results.glob("p[0-9]*"):
-        if d.is_dir():
-            shutil.rmtree(d, ignore_errors=True)
+    _purged.update(fresh)
+    try:
+        _scope.purge(_paths.results_dir(), keys=keys,
+                     feature_files=feature_files,
+                     keep_since_ms=_scope.run_started_ms(_paths.results_dir()))
+    except OSError:
+        pass          # retention is a nicety — never fail a run over it
 
 
 @_report_engine_crash
@@ -418,6 +453,13 @@ def before_feature(context, feature):
     # console has nothing else to group the scenario lines under.
     log.telemetry("feature.start", f"Feature: {feature.name}",
                   file=Path(feature.filename).name)
+    # NOOD_0229 — this file is being re-run in full, so its prior results are
+    # superseded: drop them (and their attachments) before the first scenario
+    # writes, which also retires results for scenarios that have since been
+    # renamed or deleted. Under a --name/--tags filter only some scenarios run,
+    # so the purge drops to per-scenario in before_scenario instead.
+    if not _scenario_filter_active(context):
+        _purge_prior_results(feature_files=[feature.filename])
     feature_dir = Path(feature.filename).parent
     # Tell POM loader which folder to look in for local pom.yaml
     pom_module.set_context(str(feature_dir))
@@ -793,6 +835,13 @@ def before_scenario(context, scenario):
     _key = (getattr(getattr(scenario, "feature", None), "filename", ""), scenario.name)
     _attempt = _attempts[_key] = _attempts.get(_key, 0) + 1
     context._noodle_attempt = _attempt
+    # NOOD_0229 — this scenario's prior-run results are superseded the moment
+    # it starts again. before_feature already covers the unfiltered case; this
+    # is the --name/--tags one, where evicting the whole file would delete
+    # siblings this run never re-ran. Attempts of THIS run are protected by
+    # keep_since_ms, so a retry still reads as flaky.
+    if _REPORTING:
+        _purge_prior_results(keys=_writer.scenario_key(scenario))
     # NOOD_0202 — the body IS the console line in text mode, so it names the
     # scenario. It read literally "▶️ scenario.start" before, which told a build
     # log nothing.

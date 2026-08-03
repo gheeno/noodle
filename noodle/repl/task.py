@@ -173,7 +173,7 @@ def contract() -> dict:
         "command": "noodle task \"<text>\" --workspace <ws> --json",
         "intents": {
             "scan": "what is this repo — stack, how it serves itself, "
-                    "OpenAPI endpoints, and the questions still open before "
+                    "OpenAPI endpoints, and what is still unanswered before "
                     "a test can be authored",
             "generate": "write a new test — needs a URL and numbered steps",
             "update": "rewrite an existing test — same payload, overwrites",
@@ -212,8 +212,8 @@ def contract() -> dict:
             "next": "one sentence naming the next action, or null",
         },
         "notes": ("A refusal carries `need` and `next` — fill them and "
-                  "re-send; Noodle never guesses a URL or a control name. "
-                  "Zero LLM calls on this path."),
+                  "re-send. Noodle never guesses a URL or a control name; "
+                  "zero LLM calls here."),
     }
 
 

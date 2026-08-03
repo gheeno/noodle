@@ -768,6 +768,11 @@
                     "default": null,
                     "title": "Evidence Requests"
                   },
+                  "run_scope": {
+                    "default": "feature",
+                    "title": "Run Scope",
+                    "type": "string"
+                  },
                   "workspace": {
                     "anyOf": [
                       {

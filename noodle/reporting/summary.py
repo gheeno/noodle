@@ -9,20 +9,32 @@ from datetime import date
 from pathlib import Path
 
 from noodle.reporting import paths as _paths
+from noodle.reporting import scope as _scope
 
 
-def latest_results(results_dir: str = None) -> list[dict]:
+def latest_results(results_dir: str = None, *, scope: str = "run") -> list[dict]:
     """Last-attempt scenario results, deduplicated by historyId — auto-retry
     writes one result per ATTEMPT, so any reader that counts raw files
     double-counts retried scenarios (NOOD_0187: the quarantine exit-code scan
-    and --failed re-run both did). Single source for that dedupe."""
+    and --failed re-run both did). Single source for that dedupe.
+
+    NOOD_0229 — the directory accumulates across runs now (a run replaces only
+    what it re-ran), so every reader must say which it means. `scope="run"`
+    (the default, and what an exit code / last_run.json / --failed / the RCA
+    all mean) keeps only what THIS run wrote; `scope="all"` is the cumulative
+    state the Allure report is built from. A results dir with no run marker —
+    written before this change, or by a bare `behave` — reads whole either
+    way."""
     d = Path(results_dir or _paths.results_dir())
     files = sorted(d.glob("*-result.json")) if d.is_dir() else []
+    started = _scope.run_started_ms(d) if scope == "run" else None
     latest: dict = {}
     for f in files:
         try:
             r = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
+            continue
+        if not _scope.in_run(r, started):
             continue
         key = r.get("historyId") or r.get("fullName") or f.name
         prev = latest.get(key)
@@ -35,14 +47,20 @@ def mark_flaky(results_dir: str = None) -> int:
     """NOOD_0187 — stamp Allure's statusDetails.flaky on the FINAL attempt of
     every scenario that failed and then passed via auto-retry, so the report
     shows the retry instead of an indistinguishable clean green. Runs before
-    the report build; returns how many results were stamped."""
+    the report build; returns how many results were stamped.
+
+    NOOD_0229 — this run's attempts only. A prior run's kept results are a
+    completed verdict, not extra attempts of the scenario running now."""
     d = Path(results_dir or _paths.results_dir())
     files = sorted(d.glob("*-result.json")) if d.is_dir() else []
+    started = _scope.run_started_ms(d)
     groups: dict = {}
     for f in files:
         try:
             r = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
+            continue
+        if not _scope.in_run(r, started):
             continue
         key = r.get("historyId") or r.get("fullName") or f.name
         groups.setdefault(key, []).append((r.get("stop", 0), f, r))
@@ -63,13 +81,19 @@ def mark_flaky(results_dir: str = None) -> int:
     return stamped
 
 
-def collect(results_dir: str = None) -> dict:
-    """Aggregate result JSON into counts, failures, and total wall time."""
+def collect(results_dir: str = None, *, scope: str = "run") -> dict:
+    """Aggregate result JSON into counts, failures, and total wall time.
+
+    NOOD_0229 — `scope="run"` by default: these counts drive the exit code,
+    last_run.json and every "did it pass?" payload, so a result an earlier run
+    left in the accumulating directory must never enter them. `scope="all"`
+    reports the cumulative state the report shows."""
     from noodle import counters
     counters.bump("result_scan")
     results_dir = results_dir or str(_paths.results_dir())
     d = Path(results_dir)
     files = sorted(d.glob("*-result.json")) if d.is_dir() else []
+    started = _scope.run_started_ms(d) if scope == "run" else None
     passed = failed = skipped = 0
     failures = []
     starts, stops = [], []
@@ -84,6 +108,8 @@ def collect(results_dir: str = None) -> dict:
         try:
             r = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
+            continue
+        if not _scope.in_run(r, started):
             continue
         if "start" in r:
             starts.append(r["start"])

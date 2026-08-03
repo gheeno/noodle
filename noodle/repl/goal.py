@@ -249,10 +249,24 @@ _PROBE_KEYS = {"discover", "perform"}
 # example teaches the SHAPE, and nothing in it is domain- or site-specific.
 EXAMPLE = {
     "scenario": "Search returns matching results",
-    "dismissals": ["location_prompt", "popups"],
-    "actions": [{"do": "search", "term": "<search term>"}],
-    "checks": [{"count": "results", "min": 1},
-               {"any_of": ["<expected text>", "<alternative wording>"]}],
+    # NOOD_0229 — `dismissals` left the example and stayed in vocabulary():
+    # it is optional, so it was never part of "the MINIMAL valid goal", and
+    # the bytes it cost are the bytes the anchors below now carry. Every
+    # surface that ships EXAMPLE is bounded (task.contract() pays the same
+    # 8 KB budget as any agent payload), so this was a straight trade — and
+    # a missing dismissal costs one popup; a missing anchor cost a split test
+    # case and a report that overwrote itself.
+    "actions": [{"do": "search", "term": "<search term>", "id": "searched"}],
+    # NOOD_0229 (fix 1.3) — the template carries the ANCHOR. An unanchored
+    # check observes the END state, so a goal spanning pages had nowhere to
+    # put a landing-page assertion; a reviewed session read that as "this
+    # check cannot live in this scenario" and split one user flow into two
+    # test cases, which is how the two features then overwrote each other's
+    # report. `after:` and per-check `evidence:` were both already there —
+    # only the copy-paste shape didn't show them.
+    "checks": [{"any_of": ["<landing text>"], "after": "start"},
+               {"count": "results", "min": 1, "after": "searched",
+                "evidence": "screenshot"}],
 }
 
 
