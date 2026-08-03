@@ -285,6 +285,41 @@ NEEDS_INTERPRETATION / CONTRACT_BLOCKED); on a block, repair the one
 `next_action` gap and re-author — never hand-edit the compiled Gherkin
 (write_feature refuses it under an intent contract).
 
+A prompt the grammar can only partly place now returns `goal_yaml`
+(NOOD_0223): the accepted goal as a **complete, valid `--spec` document**
+with each unplaced clause carried as a `# UNRESOLVED` comment above it.
+Edit the commented lines and send the document straight back — do not
+re-derive the goal from the prose, and do not translate `goal_partial`
+by hand. The retype is itself a drift source.
+
+### One command, one bounded lap (NOOD_0223)
+
+```
+noodle ship "<the raw AC, verbatim>"
+```
+
+= `author --prompt … --run --overwrite --auto-fix 1`. On a **red** run the
+engine takes up to one lap by itself — re-derive the goal from the run's own
+failure evidence, re-probe, re-author, re-run — and lists every file it
+rewrote under `auto_fix.engine_edits`. That lap is the engine's job, not
+yours: when you see it in the payload, read what changed, don't redo it.
+
+It deliberately declines on `app-regression`, `app-rejected-action`,
+`mutation-failed`, `navigation-mismatch`, `test-data`, `environment-flap`,
+`config-gap` and `unknown` — including when only ONE failure in a mixed run
+is in that set. `auto_fix.skipped` says which. That is a real red: root-cause
+it per §7, never re-run it hoping.
+
+### The engine owns what the engine wrote (NOOD_0223)
+
+Every authored file's sha256 lands in `.noodle/authored.json`. With
+`workspace_strict: true` (noodle.yaml) or `NOODLE_WORKSPACE_STRICT=1` a run
+refuses to launch on any engine-authored file changed underneath it. Whether
+or not strict mode is armed, the rule for you is the same and older than this
+ticket: **repair through `author`, never by editing the compiled artifact.**
+A hand edit is discarded by the next author lap, so a green run on one proves
+a file the engine cannot regenerate.
+
 ### The goal object (NOOD_0137/0161)
 
 `goal` is an **object** — a mapping, never a YAML/JSON string (that's

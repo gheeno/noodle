@@ -4,6 +4,71 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a37] — 2026-08-02
+
+**NOOD_0223** — feature: close the manual patch paths. Every item here is a
+place the engine handed back a problem whose cheapest-looking fix was to edit
+a file by hand — and a hand edit is a fact the engine cannot see, discards on
+the next author lap, and cannot regenerate.
+
+- **The engine knows what it wrote.** `noodle/workspace_policy.py` records a
+  sha256 for every file an author transaction writes (feature, POM, app
+  environments.yaml — never secrets, since populating a credential by hand is
+  the documented workflow). Opt-in strict mode (`workspace_strict: true` in
+  noodle.yaml, or `NOODLE_WORKSPACE_STRICT=1`) re-hashes them before a run and
+  refuses to launch on any that changed underneath it, naming the file and the
+  re-author command. Off by default, and honest about its limit: it detects
+  and refuses, it cannot prevent — what it removes is the *silent* hand edit
+  that survives to a green report because nobody compared the bytes. Deliberately
+  NOT a `noodle run` flag: that `--help` is a capped always-on surface with 98
+  bytes of headroom, and a Typer flag row costs ~250, so a flag would have been
+  funded by deleting guidance agents read on every call.
+- **A red run gets an engine lap.** `author --run --auto-fix N` (and
+  `noodle ship`, default 1). `_auto_repair` closed the *authoring* half of the
+  loop in NOOD_0214; the *running* half had none — a red run came back with an
+  RCA and a fix-it-yourself instruction, which is where every manual patch
+  path started. A lap re-derives the goal from the run's own failure evidence,
+  re-probes, re-authors and re-runs, engine-only, with `auto_fix.engine_edits`
+  listing every file it rewrote. Narrow by construction: it runs only when
+  EVERY failure classifies test-side (assertion-wording, locator-rot,
+  wrong-action-target, ambiguous-item-click, blocked-by-overlay). One
+  app-regression, app-rejected-action, test-data or environment failure in the
+  run and no lap runs at all — re-authoring against a broken app is the
+  green-forcing retry `config.dev_fix_attempts` forbids. Default 0 laps.
+- **`repair_goal` learns two more shapes**, both contract-neutral (they change
+  how the flow reaches a control, never what it proves). `rewritten_targets` —
+  an action target reworded to the probed control name ("add to order" →
+  "Add to cart"), the move NOOD_0218 already made for see-checks, now for
+  actions. `prerequisite_clicks` — the click INSERTED before an action whose
+  control the probe found hidden behind a named trigger; that blocker named
+  the trigger and then asked the caller to add the step themselves. Both
+  withdraw entirely if any blocker in the set is left unexplained.
+- **An ambiguous prompt returns the next call's argument.** `goal_yaml` — the
+  accepted goal as a complete, valid `--spec` document with every unplaced
+  clause carried as a `# UNRESOLVED` comment above it. `goal_partial` (JSON,
+  NOOD_0197) still had to be translated into spec notation by hand, and the
+  retype was itself a drift source.
+- **The probe hands over goal notation.** On the `author_ready: true` path
+  only, `goal_skeleton` — the same findings as the Gherkin `skeleton`, in the
+  notation `author --spec` compiles, so the handoff is a paste rather than a
+  transcription. Carries only what the probe PROVED (expectation hits, the
+  stable `min: 1` results floor); it never guesses the assertion the goal
+  wanted, because an invented check is worse than no check — it passes.
+- **`noodle ship "<raw AC>"`** — probe→author→run→serve as one command. A
+  thin alias for `author --prompt … --run --overwrite --auto-fix 1`, not a
+  second pipeline; a unit test asserts it stays thin.
+- **Narration that carries its own expected values is asserted.** Found by
+  this ticket's own benchmark: a brief written as a table (`| Alpha Widget |`)
+  compiled one check per value (NOOD_0199), while the SAME brief written
+  inline — "the results page appears with these products: 'Alpha Widget' and
+  'Beta Widget'" — compiled none and authored a green test with **zero
+  assertions**. Two notations for one intent disagreed and the silent one won.
+  Quoted spans that follow the narration verb are now one `see` check each,
+  announced in `assumptions`. Quoting is the escape hatch, exactly as
+  NOOD_0221 settled it for the summary rule; NOOD_0199 is intact, because
+  unquoted scene-setting is still dropped and a quote inside the narration
+  lead (`the "search" dropdown appears`) names the instrument, not page text.
+
 ## [1.0.0a36] — 2026-08-02
 
 **NOOD_0222** — fix: a basic add-item-and-order flow cost 5 run cycles, ~10

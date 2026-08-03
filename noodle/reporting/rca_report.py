@@ -630,6 +630,43 @@ def _text(entry: dict) -> str:
 
 _EXC_RE = re.compile(r"^(\w+(?:Error|Exception)):", re.MULTILINE)
 
+# NOOD_0207 — the near-miss stamp actions._rendered_near_miss writes at failure
+# time. NOOD_0223 lifted it to module level so classify() and the auto-fix lap
+# read the SAME pattern: a second copy would drift, and the drift would show up
+# as an auto-fix that rewrites an assertion the report says is fine.
+_NEAR_MISS_RE = re.compile(r"Expected to see '([^']*)' on page — not found\. "
+                           r"\[near-miss\] the page renders: (.+?)(?:\n|$)")
+
+
+def assertion_rewrite(entry: dict) -> dict | None:
+    """NOOD_0223 — {'expected': ..., 'rendered': [...]} when this failure is a
+    pure wording mismatch the page itself already answered, else None.
+
+    This is the one runtime failure whose fix is fully determined by evidence
+    the engine collected at failure time: the assertion reached its page, and
+    the page renders a near twin of the expected string. `classify` reports
+    that; the auto-fix lap ACTS on it, which is why the extraction lives here
+    next to the pattern rather than in the caller.
+
+    ponytail: the rendered alternatives were joined with '; ' by repr(), so a
+    rendered line containing that exact separator splits wrong. Harmless — a
+    bad split yields a candidate that simply does not match any goal check,
+    and the lap declines rather than rewriting something at random."""
+    m = _NEAR_MISS_RE.search(_text(entry))
+    if not m:
+        return None
+    import ast
+    rendered = []
+    for part in m.group(2).split("; "):
+        part = part.strip()
+        try:
+            value = ast.literal_eval(part)
+        except (ValueError, SyntaxError):
+            value = part.strip("'\"")
+        if isinstance(value, str) and value.strip():
+            rendered.append(value.strip())
+    return {"expected": m.group(1), "rendered": rendered} if rendered else None
+
 
 def classify(entry: dict) -> dict:
     """Pure, no I/O — pattern-match the structured failure into a category +
@@ -685,8 +722,7 @@ def classify(entry: dict) -> dict:
     # actively false ("the click left the page unchanged" about a page that
     # demonstrably re-rendered). Stamped at failure time by
     # actions._rendered_near_miss.
-    m = re.search(r"Expected to see '([^']*)' on page — not found\. "
-                  r"\[near-miss\] the page renders: (.+?)(?:\n|$)", text)
+    m = _NEAR_MISS_RE.search(text)
     if m:
         return {
             "category": "assertion-wording",
