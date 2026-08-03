@@ -4,6 +4,75 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a38] — 2026-08-02
+
+**NOOD_0224** — fix: the transaction an agent writes is the transaction the
+probe runs. A reviewed seven-step add-to-cart → checkout → confirm flow cost
+103 AIC against a ≤25 target, and every one of the three causes was a place
+the engine accepted an input, did something *else* with it, and said nothing.
+
+- **Fixed: `--do` comma-chaining misfired silently.** An agent writes the
+  whole transaction the way it would say it — `--do "click add to cart in the
+  row containing <item>, click proceed to checkout"` — and every `(.+?)` in
+  `_DO_RE` runs to end-of-string, so the row caption swallowed `, click
+  proceed to checkout`. The run died on `No row containing '<item>, click
+  proceed to checkout' found`: a *wording* failure wearing a *page* failure's
+  clothes, which is the expensive kind — the session read it as "the item
+  isn't there", spent eight more probes looking for it, and reached for
+  `curl`, `find`, `xargs`, `cat` and `node -e` when they didn't help.
+  `parse_do` now splits an item on a comma followed by one of the grammar's
+  own verbs (`click`/`enter`/`select`/`switch to`, optionally after
+  `then`/`and`) *before* matching anything. A comma inside a value or caption
+  (`"enter 12 Main St, Apt 4 in address"`, `"…the row containing Item,
+  Large"`) never splits, because no verb follows it — the split is
+  verb-anchored precisely so it can't become a new way to corrupt data.
+- **Fixed: `within` parsed as part of the control name.** `--do "click add to
+  cart within <item>"` matched the generic `click <btn>` alternative and
+  became a control name no page has — the same silent shape. It is the
+  preposition agents reach for when they mean the row scope, so it is now
+  read as `in the row containing`, resolving identically to the spelling the
+  grammar documents. A `within` the parser still can't place (a non-click
+  verb) names the near miss in its error instead of re-printing the form list
+  — a bare list bought a reworded retry of the same rejected shape.
+- **Added: `do_split_note`** — either rewrite is reported, in the payload and
+  in the human render, using the same value-free `_do_label` strings the rest
+  of a `--do` payload uses (NOOD_0144: action values never travel). The
+  caller asked for one action and got three; the deltas below the note are
+  keyed to what RAN, not to what was asked for, and silently obeying a
+  rewrite is how the next diagnosis starts from a false premise.
+- **Fixed: `noodle list --query` silently dropped the filter** without
+  `--json`, falling through to the behave dry-run, which ignores it. It now
+  implies `--json`. This is step 0 of the green path (below), and a step-0
+  flag that quietly returns the WHOLE suite reads to an agent as "nothing to
+  reuse here" — the exact wrong answer, delivered confidently.
+- **Skill cards (both hosts): the leak prohibition moved ABOVE the green
+  path**, as a ⛔ block naming curl, jq, find, cat, grep, xargs, node and
+  python. The rule already existed — in AGENTS.md, in CLAUDE.md, and in the
+  tail of the card's fifth bullet *below* the table. Position was the defect:
+  a rule an agent reads only after the payload it was meant to prevent
+  reading is a rule that fires too late. The Execute-payload bullet lost the
+  sentences that moved, so this is a relocation, not a second copy.
+- **Skill cards: step 0, the reuse check** (`list_tests(query=…)` /
+  `noodle list --query <app>`). An identical green feature already existed in
+  a sibling suite; the whole 103 AIC bought a second copy of it. The cheapest
+  operation the engine has was not on the green path at all — and no doc
+  section can route to it, because an agent that never learns to look never
+  reads the page explaining how.
+- Instruction budget: claude skill card 7680 → 8192, copilot 7808 → 8448
+  (+512/+640; 7958 and 8121 B used at the bump), with the accounting in
+  `noodle/instruction_budget.py`. `noodle probe --help` paid for its own
+  chaining note by compressing two phrases — 6335 B, cap unchanged at 6400.
+- **Fixed: the `--find` render hand-quoted its own POM line.** Every other
+  emitted POM line goes through `_yaml_str`; this one wrapped the selector in
+  literal single quotes, so a selector carrying one (`[title='Save']`) pasted
+  as YAML that does not parse — the copy-ready snippet, uncopyable. Same
+  class as the POM-quoting report in the handoff, which is why it is here and
+  not deferred: what the engine hands back has to be what the runtime reads.
+- Docs: `docs/cli-reference.md` (the `--do` split rules and what never
+  splits), `docs/agent-playbook.md` (§0.3 `within`, §2 the one-string chain
+  trap, and the reuse check named as step 0), `docs/llm-performance.md`.
+  Regression tests: `unit_tests/test_nood_0224.py` (34).
+
 ## [1.0.0a37] — 2026-08-02
 
 **NOOD_0223** — feature: close the manual patch paths. Every item here is a

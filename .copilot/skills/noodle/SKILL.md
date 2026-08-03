@@ -20,18 +20,28 @@ Nouns: engine = framework repo/install; workspace = `noodle init` test
 project; wok = capability work area, tag-routed
 (`read_docs('woks')`).
 
+⛔ **Noodle commands only** — no curl, no jq, no `find`/`cat`/`grep`/
+`xargs`/`node`/`python` on a page, payload or app: payloads arrive
+pre-bounded, URLs pre-checked (`http_ok`), a dead origin named by
+`noodle probe <url>`. Nothing in noodle answers it? Stop and name the
+engine gap to report — a shell command only hides it.
+
 ## Green path
 
 | # | Operation | MCP tool | CLI |
 |---|---|---|---|
+| 0 | Reuse check, ALWAYS first | `list_tests(query="<app/flow>")` | `noodle list --query <app/flow>` |
 | 1 | Probe (unfamiliar page/SPA only) | `probe_page(url, click=[…], do=[…], search="…", suggest="…", follow="…", expect=[…])` | `noodle probe <url> --compact [--click/--do/--search/--suggest/…]` |
 | 2 | Author | `author_test(…)` | `noodle author --prompt "<ask>" --run -w <ws> --json` |
 | 3 | Execute+report+serve | `run_and_report(headless=True, retries=0, serve_reports=True)` | `noodle run <path> -w <ws> --headless --retries 0 --json` |
 
+- Green feature already covering the flow? Copy, retarget `{env:}`,
+  run — no probe, no authoring.
 - Bundle every reveal click, dropdown enum (`--open-native`), search
   term, typeahead (`--suggest`+`--follow`), `--expect` verdicts and the
   `--do` transaction into ONE probe — never per stage or re-probe to
-  grep. `suggested_steps`/`pom_yaml` are copy-ready — paste.
+  grep. One `--do` chains on `, <verb>` (`click A in the row containing
+  X, click B`). `suggested_steps`/`pom_yaml` are copy-ready — paste.
 - Goal mode is the rule for a new single-flow test: spec `goal:` +
   `--run` (`run_after_author=True`) — probes, compiles feature+POM,
   runs once, serves; 0 passed = failure; budget = 1 probe, 1 run.
@@ -80,10 +90,7 @@ Every `do:` — inventing one is rejected (`target` = a control name,
   source (black-box; source selectors are implementation-coupled).
   Identical payload twice = change the mechanism, not the wording.
 - Execute payload: report paths, served URLs and, on red, `rca_compact`;
-  extra RCA/report/serve calls repeat it; URLs pre-checked (`http_ok`)
-  — no curl, no jq. App origin dead? `noodle probe <url>` says so
-  itself. Nothing in noodle answers it? Stop and name the engine gap
-  to report — improvising a shell command just hides it.
+  extra RCA/report/serve calls repeat it.
 - "run feature-regression" → `noodle feature-regression`. ONE call:
   generates the three test cases, runs, serves, prints the table. Never
   hand-build `results.json` or read host telemetry.

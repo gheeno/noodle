@@ -1019,45 +1019,96 @@ _DO_RE = re.compile(
     r"|select\s+(?P<opt>.+?)\s+from\s+(?P<dd>.+?)"
     r"|switch\s+to\s+(?:the\s+)?(?P<tab>\S+)\s+tab)\s*$", re.I)
 
+# NOOD_0224 — one --do item, a whole chain. Agents write the transaction the
+# way they'd say it: "click add to cart in the row containing <item>, click
+# proceed to checkout". Every (.+?) above runs to end-of-string, so the row
+# caption SWALLOWED ", click proceed to checkout" and the run died on
+# "No row containing '<item>, click proceed to checkout' found" — a silent
+# misfire that cost a reviewed session eight probes and four leak commands.
+# A comma followed by one of the grammar's OWN verbs starts a new action; a
+# comma inside a caption ("Large, thin crust") never is, so the split is safe
+# without teaching the agent a new syntax. `then`/`and` after the comma are
+# connective noise and are eaten with it.
+_VERB_SPLIT_RE = re.compile(
+    r",\s*(?:then\s+|and\s+)?(?=(?:clicks?|enters?|selects?|switch\s+to)\s)",
+    re.I)
+# NOOD_0224 — "within" is the preposition agents reach for when they mean the
+# row-scoped click, and it failed the same silent way: the generic
+# `click <btn>` alternative matched, so "add to cart within <item>" became a
+# CONTROL NAME no page has. It means what the grammar spells "in the row
+# containing", so read it that way instead of rejecting it.
+_WITHIN_RE = re.compile(r"^(clicks?\s+.+?)\s+within\s+(.+)$", re.I)
 
-def parse_do(actions: list[str]) -> list[tuple[str, str, str | None]]:
+
+def _split_do_string(a: str) -> list[str]:
+    """One --do item → its ordered actions (NOOD_0224). Unchained items come
+    back as a single-element list, so callers need no special case."""
+    return [p for p in (s.strip() for s in _VERB_SPLIT_RE.split(a)) if p] or [a]
+
+
+def parse_do(actions: list[str],
+             *, notes: list[str] | None = None,
+             ) -> list[tuple[str, str, str | None]]:
     """Parse --do items into (verb, target, value) triples. Raises ValueError
-    naming the bad item — callers check BEFORE any browser launches."""
+    naming the bad item — callers check BEFORE any browser launches.
+
+    NOOD_0224 — one item may carry a comma-chain of actions; it is split on
+    ", <verb>" boundaries first and each part parses on its own. Pass `notes`
+    to learn when an item was rewritten that way: the entries are `_do_label`
+    strings, so a chained value is never echoed."""
     out = []
     for a in actions:
         # NOOD_0177 — _DO_RE's (.+?) groups straddle two \s+ boundaries and
         # backtrack cubically: 6.64s at 1.6 KB, and this runs BEFORE any browser
         # launches, exactly where the docstring promises the call is cheap.
         a = re.sub(r"\s+", " ", a or "").strip()[:_MAX_DO_LEN]
-        m = _DO_RE.match(a)
-        if not m:
-            raise ValueError(
-                f'bad do action {a!r} — use "click <name>", '
-                '"click <name> in the row containing <text>", '
-                '"enter <value> in <field>", "select <option> from <dropdown>" '
-                'or "switch to <new|original> tab"')
-        g = m.groupdict()
-        if g["rbtn"] is not None:
-            # Quotes are pasted-runtime-phrasing noise; the row text and the
-            # control name both resolve against rendered text, not selectors.
-            out.append(("click_row", g["rbtn"].strip().strip("'\""),
-                        g["row"].strip().strip("'\"")))
-        elif g["btn"] is not None:
-            out.append(("click", g["btn"].strip(), None))
-        elif g["val"] is not None:
-            out.append(("enter", g["field"].strip(), g["val"].strip()))
-        elif g["opt"] is not None:
-            out.append(("select", g["dd"].strip(), g["opt"].strip()))
-        else:
-            t = g["tab"].lower()
-            if t not in (*_TAB_NEW, *_TAB_HOME):
-                # A page tab ("switch to the Settings tab") is a click, not a
-                # browser-tab switch — say so, or the caller retries blind.
+        parts, start, reworded = _split_do_string(a), len(out), False
+        for p in parts:
+            p2 = _WITHIN_RE.sub(r"\1 in the row containing \2", p)
+            reworded = reworded or p2 != p
+            m = _DO_RE.match(p2)
+            if not m:
                 raise ValueError(
-                    f'bad tab target {t!r} in {a!r} — use one of '
-                    + "|".join((*_TAB_NEW, *_TAB_HOME))
-                    + '; a tab WITHIN the page is "click <name>"')
-            out.append(("switch", t, None))
+                    f'bad do action {p!r} — use "click <name>", '
+                    '"click <name> in the row containing <text>", '
+                    '"enter <value> in <field>", "select <option> from <dropdown>" '
+                    'or "switch to <new|original> tab"'
+                    # NOOD_0224 — name the near miss, not just the grammar: the
+                    # reviewed session's next move after a bare form list was a
+                    # reworded retry of the same rejected shape.
+                    + ('; "within <text>" means "in the row containing <text>"'
+                       if re.search(r"\bwithin\b", p, re.I) else ""))
+            g = m.groupdict()
+            if g["rbtn"] is not None:
+                # Quotes are pasted-runtime-phrasing noise; the row text and the
+                # control name both resolve against rendered text, not selectors.
+                out.append(("click_row", g["rbtn"].strip().strip("'\""),
+                            g["row"].strip().strip("'\"")))
+            elif g["btn"] is not None:
+                out.append(("click", g["btn"].strip(), None))
+            elif g["val"] is not None:
+                out.append(("enter", g["field"].strip(), g["val"].strip()))
+            elif g["opt"] is not None:
+                out.append(("select", g["dd"].strip(), g["opt"].strip()))
+            else:
+                t = g["tab"].lower()
+                if t not in (*_TAB_NEW, *_TAB_HOME):
+                    # A page tab ("switch to the Settings tab") is a click, not
+                    # a browser-tab switch — say so, or the caller retries blind.
+                    raise ValueError(
+                        f'bad tab target {t!r} in {p!r} — use one of '
+                        + "|".join((*_TAB_NEW, *_TAB_HOME))
+                        + '; a tab WITHIN the page is "click <name>"')
+                out.append(("switch", t, None))
+        if notes is not None and (len(parts) > 1 or reworded):
+            # Values never enter a note — _do_label is the same value-free
+            # labeller the payload uses (NOOD_0144).
+            notes.append(
+                ("chained --do read as "
+                 f"{len(parts)} action(s): " if len(parts) > 1 else
+                 '"within" read as "in the row containing": ')
+                + " | ".join(_do_label(v, t, x if v == "click_row" else None)
+                             for v, t, x in out[start:]))
     return out
 
 
@@ -2845,8 +2896,9 @@ def probe(urls: list[str], timeout_ms: int = 15000,
     the ordered-navigation contract where earlier URLs are setup
     navigation, not action pages."""
     pages, errors = [], []
+    do_notes: list[str] = []
     try:
-        do_actions = parse_do(do) if do else None
+        do_actions = parse_do(do, notes=do_notes) if do else None
     except ValueError as e:
         return {"pages": [], "errors": [{"url": ", ".join(urls),
                                          "error": str(e)}]}
@@ -2925,6 +2977,11 @@ def probe(urls: list[str], timeout_ms: int = 15000,
                     # test asserts on.
                     if perform and mutate and not pick and acting:
                         _perform_mutation(page, pg, mutate, timeout_ms)
+                    # NOOD_0224 — a rewritten chain is reported, not silently
+                    # obeyed: the caller asked for one action and got three,
+                    # and the deltas below are keyed to the rewrite.
+                    if do_actions and do_notes:
+                        pg["do_split_note"] = "; ".join(do_notes)
                     if do_actions and acting and not search:
                         page = _do(page, pg, do_actions, timeout_ms)
                     elif do_actions and not acting:
@@ -3348,6 +3405,9 @@ def _do_lines(pg: dict, indent: str = "  ") -> list[str]:
     from both human and compact output, so every later action ran against an
     invalid state and the agent only ever saw the final expectation misses."""
     out = [f"{indent}⚠ {w}" for w in pg.get("do_warnings", [])]
+    # NOOD_0224 — the rewrite prints with the transaction it changed.
+    if pg.get("do_split_note"):
+        out.append(f'{indent}{pg["do_split_note"]}')
     # NOOD_0214 — the completion count, always, not only on failure: "did the
     # rest of my chain run?" was costing whole re-probes to answer.
     if pg.get("do_skipped"):
@@ -3652,7 +3712,10 @@ def render_find(result: dict, needle: str) -> str:
         if h.get("step"):
             out.append(f'      step: {h["step"]}')
         out.append(f'      pom: {str(name).lower()}:')
-        out.append(f"        css: '{h.get('selector', '')}'")
+        # NOOD_0224 — through the quoter like every other emitted POM line:
+        # this snippet is copy-ready, and a selector carrying a single quote
+        # (`[title='Save']`) hand-quoted here pastes as unparseable YAML.
+        out.append(f"        css: {_yaml_str(h.get('selector', ''))}")
     return "\n".join(out)
 
 
@@ -3777,6 +3840,9 @@ def _compact_page(pg: dict, max_controls: int, brief: bool = False) -> dict:
                 "do_warnings", "do_failed",
                 # NOOD_0214 — the N/M completion count, structured
                 "do_requested", "do_skipped",
+                # NOOD_0224 — a comma-chain the engine rewrote is evidence:
+                # the deltas below are keyed to the rewrite, not the request
+                "do_split_note",
                 # NOOD_0156 follow-up — the no-delta note on a do-reveal
                 "note",
                 "search_warning", "click_warnings",

@@ -149,6 +149,24 @@ Ceiling accounting (moved verbatim from the retired test asserts):
   carries the substance and these clauses route to it. (a) also lands in the
   payload itself (core.BLOCKING_IS_EVIDENCE on `next`) — the surface frames
   the expectation, the payload confirms it at the moment it matters.
+- NOOD_0224: claude skill card 7680 → 8192, copilot 7808 → 8448 (+512/+640;
+  7965 and 8128 B used at the bump). Two moves, both from a session that
+  spent 103 AIC on a seven-step checkout flow. (a) The leak prohibition is
+  now a ⛔ block ABOVE the green path instead of the tail of the fifth
+  bullet below it. It is the same rule, RELOCATED — the Execute-payload
+  bullet lost the sentences that moved — because position was the defect:
+  AGENTS.md and CLAUDE.md both carry it, and the session still reached for
+  `curl`, `find`, `xargs`, `cat` and `node -e` the moment a probe misfired.
+  A rule an agent reads only after the payload it was supposed to prevent
+  reading is a rule that fires too late; the naming of the banned commands
+  is what makes it checkable. (b) Step 0, `list_tests(query=…)` — an
+  identical green feature already existed in a sibling suite and the whole
+  103 AIC bought a second copy of it. The reuse check is the cheapest
+  operation the engine has and it was not on the path at all, so no doc
+  section could route to it: an agent that never learns to look does not
+  read the page telling it how. The `--do` comma-chain clause rides inside
+  the existing probe bullet, and `noodle probe --help` paid for its own
+  chaining note by compressing two phrases (6335 B, unchanged cap).
 """
 from __future__ import annotations
 
@@ -161,8 +179,8 @@ CEILINGS: dict[str, int] = {
     "agents-md (cli._AGENTS_MD)": 6144,
     "prompt-template (cli._PROMPT_TEMPLATE)": 1024,
     "mcp-instructions (server._INSTRUCTIONS)": 2688,
-    "claude-skill-card (.claude/skills/noodle/SKILL.md)": 7680,
-    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 7808,
+    "claude-skill-card (.claude/skills/noodle/SKILL.md)": 8192,
+    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 8448,
     "copilot-digest (.github/copilot-instructions.md)": 7424,
     "hot-tool-docstrings (probe/author/run_and_report/run)": 6400,
     "cli-help (noodle probe --help)": 6400,

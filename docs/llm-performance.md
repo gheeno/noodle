@@ -157,7 +157,10 @@ generation:
   <f>" --do "click save"` (NOOD_0144) executes the real transaction in the
   same probe and snapshots each new state — one session covers the whole
   flow, `{env:KEY}` values resolve engine-side, secrets stay out of the
-  transcript.
+  transcript. Writing the chain as ONE string works too (NOOD_0224):
+  `--do "click add to cart in the row containing <item>, click checkout"`
+  splits on `, <verb>`, and `within` reads as `in the row containing` —
+  neither needs a reworded retry, and `do_split_note` says what was read.
 - **Runs during the dev loop: `headless=True, retries=0`** (MCP) /
   `--headless --retries 0` (CLI). The default retry silently doubles
   wall-clock on every red run while iterating; turn it back up once green.
