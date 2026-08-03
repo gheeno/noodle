@@ -157,6 +157,23 @@ Ceiling accounting (moved verbatim from the retired test asserts):
   bullet lost the sentences that moved — because position was the defect:
   AGENTS.md and CLAUDE.md both carry it, and the session still reached for
   `curl`, `find`, `xargs`, `cat` and `node -e` the moment a probe misfired.
+- NOOD_0228: claude skill card 8192 → 8704, copilot 8448 → 8960,
+  hot-tool-docstrings 6400 → 6656 (8413 / 8576 / 6603 B used at the bump).
+  Three clauses, all of them a COMMAND replacing an instruction to touch a
+  file — the audited session ran a heredoc because `--spec` said "write a
+  file, pass the path", and hand-wrote POM yaml because the engine's own
+  ambiguity warning prescribed it. (a) `--spec-text` carries a multi-line
+  spec as one argument; the "write a file" clause is gone, so the card no
+  longer contradicts its own ⛔ block. (b) `noodle pom resolve/set` replaces
+  the POM hand-edit, and the NOOD_0212 `match: {}` trap moved from a
+  parenthetical into pom_admin's writer — prose about a trap costs bytes
+  every session; code closing it costs none. (c) `noodle workspace inspect`
+  replaces `ls`. Each addition removes a reason to reach for the shell,
+  which is the only lever that works without the model's cooperation; the
+  bytes buy an executable substitute, not another prohibition.
+  hot-tool-docstrings grew by author_test's `brief`, the parameter that
+  gives a hand-authoring caller a legal channel for "take a screenshot for
+  evidence" — the missing capability behind the marker's five returns.
   A rule an agent reads only after the payload it was supposed to prevent
   reading is a rule that fires too late; the naming of the banned commands
   is what makes it checkable. (b) Step 0, `list_tests(query=…)` — an
@@ -179,10 +196,10 @@ CEILINGS: dict[str, int] = {
     "agents-md (cli._AGENTS_MD)": 6144,
     "prompt-template (cli._PROMPT_TEMPLATE)": 1024,
     "mcp-instructions (server._INSTRUCTIONS)": 2688,
-    "claude-skill-card (.claude/skills/noodle/SKILL.md)": 8192,
-    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 8448,
+    "claude-skill-card (.claude/skills/noodle/SKILL.md)": 8704,
+    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 8960,
     "copilot-digest (.github/copilot-instructions.md)": 7424,
-    "hot-tool-docstrings (probe/author/run_and_report/run)": 6400,
+    "hot-tool-docstrings (probe/author/run_and_report/run)": 6656,
     "cli-help (noodle probe --help)": 6400,
     "cli-help (noodle run --help)": 5504,
 }

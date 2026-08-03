@@ -7,6 +7,7 @@ copy-pasteable example, carried on the surfaces AND returned with every
 rejection, removes that branch.
 """
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,10 @@ from noodle.cli import app
 from noodle.repl import core, goal
 
 runner = CliRunner()
+
+# NOOD_0163/0228 — same stripper instruction_budget._cli_help uses. Colour is
+# paint, not content: what the agent reads is identical either way.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 REPO = Path(__file__).resolve().parent.parent
 CARDS = (REPO / ".claude/skills/noodle/SKILL.md",
@@ -108,7 +113,14 @@ def test_root_help_is_a_scan_list_not_every_docstring():
     detail = runner.invoke(app, ["probe", "--help"]).stdout
     assert "exact heading texts" in detail
     assert "noodle docs cli-reference" in detail   # NOOD_0162 router pointer
-    assert len(top) < 8000, "root --help was 14.7 KB of full docstrings"
+    # NOOD_0228 — measure CONTENT, not paint. This is the NOOD_0163 rule that
+    # instruction_budget._cli_help already applies to `probe --help` and
+    # `run --help`: GitHub Actions renders help in colour and a laptop does
+    # not, so ~2.3 KB of ANSI escapes decided this ceiling in CI and were
+    # invisible locally. Two guards on the same surface disagreeing about what
+    # a byte is means one of them fails for a reason nobody can reproduce.
+    content = _ANSI_RE.sub("", top)
+    assert len(content) < 8000, "root --help was 14.7 KB of full docstrings"
 
 
 def test_bare_steps_prints_the_index_not_the_whole_dictionary():

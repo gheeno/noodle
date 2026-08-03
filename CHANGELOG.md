@@ -4,6 +4,84 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a42] — 2026-08-03
+
+**NOOD_0228** — feature: affordance closure. An audited agent session broke
+two standing rules in one sitting — it shelled out inside a workspace, and it
+reintroduced the deprecated per-step evidence request in step text — and in
+both cases it was following the engine. The skill card told it to write a spec
+file; the ambiguous-locator warning told it to hand-edit `pom.yaml`; and when
+authoring blocked, `noodle steps "screenshot"` printed the forbidden form as a
+copy-ready example, which it pasted, and the test went green.
+
+Root cause, stated once: Noodle simultaneously prohibited an action, exposed
+it as valid, recommended it during recovery, failed to provide an allowed
+equivalent, and rewarded it with a passing test. **A prohibited behaviour is
+not prohibited while it remains executable, discoverable, recommended, or
+necessary.** Models follow the executable contract, not the declared one —
+which is why the same defect returned across NOOD_0153, 0211, 0215, 0225 and
+0227, each of which fixed it in prose.
+
+The substitutes are built first, so closing the affordances leaves somewhere
+legal to go.
+
+- **`noodle pom resolve|set|list`** (+ MCP `resolve_locator`, `set_pom_entry`,
+  `list_pom`). An ambiguous locator now mints a stable id and durable
+  candidate ids; the fix is `noodle pom resolve <id> --choose C1`. The engine
+  writes the selector and picks the file — including the NOOD_0212 `match: {}`
+  scoping trap, which moved from a parenthetical warning into the writer.
+- **`noodle workspace inspect`** (+ MCP `list_workspace_resources`) — apps,
+  features, environment KEY NAMES (never values), POM files with their URL
+  scope, secrets-file presence (never contents), report locations.
+- **`noodle author --spec-text` / `--spec-line`** — a multi-line spec as one
+  argument value. The skill cards' "write a file, pass the path" instruction,
+  two screens below their own "Noodle commands only" block, is deleted.
+- **`author_test(brief=…)`** — the user's verbatim ask, **compatible with
+  `feature_content`** (unlike `goal`). Evidence derivation lived only on the
+  goal path, so a hand-authoring caller had no legal channel for "take a
+  screenshot for evidence" — the missing capability behind the marker's five
+  returns. Requests resolve to 1-based step positions and compile to
+  `@evidence:steps=`; an unplaceable request **blocks** rather than shipping a
+  test that proves less than was asked. `--evidence-step N` sets it directly.
+- **Structured remediations** (`noodle/remediation.py`). Every recommendation
+  is a record whose `command` must resolve to a registered CLI command;
+  rendering is derived, so a remediation cannot contain a filesystem-edit
+  instruction — there is nowhere to put one.
+- **Per-step evidence requests in step text are rejected at parse time.** They
+  fail `noodle validate`, fail the author transaction, and refuse to run. The
+  rejection names the compliant mechanism and is deliberately **not**
+  copy-ready: NOOD_0227 failed precisely because its own "don't use this"
+  surface could be pasted. Breaking change, with a one-command upgrade:
+  **`noodle migrate evidence-markers --write`** rewrites an existing suite to
+  scenario tags through the normal author transaction.
+- **Every emitted surface purged** — `docs/steps_dictionary.md`,
+  `docs/agent-playbook.md`, both skill cards, engine docstrings and the
+  `prompt_expansion.assumptions` text. The docs corpus is an emitted surface
+  too, via `noodle steps` and `read_docs`; that is what NOOD_0227's "the
+  engine never emits these" missed.
+- **The Shipped Affordance Contract** (`test_nood_0228_affordance_contract.py`,
+  required in CI). It enumerates every agent-visible surface from the LIVE
+  registries — the Typer command tree, the docs corpus, packaged resources,
+  every file `noodle init` writes — and asserts the forbidden grammar is
+  absent, the parser refuses every spelling, the refusal is not copy-ready,
+  and every registered remediation names a command that both exists and
+  parses. The guard is proved by breaking it on purpose.
+- **`noodle --help` measures content, not paint.** The three new command groups
+  pushed the root help past its 8 KB cap **in CI only** — GitHub Actions
+  renders help in colour and a laptop does not, so ~2.3 KB of ANSI escapes
+  decided a ceiling that was invisible locally. `test_nood_0161` now strips
+  escapes before measuring, which is the rule `instruction_budget._cli_help`
+  has applied to `probe --help` / `run --help` since NOOD_0163; two guards on
+  one surface disagreeing about what a byte is means one fails for a reason
+  nobody can reproduce. The group help strings were shortened too, so the real
+  content growth for three new groups is 243 bytes.
+- **Rule 1, honestly scoped.** Strict mode is on by default for agent-driven
+  runs (MCP door; `workspace_strict: false` still wins) and stays opt-in for
+  human CLI use; the footprint scan reaches the workspace root and reports its
+  count. The playbook now states plainly that filesystem scanning cannot see
+  a read-only shell command, so nobody mistakes the telemetry for enforcement
+  again. `noodle init`'s own closing line stopped saying "`ls -a` to see it".
+
 ## [1.0.0a41] — 2026-08-03
 
 **NOOD_0227** — feature: the 65.9-AIC blowout remediation (RCA tracks A–E).

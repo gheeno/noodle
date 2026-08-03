@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 from noodle.resolver import match_step
+from noodle.resolver import patterns as _patterns
 
 # Steps a table is attached to resolve via patterns but carry their data in
 # the Gherkin table, which behave strips from step.name — nothing special
@@ -63,16 +64,26 @@ def check_feature(text: str, filename: str = "<generated>") -> dict:
         steps.extend((s, subs, visual, effective) for s in scenario.steps)
 
     results = []
+    rejected = []
     for step, subs, visual, tag_set in steps:
         line = f"{step.keyword} {step.name}"
         name = step.name
         for placeholder, value in subs.items():
             name = name.replace(f"<{placeholder}>", value)
+        # NOOD_0228 — an evidence request inside step text is rejected before
+        # matching, with its own message. Without this it would merely fail to
+        # match and get the generic "rephrase to a vocabulary step" advice —
+        # which is what sent the audited session to `noodle steps "screenshot"`
+        # and straight back to the marker.
+        if (why := _patterns.evidence_marker_rejection(name)):
+            rejected.append({"step": line, "error": why})
+            results.append((line, False))
+            continue
         # Same pipeline as the runtime resolver (step_resolver.resolve):
         # aliases too, or this dry-run flags steps the engine would accept.
         matched = match_step(name, visual=visual, tags=tag_set) is not None
         results.append((line, matched))
-    return {"error": None, "steps": results}
+    return {"error": None, "steps": results, "rejected": rejected}
 
 
 def unmatched(result: dict) -> list[str]:
@@ -388,8 +399,15 @@ def render(result: dict) -> str:
     if result["error"]:
         return f"  ✗ parse error: {result['error']}"
     lines = []
+    rejected = {r["step"] for r in result.get("rejected", [])}
     for line, ok in result["steps"]:
-        lines.append(f"  {'[pattern]' if ok else '[LLM]    '} {line}")
+        tag = "[REJECTED]" if line in rejected else \
+              "[pattern]" if ok else "[LLM]    "
+        lines.append(f"  {tag} {line}")
+    # NOOD_0228 — a rejection is not an unmatched step; it is a refusal, and
+    # it names its own fix. Printed once per distinct reason, not per step.
+    for reason in dict.fromkeys(r["error"] for r in result.get("rejected", [])):
+        lines.append("\n  ✗ " + reason)
     misses = unmatched(result)
     if misses:
         lines.append(

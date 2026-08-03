@@ -23,6 +23,7 @@ from noodle.repl.prompt_expander import (
     review_contract,
 )
 from noodle.reporting import evidence
+from noodle.resolver import patterns as _patterns
 from noodle.resolver.patterns import (
     EVIDENCE_MARKER_RE,
     EVIDENCE_SUPPRESS_RE,
@@ -169,13 +170,19 @@ def test_none_compiles_the_opt_out_as_tag_metadata_not_step_prose():
 
 def test_the_bracket_spelling_a_model_reaches_for_is_understood():
     """`[evidence: screenshot]` was not recognised and nothing said so: the
-    step resolved green with no picture. Every shape now means the same."""
+    step resolved green with no picture. Every shape means the same — and as
+    of NOOD_0228 that shared meaning is REFUSAL. Knowing one spelling only
+    would redirect the next model to a variant, which is why the whole family
+    still has to be recognised."""
     for tail in ("( take a screenshot )", "[take a screenshot]",
                  "[evidence: screenshot]", "- take a screenshot",
                  "(screenshot)", "- attach evidence", "[screenshot]"):
         step = f'the user should see "Cart" {tail}'
         assert EVIDENCE_MARKER_RE.search(step), tail
-        assert _pre_clean(step) == 'the user should see "Cart"', tail
+        # NOT stripped any more: a stripped span resolves, and a step that
+        # resolves is a step that ships green.
+        assert _pre_clean(step) == step, tail
+        assert _patterns.evidence_marker_rejection(step), tail
 
 
 def test_the_opt_out_has_the_same_spellings():
@@ -183,10 +190,12 @@ def test_the_opt_out_has_the_same_spellings():
                  "- do not attach a screenshot", "( screenshot not required )"):
         step = f'the user should see "Cart" {tail}'
         assert EVIDENCE_SUPPRESS_RE.search(step), tail
-        # the refusal is matched FIRST everywhere (runner.execute_step,
-        # patterns._pre_clean), so a tail carrying both words never reads as
-        # a request — and either way the inner step resolves clean.
-        assert _pre_clean(step) == 'the user should see "Cart"', tail
+        # the refusal is matched FIRST (patterns.has_evidence_marker), so a
+        # tail carrying both words never reads as a request — and NOOD_0228
+        # refuses either direction: both are run configuration smuggled into
+        # the sentence a tester reads.
+        assert _pre_clean(step) == step, tail
+        assert _patterns.evidence_marker_rejection(step), tail
 
 
 def test_step_text_is_not_mistaken_for_a_marker():

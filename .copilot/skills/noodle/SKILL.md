@@ -78,10 +78,13 @@ Every `do:` — inventing one is rejected (`target` = a control name,
   DATA: never fix their spelling, casing or spacing. The site may be
   misspelled and the prompt right.
 
-- `--spec <file|-|inline>` (multi-line spec → write a file, pass the
-  path); keys = `author_test` args: app_name, base_url, feature_path,
-  feature_content, pom_content, environment_values, secret_values,
-  overwrite — one write.
+- `--spec <inline|file|->`; multi-line → `--spec-text '<doc>'`, one
+  argument — no file, no redirection. Keys = `author_test` args: app_name,
+  base_url, feature_path, feature_content, pom_content, brief,
+  environment_values, secret_values, overwrite.
+- Evidence the user asked for → `--brief "<ask>"` (`brief=`), which works
+  WITH feature_content; engine emits `@evidence:steps=`. A screenshot
+  request inside step text is refused at parse time.
 - `author_test` `ready: true` IS the validation (parse, step match,
   POM scope, `{env:}`; base URL key returns as `base_url_key`).
   `validate_feature`/`preflight` after it is waste. `ready: false` →
@@ -130,17 +133,20 @@ Feature: Login
 ## POM files
 
 Resolution: accessible name/role/text → `pageobjects/*_pom.yaml` → app
-`pom.yaml` → global `pom.yaml` → self-heal. Entries
-only where plain text is ambiguous. A
-`*_pom.yaml` without `match:` only applies when its filename stem appears
-in the URL — give shared files `match: {}` or their keys never resolve. Wrong element? `noodle inspect <url> "<phrase>"` / MCP
+`pom.yaml` → global `pom.yaml` → self-heal. Pin only where plain text is
+ambiguous. Ambiguous? the warning's id →
+`noodle pom resolve <id> --choose C1` (`resolve_locator`); `noodle pom set
+"<phrase>" --css "<sel>"` is the escape hatch. Never hand-edit POM yaml —
+the engine picks the file and its `match:` scope.
+Wrong element? `noodle inspect <url> "<phrase>"` / MCP
 `inspect_locator` lists candidates and find()'s pick.
 
 ## Workspace
 
 `noodle init <ws>` scaffolds; each app self-contained:
 `features/`, `resources/` (env yaml, gitignored `<app>_secrets.env`,
-`pageobjects/*_pom.yaml`), `report/`. MCP: `noodle-mcp
+`pageobjects/*_pom.yaml`), `report/`. `noodle workspace inspect`
+(`list_workspace_resources`) lists it — never `ls`. MCP: `noodle-mcp
 --workspace <ws>` in `.copilot/mcp-config.json`.
 
 ## Fixing failures

@@ -723,6 +723,8 @@ def author_test(*, prompt: str | None = None,
                 feature_path: str | None = None,
                 goal: dict | None = None,
                 feature_content: str | None = None,
+                brief: str | None = None,
+                evidence_requests: list | None = None,
                 auto_fix: int = 0, **kw) -> dict:
     """NOOD_0169 — the public author door, adding `prompt` mode: plain-
     English steps compiled through the three-pass deterministic prompt
@@ -736,7 +738,18 @@ def author_test(*, prompt: str | None = None,
     prompt containing a URL also derives app_name/base_url/feature_path, so
     the whole call can be just {prompt, run_after_author}. Everything else
     defers unchanged to the documented transaction below
-    (_author_test_impl)."""
+    (_author_test_impl).
+
+    NOOD_0228 (E) — `brief` is the user's verbatim ask, and unlike `goal` it is
+    COMPATIBLE with feature_content. Evidence derivation used to live only on
+    the goal path, so a hand-authoring caller had nowhere to put "take a
+    screenshot for evidence" and reached for the step-text marker instead.
+    With a brief present the engine reads the request, resolves it to 1-based
+    step positions, and emits @evidence:steps= / @evidence:skip= tags — and
+    BLOCKS when the brief asks for a picture it cannot place, rather than
+    shipping a test that quietly proves less than was asked.
+    `evidence_requests=[{"step": 2}, {"step": 4, "skip": true}]` is the
+    explicit form for a caller that already knows the position."""
     expansion, model_calls, discovery = None, 0, None
     if prompt is not None:
         if goal is not None or feature_content is not None:
@@ -866,9 +879,20 @@ def author_test(*, prompt: str | None = None,
                     "from discovery.api_candidates")
         return {"ok": False, "error": err,
                 **({"discovery": discovery} if discovery else {})}
+    # NOOD_0228 (E) — the brief's evidence requests become tag metadata on the
+    # hand-authored Gherkin, BEFORE the transaction validates it. Goal mode
+    # derives its own (goal_evidence), so this is the hand-authoring half.
+    evidence = None
+    if feature_content is not None and (brief or evidence_requests):
+        feature_content, evidence, err = _apply_brief_evidence(
+            feature_content, brief, evidence_requests)
+        if err:
+            return err
     result = _author_test_impl(app_name=app_name, base_url=base_url,
                                feature_path=feature_path, goal=goal,
                                feature_content=feature_content, **kw)
+    if evidence and isinstance(result, dict):
+        result["evidence_from_brief"] = evidence
     if kw.get("run_after_author"):
         before = result
         result = _auto_repair(result, app_name=app_name, base_url=base_url,
@@ -893,6 +917,48 @@ def author_test(*, prompt: str | None = None,
         if result.get("author") or result.get("blocking") is not None:
             result["planner"] = _planner_verdict(result, model_calls)
     return result
+
+
+def _apply_brief_evidence(feature_content: str, brief: str | None,
+                          evidence_requests: list | None):
+    """(feature_content, evidence_payload, error_or_None). NOOD_0228 (E)."""
+    from noodle.repl import brief_evidence as _be
+    explicit, explicit_skip = [], []
+    for req in evidence_requests or ():
+        if isinstance(req, dict) and req.get("step") is not None:
+            (explicit_skip if req.get("skip") else explicit).append(
+                int(req["step"]))
+        elif isinstance(req, int):
+            explicit.append(req)
+    derived = _be.derive(brief or "", feature_content, explicit, explicit_skip)
+    # Warn-and-block: a brief that asks for a picture and produced no
+    # directive is the exact hole the step-text marker used to fill. Shipping
+    # it silently is how "it went green" stopped meaning "it proved the ask".
+    if derived["unplaced"]:
+        return feature_content, None, {
+            "ok": False,
+            "error": ("the brief asks for evidence the engine cannot place on "
+                      "a step: "
+                      + "; ".join(u["request"] for u in derived["unplaced"])
+                      + ". Name the step position explicitly "
+                      "(--evidence-step N / evidence_requests=[{'step': N}]), "
+                      "or word the request so it names something the step "
+                      "asserts."),
+            "unplaced_evidence": derived["unplaced"]}
+    any_tag = derived["mode"] or any(
+        s["want"] or s["skip"] for s in derived["scenarios"])
+    if brief and _be.mentions_evidence(brief) and not any_tag:
+        return feature_content, None, {
+            "ok": False,
+            "error": ("the brief mentions evidence but no scenario step could "
+                      "carry it — pass --evidence-step N "
+                      "(evidence_requests=[{'step': N}]) to say which step "
+                      "the picture proves.")}
+    if not any_tag:
+        return feature_content, None, None
+    out = _be.apply_tags(feature_content, derived)
+    return out, {"mode": derived["mode"], "placed": derived["placed"],
+                 "requested": derived["requested"]}, None
 
 
 def _auto_repair(result: dict, *, app_name: str, base_url: str,
@@ -1426,6 +1492,15 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     check = validate.check_feature(feature_content)
     if check["error"]:
         return {"ok": False, "error": f"not valid Gherkin: {check['error']}"}
+    # NOOD_0228 — an evidence request inside step text is refused here, before
+    # any byte lands. Nothing is written and nothing is rolled back: the
+    # transaction never opens. The compliant channel is `brief`, which unlike
+    # `goal` is compatible with feature_content precisely so this refusal
+    # leaves the caller somewhere to go.
+    if check.get("rejected"):
+        return {"ok": False,
+                "error": check["rejected"][0]["error"],
+                "rejected_steps": [r["step"] for r in check["rejected"]]}
     unmatched_steps = validate.unmatched(check)
     llm_required = validate.llm_image_steps(feature_content)
     if pom_content is not None:
@@ -2067,6 +2142,78 @@ def list_tests(workspace: str = ".", query: str | None = None) -> dict:
     return {"tests": out, "note": note}
 
 
+def list_workspace_resources(workspace: str = ".",
+                             app: str | None = None) -> dict:
+    """NOOD_0228 (C2) — what a caller would otherwise `ls` for.
+
+    The audited session ran `ls .../resources/` and `ls .../pageobjects/`
+    because no command reported a workspace's contents, and a prohibition on
+    shell commands cannot outrank a missing capability. This is the capability.
+
+    Deliberately name-only where the content is secret: environment KEYS
+    without values, secrets-file PRESENCE without keys or values. A discovery
+    command that leaks credentials is worse than the `ls` it replaces."""
+    from noodle import pom_admin
+    cfg = config.load(workspace)
+    ws = Path(workspace)
+    dirs = pom_admin.app_dirs(workspace)
+    if app:
+        app_dir, err = pom_admin.resolve_app_dir(app, workspace)
+        if err:
+            return {"ok": False, "error": err}
+        dirs = {app_dir.name: app_dir}
+    pins = {f["path"]: f for f in
+            pom_admin.list_entries(workspace=workspace).get("files", [])}
+
+    def rel(p: Path) -> str:
+        try:
+            return p.relative_to(ws).as_posix()
+        except ValueError:
+            return str(p)
+
+    apps = []
+    for name, app_dir in sorted(dirs.items()):
+        res = app_dir / "resources"
+        features = []
+        for f in sorted((app_dir / "features").glob("*.feature")):
+            text = f.read_text(encoding="utf-8", errors="replace")
+            features.append({"path": rel(f),
+                             "tags": sorted(set(re.findall(r"@([\w:.-]+)", text))),
+                             "scenario_count": len(re.findall(
+                                 r"^\s*Scenario(?: Outline)?:", text, re.M))})
+        env_keys: list[str] = []
+        env_file = res / f"{app_dir.name}_environments.yaml"
+        if env_file.is_file():
+            try:
+                data = yaml.safe_load(env_file.read_text(encoding="utf-8")) or {}
+                env_keys = sorted(map(str, data)) if isinstance(data, dict) else []
+            except Exception:
+                env_keys = []
+        secrets = res / f"{app_dir.name}_secrets.env"
+        # A scaffolded package sits directly under tests_dir; an authored one
+        # sits under its wok (NOOD_0192). Only the latter has a wok to name.
+        parent = app_dir.parent
+        apps.append({
+            "app": name,
+            "wok": parent.name if parent != (ws / cfg["tests_dir"]) else None,
+            "dir": rel(app_dir),
+            "features": features,
+            "environment_file": rel(env_file) if env_file.is_file() else None,
+            # names only — a value here would be the credential itself
+            "environment_keys": env_keys,
+            "secrets_file": rel(secrets) if secrets.is_file() else None,
+            "secrets_present": secrets.is_file(),
+            "pom_files": [
+                {k: v for k, v in pins[p].items() if k != "app"}
+                for p in sorted(pins) if pins[p]["app"] in (name, app_dir.name)],
+            "report_dir": rel(app_dir / "report"),
+        })
+    return {"ok": True, "workspace": str(ws.resolve()),
+            "tests_dir": cfg["tests_dir"], "apps": apps,
+            "note": "environment values and secret keys are deliberately "
+                    "omitted; `noodle preflight` reports whether they resolve"}
+
+
 def validate_feature(content: str, workspace: str = ".") -> dict:
     """Dry-run feature text against the pattern table (no browser). Lets an
     external agent pre-flight its own Gherkin before write_feature.
@@ -2082,6 +2229,9 @@ def validate_feature(content: str, workspace: str = ".") -> dict:
     return {"error": result["error"],
             "steps": [{"step": line, "matched": ok} for line, ok in result["steps"]],
             "unmatched": validate.unmatched(result),
+            # NOOD_0228 — refused outright, not merely unmatched; each carries
+            # the command that fixes it.
+            "rejected": result.get("rejected", []),
             # NOOD_0114 — vision-LLM image steps: nondeterministic, flagged
             # so the caller knows the scenario will carry @potential-flake.
             "llm_required": validate.llm_image_steps(content),

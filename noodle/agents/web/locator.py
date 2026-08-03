@@ -1028,34 +1028,52 @@ def _image_cue_locator(scope, text: str):
     return (loc, count > 1) if count else (None, False)
 
 
+def _page_url(page) -> str:
+    try:
+        return page.url or ""
+    except Exception:
+        return ""
+
+
+def _active_app_dir() -> str | None:
+    """The app package the running feature belongs to — <tests_dir>/<wok>/<app>
+    — so a recorded ambiguity resolves without the caller naming it."""
+    from noodle.agents.web import pom as _pom
+    fdir = getattr(_pom, "_feature_dir", None)
+    from pathlib import Path as _P
+    return str(_P(fdir).parent) if fdir else None
+
+
 def _on_ambiguous(page: Page, text: str, loc: Locator):
     """
     Reached when accessibility matched >1 element and no POM entry exists.
     Strict: fail with the candidate list. Lenient: warn + return .first.
     """
-    candidates = _describe_candidates(loc)
+    records = _candidate_records(loc)
     # NOOD_0169 — each candidate line carries a paste-ready scoped selector:
     # "add a scoped entry" without the selector left resolving the ambiguity
     # as homework (a reviewed run ended verified:false with the fix known to
     # the engine but never surfaced). [0] is the one lenient mode acts on.
-    msg = (
-        f"Ambiguous locator '{text}' — matched multiple elements:\n"
-        + "\n".join(f"    [{i}]{' (used)' if i == 0 else ''} {c}"
-                    for i, c in enumerate(candidates))
-        # NOOD_0212 — this advice used to say only "pin it in pom.yaml", and
-        # the obvious place to put it — the pageobjects/<page>_pom.yaml the
-        # engine itself writes — is scoped to URLs matching its own FILENAME.
-        # A control you click to REACH a page never sits on that page, so the
-        # pin silently never applied and the run stayed verified:false with
-        # the fix apparently already made.
-        + f"\n  → Pin the intended one in the app's resources/pom.yaml:\n"
-        f"      {text.lower()}:\n"
-        f"        css: '<selector from its line above>'\n"
-        f"    (putting it in pageobjects/<page>_pom.yaml instead? that file "
-        f"applies ONLY on URLs matching its own filename — put `match: {{}}` "
-        f"on the first line, or a control clicked to reach that page will "
-        f"never resolve.)"
-    )
+    #
+    # NOOD_0228 — and the fix is now a COMMAND. This message used to end in a
+    # YAML snippet and a file path (NOOD_0212 even documented the scoping trap
+    # in a parenthetical), which is a hand-edit prescription with no command
+    # behind it — an agent following the engine's own advice had to shell out.
+    # The candidates are recorded under a stable id and the remediation names
+    # `noodle pom resolve`, which writes the selector and picks the file.
+    from noodle import pom_admin, remediation
+    aid = pom_admin.record(text, records, url=_page_url(page),
+                           app_dir=_active_app_dir())
+    # Rendered from the records in hand, not by re-reading the store: the
+    # message must say the same thing whether or not the store was writable.
+    ids = "".join(f"    [C{i}]{' (used)' if i == 0 else ''} "
+                  f"<{c['tag']}> {c['text']!r}\n"
+                  for i, c in enumerate(records)
+                  ) or "    (could not enumerate candidates)\n"
+    fix = remediation.build("locator.ambiguous", ambiguity_id=aid,
+                            choose="C<n>", phrase=text, count=len(records))
+    msg = (f"Ambiguous locator '{text}' — matched multiple elements:\n"
+           + ids + fix.render())
     if _is_strict():
         raise AssertionError(msg)
     logger.warning(f"\n  ⚠️  {msg}\n  (lenient mode — using the first match; "
@@ -1090,10 +1108,12 @@ _SELECTOR_JS = """e => {
 }"""
 
 
-def _describe_candidates(loc: Locator, limit: int = 5) -> list[str]:
-    """Short text/role description of each ambiguous candidate — plus a
-    paste-ready scoped selector each (NOOD_0169), for evidence AND the fix."""
-    out = []
+def _candidate_records(loc: Locator, limit: int = 5) -> list[dict]:
+    """NOOD_0228 — the same enumeration as _describe_candidates, structured.
+    The selector has to survive as DATA (pom_admin records it, `noodle pom
+    resolve` writes it) instead of only as a line of prose the reader was
+    expected to retype."""
+    out: list[dict] = []
     try:
         handles = loc.element_handles()[:limit]
         for h in handles:
@@ -1104,11 +1124,20 @@ def _describe_candidates(loc: Locator, limit: int = 5) -> list[str]:
                     sel = h.evaluate(_SELECTOR_JS)
                 except Exception:
                     sel = ""
-                out.append(f"<{tag}> {txt!r}" + (f"  css: {sel}" if sel else ""))
+                out.append({"tag": tag, "text": txt, "css": sel})
             except Exception:
-                out.append("<?>")
+                out.append({"tag": "?", "text": "", "css": ""})
     except Exception:
-        out.append("(could not enumerate candidates)")
+        return []
+    return out
+
+
+def _describe_candidates(loc: Locator, limit: int = 5) -> list[str]:
+    """Short text/role description of each ambiguous candidate — plus a
+    paste-ready scoped selector each (NOOD_0169), for evidence AND the fix."""
+    out = [f"<{c['tag']}> {c['text']!r}"
+           + (f"  css: {c['css']}" if c["css"] else "")
+           for c in _candidate_records(loc, limit)]
     return out or ["(none)"]
 
 
