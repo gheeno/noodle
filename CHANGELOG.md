@@ -4,6 +4,88 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a40] — 2026-08-03
+
+**NOOD_0226** — fix: a goal whose own first step is a sign-in can be authored.
+Measured on `main` @ d34a902 with a two-field sign-in and three steps behind
+it: the runtime gate lands on index 0 (the first `enter`), the evidence gate
+is `None` (no `add_to`/`press_key`/`go_back`), so `probe_args` forwarded no
+click and no `--do` chain — the probe loaded the sign-in page and nothing
+else, and **every step behind the sign-in blocked**, offering `username`,
+`password`, `login` as the near misses that should repair an add-to-cart
+click. The compiled Gherkin was already correct. Checks in that same position
+deferred to the run (NOOD_0207); actions blocked. That asymmetry is the bug:
+most enterprise apps are auth-gated, and the failure looked like a bad goal.
+
+- **Fixed: the deferral boundary is now what the probe DID, not which verbs
+  the goal happens to name.** `_reach_gate` is the earlier of the evidence
+  gate and the first **commit click** — a click at or after the runtime gate,
+  which `probe_args` refuses to perform by its own stated rule ("a click
+  after data entry is a commit (save/submit)"). A step past it compiles with
+  the author's own wording and is proven by the run, exactly as a check
+  there already was. A step at or before it is untouched: NOOD_0156's
+  "an unprobed control after a pick still blocks" and NOOD_0212's `within:`
+  gate both stand, and their witnesses are unchanged.
+- **Fixed: a deferred step was reported `missing`.** `intent_trace` keyed
+  only on `proven`, so every deferred action dragged `intent_verified` false
+  — on the very flows the deferral exists to make authorable. It now reads
+  `runtime:control`, the same contract the api arm and NOOD_0188's
+  no-control verbs already have; the label says which proof the step rests
+  on.
+- **Fixed: a selector target bound a lookalike by name.** `_norm` collapses
+  punctuation, so `[id="add-to-cart"]` normalized to `id add to cart` and
+  word-boundary containment matched any control merely NAMED "add to cart" —
+  a different element, with a different selector, picked by luck and
+  compiled into the POM as proven. A selector-shaped target now resolves by
+  **exact selector** or blocks saying so. Narrow by construction: attribute
+  and id selectors only, so `#1 Best Seller` and `.NET SDK` stay names.
+- **Fixed: a blocker that could not say where its evidence stopped.** When a
+  goal walks past the probe's reach, the blocker now names the last step with
+  page evidence — so the probed vocabulary it carries cannot be read as "the
+  app's controls", and a later step is not repaired by renaming it to an
+  earlier page's control (NOOD_0214 tells every surface to read `blocking` as
+  probe evidence; this is what makes that true across a page change).
+- **Fixed: after a pick, the near miss came off the wrong page.** `_locate`
+  resolves the landed page first (NOOD_0156); the shortlist that survives a
+  failure to resolve did not, so a blocked add-to-cart on a product page was
+  answered with the RESULTS page's filter names — measured on a
+  1000-control listing, where every candidate offered was a control that
+  step never sees. It now ranks the landed page's own vocabulary, falling
+  back to the full probe only when the landed page yielded none.
+Four more, found by driving a real auth-gated app end to end once the block
+above was gone — each one a step the RUNTIME already owns that the authoring
+grammar could not reach:
+
+- **Fixed: a comma did not join actions.** `enter <user> in username, enter
+  <pass> in password, and click Login` split at the ` and ` only, so the
+  first enter's greedy target swallowed the second clause whole
+  (`"username, enter <pass> in password"`) and authoring blocked as
+  ambiguous — on the ordinary way a brief writes a sign-in. The comma is now
+  a connector, behind the same gate ` and ` already had: split only where
+  BOTH halves carry a grammar verb, so `search for cat, dog toys`,
+  `verify A, subtotal is $5`, and a comma inside a URL or a quoted literal
+  all keep their clause.
+- **Fixed: the prompt grammar could not scope a click to a row.** The goal
+  schema has `within:` and the step dictionary has `User clicks "X" in the
+  row containing "Y"` (NOOD_0222) — the prompt was the one door to neither,
+  so the generic click took the whole phrase as its target and the run died
+  looking for a control named `Add to Cart in the row containing <title>`.
+- **Fixed: a mid-flow check ran one page too late.** An unanchored check
+  compiles after the LAST action (NOOD_0158), so a brief reading *"5. open
+  the cart 6. verify the item and the total 7. check out"* asserted the
+  cart's contents on the page checkout left behind — the cart it had just
+  emptied. A check written between two actions now anchors to the action it
+  followed (`after:`, the mechanism NOOD_0199 already used for `start`). A
+  TRAILING check is untouched: it is already in the right place, and
+  anchoring it would change compiled order for every flow that works today.
+- **Fixed: `add_to` past the reach boundary advertised the sign-in page.**
+  It cannot defer like a click can — it lowers to a control whose name only
+  the author knows — so it still blocks, but with the two repairs that
+  actually work instead of a candidate list from a page the step never
+  visits.
+- `unit_tests/test_nood_0226.py` — 25 witnesses, 13 of which fail on
+  `d34a902`. No app, product or brand name in any fixture.
+
 ## [1.0.0a39] — 2026-08-02
 
 **NOOD_0225** — feature: the engine decides when a step gets an evidence
