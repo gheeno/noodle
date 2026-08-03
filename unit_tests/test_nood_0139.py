@@ -252,8 +252,11 @@ def test_post_gate_check_is_runtime_asserted_not_proven():
 def test_probe_skips_commit_clicks_after_data_entry():
     args = goal_mod.probe_args(_settings_goal())
     # "open settings" is a reveal (before the enter); "save preferences" is a
-    # commit after data entry — the probe must not click it and mutate state
-    assert args["click"] == ["open settings"]
+    # commit after data entry — the probe must not click it and mutate state.
+    # NOOD_0227 — reveal clicks ride the do-chain (probe._do) on a searchless
+    # goal, not the reveal path: `within:` scoping and honest halts.
+    assert args["click"] is None
+    assert args["do"] == ["click open settings"]
     assert args["open_native_controls"] is True       # select needs options
 
 
@@ -262,4 +265,6 @@ def test_probe_still_executes_reveal_only_goals():
             "actions": [{"do": "click", "target": "menu", "id": "m"},
                         {"do": "click", "target": "products", "id": "p"}],
             "checks": []}
-    assert goal_mod.probe_args(goal)["click"] == ["menu", "products"]
+    args = goal_mod.probe_args(goal)
+    assert args["click"] is None                      # NOOD_0227 — via do
+    assert args["do"] == ["click menu", "click products"]

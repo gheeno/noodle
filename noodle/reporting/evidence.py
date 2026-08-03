@@ -42,6 +42,25 @@ def mode() -> str:
     return m if m in _MODES else "last"
 
 
+def step_directives(tags) -> tuple[set[int], set[int]]:
+    """NOOD_0227 (D1) — per-step evidence directives carried as scenario
+    tags: `@evidence:steps=2,7` requests a shot on those steps (1-based over
+    the scenario's steps), `@evidence:skip=3` declines one. The goal compiler
+    emits these from `checks[].evidence` so run configuration never rides
+    inside step text; hand-authors may write them too, or keep the prose
+    markers — both stay honoured (the markers are read-only now: the engine
+    never emits them). Returns (wanted_positions, skipped_positions)."""
+    import re as _re
+    want: set[int] = set()
+    skip: set[int] = set()
+    for t in tags or ():
+        m = _re.fullmatch(r"evidence:(steps|skip)=([\d,]+)", str(t))
+        if m:
+            nums = {int(n) for n in m.group(2).split(",") if n}
+            (want if m.group(1) == "steps" else skip).update(nums)
+    return want, skip
+
+
 def wanted(tags, requested: bool, is_last_step: bool, has_page: bool,
            is_assertion: bool = False, suppressed: bool = False) -> bool:
     """Pure gate — should this passed step get an evidence shot? Unit-tested

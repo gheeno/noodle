@@ -78,7 +78,8 @@ Every `do:` — inventing one is rejected (`target` = a control name,
   DATA: never fix their spelling, casing or spacing. The site may be
   misspelled and the prompt right.
 
-- `--spec` keys = `author_test` args: app_name, base_url, feature_path,
+- `--spec <file|-|inline>` (multi-line spec → write a file, pass the
+  path); keys = `author_test` args: app_name, base_url, feature_path,
   feature_content, pom_content, environment_values, secret_values,
   overwrite — one write.
 - `author_test` `ready: true` IS the validation (parse, step match,

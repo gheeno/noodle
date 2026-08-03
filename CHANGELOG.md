@@ -4,6 +4,117 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a41] — 2026-08-03
+
+**NOOD_0227** — feature: the 65.9-AIC blowout remediation (RCA tracks A–E).
+A trivial four-page click/enter web flow — the single most common shape in
+web test automation — cost 28 model calls and 1.2 M input tokens, because
+cost is quadratic in round-trips and the engine forced ~24 wasted ones. The
+RCA's one-line root cause: goal mode validated a multi-page flow against a
+single-page inventory, because it drove the page with a click-only,
+`within:`-blind, silently-failing executor (`_reveal`) instead of the full
+transaction executor (`_do`) that already worked. Every change below removes
+a round-trip.
+
+- **B1/B2 — one executor.** On a searchless goal, `probe_args` routes the
+  pre-gate reveal clicks through the probe's own do-chain: `within:`
+  compiles to the row-scoped click grammar (it was silently dropped), each
+  step diff-snapshots the page it lands on, and the chain halts honestly.
+  Search-shaped goals keep the reveal path — their do-chain deliberately
+  runs post-search (NOOD_0168), and a performed mutation runs ahead of it
+  (NOOD_0208).
+- **B3 — silent failure is gone.** A halted chain blocks the FAILED action
+  with the halt context (error, N-of-M completed, what never ran); actions
+  the chain never reached are deferred (`proven_phase: unreached`) instead
+  of blocking with wrong-page near-miss noise — the RC-1 loop. Reveal-path
+  click failures surface into `warnings` instead of dying in
+  `click_warnings`.
+- **B4/B5 — multi-page inventory, page-named blockers.** The evidence pass
+  already unions every walked page-state; miss blockers now say where they
+  searched (`searched N probed page-state(s), ending on <url>`).
+- **B6 — `probe: {perform: true}` works for click/enter flows.** The gate
+  was `_evidence_gate` (add_to/press_key/go_back only), so the commonest
+  flow shape returned `[]` and the documented opt-in silently no-opped —
+  a full round-trip burned proving a flag does nothing. The chain now
+  starts at the first action the probe does not already perform natively;
+  post-gate clicks keep their `within:`. The auth-gated login prelude
+  (NOOD_0226's open defect) walks end-to-end under perform.
+- **Performed-honesty.** `performed` needs the flag AND a completed chain
+  AND a performed block — a do-walked pre-gate click alone must not clear
+  the runtime gate for pages the probe never typed into.
+- **C1 — contract scope.** The `app:<name>` twin key is gone (stale ones
+  pruned): one blocked goal no longer poisons its whole app package.
+- **C2 — `noodle author --reset-intent <feature|all>`** (MCP:
+  `reset_intent`): clears a stale BLOCKED contract; the only prior reset
+  was hand-editing `artifacts/agent_state.json` — a shell-out.
+- **C3 — `run_will_proceed`** on every authoring payload: a `ready: true`
+  the run gate would still refuse says so up front, with the refusal
+  naming `--reset-intent`. **C4** — `allow_unverified_intent` is documented
+  (agent-playbook): human-only, decision rule stated.
+- **A1 — the heredoc dead-end is closed.** `--spec <file>` / `--spec -`
+  are documented everywhere the inline form was (AGENTS.md, both skill
+  cards, playbook, `--spec` help): multi-line spec → write a file, pass
+  the path. The ban survives as the anti-pattern's name, now with its DO.
+- **A2/A3 — `noodle author --vocabulary --section
+  <goal|actions|checks|probe|dismissals|prompt>`**, and the load-bearing
+  constraints are structured fields (`check_kinds`, `check_keys_detail`,
+  `goal_evidence_values`) instead of prose buried in `notes` — one fact
+  cost four `python3` pipes to mine.
+- **D1–D3 — evidence is metadata end to end.** `checks[].evidence` compiles
+  to scenario-tag step metadata (`@evidence:steps=2,7` /
+  `@evidence:skip=3`, read back by `reporting/evidence.step_directives`)
+  — never `( take a screenshot )` concatenated into step text. The marker
+  regex family stays read-only for hand-authored features, which may also
+  write the tags directly.
+- **D4 — a green run stops self-reporting UNVERIFIED.** A navigation step
+  resolves no element by design (`fresh` can never be true; `refocused`
+  requires the URL NOT to change), so `valid: false` was mathematically
+  unavoidable whenever a goto was the evidence target — training readers
+  to ignore the one signal built to catch fuzzy-healed false greens.
+  Navigation now counts page-level: the shot proves where the goto landed.
+- **E3 — decoration-insensitive text assertions.** `assert_visible` /
+  `assert_any_visible` gain a rendered-text pass that normalizes case,
+  whitespace and leading/trailing decoration (the emoji-prefixed heading
+  cost an author+run lap whose only fix was retyping the emoji); inner
+  punctuation still has to match, and hidden nodes are never resurrected
+  (innerText only). **E2** rides on it: the mechanical near-miss class
+  dissolves at match time, and the remaining wording repairs stay with
+  `repair.goal` + `--auto-fix` (NOOD_0223).
+- **E1 — the persistent app-scoped page graph**
+  (`artifacts/page_graph/<app>.json`): every goal probe records the pages
+  it walked (URL → control names/headings + transitions, bounded).
+  Deliberately narrow read side — the engine never answers with page state
+  it has not just looked at: unrouted blockers gain a DATED pointer
+  ("page graph: last seen on <url>, 4m ago"), and `_route_repair` ranks
+  its candidate pages by what the graph knows. Authoring never compiles
+  from graph data.
+- **RCA §7 — goal.py is no longer a monolith.** The traversal/validation
+  half (probe_args/perform_do, the reach gates, `evidence()` and friends,
+  ~1,750 lines) moved to `noodle/repl/goal_evidence.py` with direct unit
+  tests; `goal.<name>` re-exports keep the API stable. goal.py: 3,903 →
+  2,139 lines.
+- **A4 — the failure payload names the resolved element.** "Which element
+  did the click hit?" cost four ~10×-priced vision screenshot reads; every
+  failing step's warnings now lead with `resolved element: '<phrase>' →
+  <selector> — text: '…' on <url>` (labelled when the resolution belongs
+  to an earlier step), riding the same channel the RCA report already
+  renders.
+- **A5 — the shell-improvisation footprint self-reports.** The engine
+  cannot see an agent's shell, but a heredoc'd spec, scratch script or
+  hand-copied feature leaves bytes: `workspace_policy.foreign_artifacts`
+  lists files in the tests tree no author transaction wrote, and a
+  passing strict gate reports them advisorily (never blocks; scaffold
+  samples exempt; silent without an ownership manifest).
+- **SC-3 — the benchmark covers the blowout shape.** `noodle
+  feature-regression` gains `tc4_multipage_checkout`: a four-page flow
+  with a per-card `within:`-scoped click, a same-URL DOM-mutation cart
+  panel, a three-field commit form and end-state assertions — the exact
+  shape the 65.9-AIC session shipped on while the 3-TC suite passed.
+  Hosted on the engine's own static fixture (`regression_fixture.py`,
+  ephemeral localhost port, torn down by `execute()`), so it is
+  deterministic from any machine. Measured: 3.8 s generation, 0
+  corrections, green + verified, one probe, one run.
+
 ## [1.0.0a40] — 2026-08-03
 
 **NOOD_0226** — fix: a goal whose own first step is a sign-in can be authored.

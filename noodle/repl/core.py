@@ -1119,7 +1119,8 @@ def _autofix_run(result: dict, *, goal: dict | None, app_name: str,
 
 
 def _route_repair(goal: dict, goal_ev: dict, probe_result: dict,
-                  pinned, base_url: str | None) -> dict | None:
+                  pinned, base_url: str | None,
+                  workspace: str = ".", app: str | None = None) -> dict | None:
     """NOOD_0218 — when every blocker says the target simply isn't on the
     probed page, the controls usually live one same-origin link away (the
     /menu, /catalog, /order-status page behind a landing page) — and the probe
@@ -1150,6 +1151,15 @@ def _route_repair(goal: dict, goal_ev: dict, probe_result: dict,
              if str(u).rstrip("/") not in probed]
     if not cands:
         return None
+    # NOOD_0227 (E1) — aim the one bounded repair probe where the page graph
+    # says the missed targets were last seen. Ranking only: the light probe
+    # below stays the evidence, and no candidate is added or dropped.
+    if app:
+        from noodle.repl import page_graph
+        wanted = [m.group(1) for b in misses
+                  if (m := page_graph._TARGET_RE.match(b))]
+        if wanted:
+            cands = page_graph.rank_candidates(workspace, app, cands, wanted)
     light = probe_page(" ".join(cands[:4]), act_on="each")
     for pg2 in light.get("pages") or []:
         u, status = pg2.get("url"), pg2.get("http_status")
@@ -1350,6 +1360,12 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             probe_result, cache_hit = _cached_probe(
                 workspace, probe_urls, act_on, p_args, str(feat_dest),
                 lambda: probe_page(probe_urls, act_on=act_on, **p_args))
+            # NOOD_0227 (E1) — fold what this probe SAW into the app's
+            # persistent page graph (fresh evidence only: a cache hit's
+            # pages were recorded when they were actually looked at).
+            if not cache_hit:
+                from noodle.repl import page_graph
+                page_graph.record(workspace, app, probe_result)
             # Raw snapshot goes to artifacts/debug, never the model-visible payload.
             dbg = Path(workspace) / _paths.artifacts_root() / "probe_goal.json"
             try:
@@ -1378,6 +1394,17 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             goal_ev = (goal_mod.browserless_evidence(goal) if browserless
                        else goal_mod.evidence(goal, probe_result, pinned))
         goal_ev["blocking"] = goal_ev["blocking"] + synth["blocking"]
+        # NOOD_0227 (E1) — dated page-graph pointers on unrouted blockers:
+        # when a missed target was SEEN on another of this app's pages, say
+        # which page and when, instead of leaving "the app doesn't have it"
+        # as the only reading. Suffix-only — the repair parsers keep matching.
+        if goal_ev.get("blocking") and not browserless:
+            from noodle.repl import page_graph
+            walked = [b.get("url") for p in
+                      (probe_result or {}).get("pages") or []
+                      for b in [p, *(p.get("revealed") or [])]]
+            goal_ev["blocking"] = page_graph.annotate_blocking(
+                workspace, app, goal_ev["blocking"], current_urls=walked)
         # NOOD_0212 — pass the caller's POM in rather than letting this
         # assignment quietly overwrite it; compile_goal folds those keys into
         # the compiled page block, where they win over inferred ones.
@@ -1725,7 +1752,8 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         # probed page but live one same-origin link away (next_pages).
         elif not browserless and probe_result and \
                 (rep := _route_repair(goal, goal_ev, probe_result, pinned,
-                                      base_url)):
+                                      base_url, workspace=workspace,
+                                      app=app)):
             result["repair"] = rep
     # NOOD_0156 follow-up — every lenient-input rewrite, echoed back so the
     # caller sees exactly what the engine understood.
@@ -1827,10 +1855,17 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         # engine-generated (and why) rather than user-supplied.
         if generated_checks:
             result["generated_checks"] = generated_checks
-        # Record the intent contract so a later manual re-author of the same
-        # feature/app cannot silently auto-run around a blocked goal.
+        # Record the intent contract so a later manual re-author of the SAME
+        # FEATURE cannot silently auto-run around a blocked goal.
+        # NOOD_0227 (C1) — feature-path scope ONLY. The app:<name> twin key
+        # made one blocked goal poison every feature in its app: a session
+        # with a single blocked experiment lost auto-run for the whole
+        # package, with no reset command to recover. Stale app: keys from
+        # older engines are pruned on the way through.
         state = load_state(workspace)
-        contracts = state.get("intent_contracts") or {}
+        contracts = {k: v for k, v in
+                     (state.get("intent_contracts") or {}).items()
+                     if not k.startswith("app:")}
         entry = {"blocked": bool(blocking),
                  # NOOD_0212 — keep the blockers, not just the flag. The
                  # manual-fallback gate below reports them, and it used to
@@ -1840,7 +1875,6 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
                  "blocking": list(blocking or []),
                  "intent_verified": result["intent_verified"]}
         contracts[rel(feat_dest)] = dict(entry)
-        contracts[f"app:{app}"] = dict(entry)
         state["intent_contracts"] = contracts
         save_state(state, workspace)
     if blocking:
@@ -1877,6 +1911,16 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
                                         if k != "ok"}
         except OSError:
             pass
+    # NOOD_0227 (C3) — `ready` speaks only for authoring, but the run gate
+    # below can still refuse a ready:true manual author over a blocked intent
+    # contract; the contradiction cost a full round-trip to discover. Say up
+    # front whether an auto-run would proceed, on every authoring payload.
+    result["run_will_proceed"] = bool(result["ready"])
+    if goal is None and not allow_unverified_intent and result["ready"]:
+        _c = (load_state(workspace).get("intent_contracts") or {}).get(
+            rel(feat_dest))
+        if _c and _c.get("blocked"):
+            result["run_will_proceed"] = False
     if not run_after_author:
         return result
     if not result["ready"]:
@@ -1885,13 +1929,15 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
                                    "launched", "blocking": blocking}}
     if goal is None and not allow_unverified_intent:
         # NOOD_0156 — the manual-fallback gate: once a structured intent
-        # contract exists for this feature/app, hand-written feature_content
+        # contract exists for this feature, hand-written feature_content
         # must not auto-run around it (the 'Choose options' path — a blocked
         # goal silently became a guessed manual run). Files are written;
         # only the automatic run is refused. allow_unverified_intent=true is
         # the explicit expert override — autonomous agents must not set it.
+        # NOOD_0227 (C1) — feature-path scope only; the app:<name> twin key
+        # is gone (one blocked goal must not poison a whole app).
         contracts = load_state(workspace).get("intent_contracts") or {}
-        contract = contracts.get(rel(feat_dest)) or contracts.get(f"app:{app}")
+        contract = contracts.get(rel(feat_dest))
         # NOOD_0187 — only a BLOCKED contract refuses the auto-run. The gate
         # exists to stop hand-authoring AROUND a failed/blocked goal; a
         # successfully goal-authored feature used to freeze its whole app
@@ -1901,11 +1947,13 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             return {"ok": False, "author": result,
                     "next_action": "fix_blocked_goal",
                     "run": {"skipped": (
-                        "a structured intent contract exists for this "
-                        "feature/app — manual feature_content is never "
-                        "intent-verified and cannot auto-run around it; fix "
-                        "the goal's blockers instead (expert override: add "
-                        "`allow_unverified_intent: true` to the --spec)"),
+                        "a BLOCKED intent contract exists for this feature "
+                        "— manual feature_content is never intent-verified "
+                        "and cannot auto-run around it; fix the goal's "
+                        "blockers, or clear a stale contract with `noodle "
+                        "author --reset-intent <feature>` "
+                        "(allow_unverified_intent is the human-only "
+                        "override — see docs/agent-playbook.md)"),
                         # NOOD_0212 — the BLOCKED CONTRACT's blockers, not
                         # this call's; see the note where the entry is saved.
                         "blocking": (contract.get("blocking") or blocking)}}
@@ -1917,6 +1965,36 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         run["error"] = ("0 scenarios passed — forced failure despite exit "
                         f"code {run.get('exit_code')}")
     return {"ok": bool(run.get("ok")), "author": result, "run": run}
+
+
+def reset_intent(feature: str | None = None, workspace: str = ".") -> dict:
+    """NOOD_0227 (C2) — clear recorded intent contract(s). Until now the only
+    reset was hand-editing artifacts/agent_state.json — a shell-out the
+    workspace rules forbid, which made a stale BLOCKED contract a permanent
+    lock on its feature. `feature` clears one contract (workspace-relative
+    path, or just the filename); None clears them all. Clearing is safe by
+    construction: the next author_test(goal=...) re-records the contract from
+    fresh evidence, and a manual feature_content still never claims
+    intent_verified."""
+    state = load_state(workspace)
+    contracts = state.get("intent_contracts") or {}
+    if feature:
+        want = str(feature).strip()
+        keys = [k for k in contracts
+                if k == want or k.endswith(f"/{want}")
+                or Path(k).name in (want, f"{want}.feature")]
+        if not keys:
+            return {"ok": False,
+                    "error": f"no intent contract recorded for {want!r}",
+                    "recorded": sorted(k for k in contracts
+                                       if not k.startswith("app:"))[:12]}
+    else:
+        keys = list(contracts)
+    for k in keys:
+        contracts.pop(k, None)
+    state["intent_contracts"] = contracts
+    save_state(state, workspace)
+    return {"ok": True, "cleared": sorted(keys)}
 
 
 def init_workspace(path: str, llm: str | None = None,

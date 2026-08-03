@@ -843,8 +843,17 @@ def execute_step(step_text: str, context):
     # screenshot" was therefore impossible to satisfy alongside a verified
     # green. A viewport shot of the page whose status/url/title just passed IS
     # evidence of that assertion; it simply has no box to draw.
+    # NOOD_0227 (RC-9) — navigation joins the family, for the same structural
+    # reason: a goto resolves no element, so `fresh` can never be true, and
+    # `refocused` requires the URL NOT to have changed — changing it is the
+    # step's entire purpose. valid=False was therefore mathematically
+    # unavoidable whenever a navigation step was the evidence target, and a
+    # fully green run self-reported ⚠ UNVERIFIED — training readers to ignore
+    # the one signal built to catch fuzzy-healed false greens. A goto that
+    # PASSED loaded its page; the viewport shot proves where it landed.
     try:
-        context._noodle_page_level_assert = t in _PAGE_LEVEL_ASSERTS
+        context._noodle_page_level_assert = (t in _PAGE_LEVEL_ASSERTS
+                                             or t == 'navigate')
     except Exception:
         pass
 

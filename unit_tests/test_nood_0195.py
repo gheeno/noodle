@@ -69,9 +69,19 @@ def test_proven_any_of_compiles_one_disjunctive_step():
 
 
 def test_evidence_marker_rides_the_disjunctive_step():
-    _, thens, _ = _compile(_goal([_BISSELL, _HOOVER], evidence="screenshot"),
-                           _probe([_BISSELL, _HOOVER]))
-    assert len(thens) == 1 and thens[0].endswith("( take a screenshot )"), thens
+    """NOOD_0227 (D1) — the shot request stays attached to the ONE
+    disjunctive step, as tag metadata naming its position, never as prose."""
+    goal = _goal([_BISSELL, _HOOVER], evidence="screenshot")
+    ev = G.evidence(goal, _probe([_BISSELL, _HOOVER]))
+    feature, _ = G.compile_goal(goal, ev, "APP")
+    thens = [ln.strip() for ln in feature.splitlines()
+             if ln.strip().startswith(("Then ", "And "))]
+    assert len(thens) == 1 and "take a screenshot" not in thens[0], thens
+    import re as _re
+    m = _re.search(r"@evidence:steps=(\d+)", feature)
+    steps = [ln.strip() for ln in feature.splitlines()
+             if ln.strip().startswith(("Given", "When", "Then", "And", "But"))]
+    assert m and "sees any of" in steps[int(m.group(1)) - 1]
 
 
 def test_min_above_one_compiles_at_least_n_of():

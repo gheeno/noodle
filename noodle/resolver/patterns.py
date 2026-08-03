@@ -143,6 +143,12 @@ def _no_text_into_permission_prompt(name: str):
 # resolution path — step-search, the LSP, the docs example corpus — tolerates
 # the marker instead of failing to match the inner step.
 #
+# NOOD_0227 (D2) — READ-ONLY from here on: the engine never EMITS these
+# markers any more. Goal-compiled features carry per-step evidence as tag
+# metadata (@evidence:steps= / @evidence:skip=, reporting/evidence.
+# step_directives); this regex family exists solely so hand-authored
+# features keep their prose spelling working.
+#
 # NOOD_0225 — the bracket and dash spellings are accepted too. A reviewed
 # session watched a model write `[evidence: screenshot]` onto a step, argue
 # with itself about whether that was "step decorator syntax", and ship a step

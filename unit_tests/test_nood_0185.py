@@ -58,23 +58,23 @@ def test_development_time_excludes_run_time():
     """The time budget measures TEST DEVELOPMENT (prompt → authored
     .feature), not the generated test's own execution: a slow site run must
     not fail a fast authoring."""
+    # NOOD_0227 — sized off PROMPTS (tc4 joined), like every other case list
     v = regression.score({"test_cases": [
         _tc(elapsed_s=130, run_s=100),                       # 30s development
-        _tc(id="tc2_account_textboxes", run_s=10),
-        _tc(id="tc3_api_seeds_ui_verifies", run_s=10)]})     # 10s development
+        *(_tc(id=p["id"], run_s=10)
+          for p in regression.PROMPTS[1:])]})                # 10s development
     assert v["verdict"] == "PASS"
     assert v["test_cases"][0]["development_s"] == 30
     v2 = regression.score({"test_cases": [
-        _tc(elapsed_s=150, run_s=5), _tc(id="tc2_account_textboxes"),
-        _tc(id="tc3_api_seeds_ui_verifies")]})
+        _tc(elapsed_s=150, run_s=5),
+        *(_tc(id=p["id"]) for p in regression.PROMPTS[1:])]})
     assert any("slow development" in r for r in v2["regressions"])
 
 
 def test_budget_env_overrides(monkeypatch):
     monkeypatch.setenv("NOODLE_REG_MAX_CORRECTIONS", "9")
     v = regression.score({"test_cases": [
-        _tc(corrections=5), _tc(id="tc2_account_textboxes", corrections=5),
-        _tc(id="tc3_api_seeds_ui_verifies", corrections=5)]})
+        _tc(id=p["id"], corrections=5) for p in regression.PROMPTS]})
     assert v["verdict"] == "PASS"
 
 

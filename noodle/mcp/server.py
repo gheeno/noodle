@@ -579,6 +579,18 @@ def stop_report_server(workspace: str | None = None) -> dict:
 
 
 @_tool()
+def reset_intent(feature: str | None = None,
+                 workspace: str | None = None) -> dict:
+    """NOOD_0227 — clear recorded intent contract(s): `feature` (path or
+    filename) clears one, omit it to clear all. The recovery for a stale
+    BLOCKED contract refusing auto-runs — previously only hand-editing
+    artifacts/agent_state.json could do this. The next goal author re-records
+    the contract from fresh evidence; manual feature_content still never
+    claims intent_verified."""
+    return core.reset_intent(feature, workspace=_ws(workspace))
+
+
+@_tool()
 def list_reports(workspace: str | None = None) -> dict:
     """NOOD_0082 — what can be served: the live reports root (whether the
     Allure report and rca.html exist, and when the Allure report was

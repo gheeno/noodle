@@ -67,6 +67,27 @@ PROMPTS = [
 3. Go to the URL https://en.wikipedia.org/wiki/Vacuum_cleaner
 4. Close any popup that may appear
 5. Verify "From Wikipedia, the free encyclopedia\""""},
+    # NOOD_0227 (SC-3) — the shape the 65.9-AIC blowout shipped on, absent
+    # from this suite at the time: a FOUR-PAGE flow with a per-card
+    # `within:`-scoped click, a same-URL DOM-mutation cart panel, a
+    # three-field commit form, and end-state assertions (phrase + item +
+    # amount). Hosted on the engine's own static fixture
+    # (regression_fixture.py, served on an ephemeral localhost port by
+    # execute()), so it is deterministic from any machine. {FIXTURE} is
+    # substituted with the live base URL at execute() time.
+    {"id": "tc4_multipage_checkout", "mode": "prompt",
+     "content": """1. Go to the URL {FIXTURE}/index.html
+2. Verify "Widget Depot" - take an evidence screenshot on this step
+3. Click "Shop the catalogue"
+4. Click "add to cart" in the card containing "Turbo Widget"
+5. Click "proceed to checkout"
+6. Enter "Pat Tester" in the "full name" field
+7. Enter "12 Main St" in the "street address" field
+8. Enter "K1A 0B1" in the "postal code" field
+9. Click "place order"
+10. Verify "Thanks for your order"
+11. Verify "Turbo Widget"
+12. Verify "$19.99\""""},
 ]
 
 # Per-test-case ceilings — the definition of "not regressed": on time and
@@ -151,22 +172,39 @@ def execute(workspace: str) -> dict:
     """Run the whole benchmark in this (freshly scaffolded) workspace:
     each canonical prompt authored + run and measured, then ONE combined run
     so both test cases land on the same served Allure + RCA report. Returns
-    the results dict score() takes — nothing to fill in by hand."""
+    the results dict score() takes — nothing to fill in by hand.
+
+    NOOD_0227 — a prompt carrying {FIXTURE} runs against the engine's own
+    static multi-page shop (regression_fixture.py), served on an ephemeral
+    localhost port for the benchmark's whole lifetime — including the
+    combined run — and always torn down."""
     from noodle.repl import core
-    cases = [_case(p, workspace) for p in PROMPTS]
-    feats = [c.pop("feature") for c in cases]
-    urls = []
-    if paths := [f for f in feats if f]:
-        combined = core.run_and_report(
-            os.path.commonpath(paths) if len(paths) > 1 else paths[0],
-            workspace=workspace, headless=True, retries=0, serve_reports=True)
-        served = combined.get("served") or {}
-        urls = served.get("urls") or []
-        if served.get("port"):
-            # The scorecard leads: the server hosts the whole reports root, and
-            # the CLI drops verdict.html in there before printing these.
-            urls = [f"http://{served.get('host', '127.0.0.1')}:"
-                    f"{served['port']}/verdict.html"] + urls
+    fixture_srv = base = None
+    try:
+        if any("{FIXTURE}" in p["content"] for p in PROMPTS):
+            from noodle import regression_fixture
+            fixture_srv, base = regression_fixture.serve(workspace)
+        prompts = [dict(p, content=p["content"].replace("{FIXTURE}", base))
+                   if "{FIXTURE}" in p["content"] else p for p in PROMPTS]
+        cases = [_case(p, workspace) for p in prompts]
+        feats = [c.pop("feature") for c in cases]
+        urls = []
+        if paths := [f for f in feats if f]:
+            combined = core.run_and_report(
+                os.path.commonpath(paths) if len(paths) > 1 else paths[0],
+                workspace=workspace, headless=True, retries=0,
+                serve_reports=True)
+            served = combined.get("served") or {}
+            urls = served.get("urls") or []
+            if served.get("port"):
+                # The scorecard leads: the server hosts the whole reports
+                # root, and the CLI drops verdict.html in there before
+                # printing these.
+                urls = [f"http://{served.get('host', '127.0.0.1')}:"
+                        f"{served['port']}/verdict.html"] + urls
+    finally:
+        if fixture_srv is not None:
+            fixture_srv.shutdown()
     return {"workspace": workspace, "report_urls": urls, "test_cases": cases}
 
 

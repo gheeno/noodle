@@ -54,12 +54,21 @@ def test_the_narrowing_is_never_silent():
 
 
 def test_evidence_marker_survives_the_narrowing():
+    """The narrowing rewrites the check's text in place; the evidence
+    directive must ride along. NOOD_0227 (D1): it lands as tag metadata
+    pointing at the narrowed step, never as step-text prose."""
     goal = {"scenario": "s", "actions": [],
             "checks": [{"see": "Widget Depot banner",
                         "evidence": "screenshot"}]}
     ev = goal_mod.evidence(goal, {"pages": [PAGE]})
     assert goal["checks"][0]["evidence"] == "screenshot"
-    assert 'take a screenshot' in _compiled_sees(goal, ev)[0]
+    feature, _ = goal_mod.compile_goal(goal, ev, "APP")
+    assert "take a screenshot" not in feature
+    import re as _re
+    m = _re.search(r"@evidence:steps=(\d+)", feature)
+    steps = [ln.strip() for ln in feature.splitlines()
+             if ln.strip().startswith(("Given", "When", "Then", "And", "But"))]
+    assert m and 'sees "Widget Depot"' in steps[int(m.group(1)) - 1]
 
 
 def test_forward_direction_is_left_alone():

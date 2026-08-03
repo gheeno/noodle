@@ -210,7 +210,12 @@ def test_playbook_recommends_no_shell_constructs():
     text = (REPO / "docs/agent-playbook.md").read_text(encoding="utf-8")
     assert "ps aux" not in text
     assert "as a heredoc rather than" not in text
-    assert "never a heredoc" in text            # the rule survives as a DON'T
+    # NOOD_0227 — the DON'T got its DO: the ban alone left multi-line specs
+    # with no published path, so sessions reached for the forbidden heredoc
+    # anyway (RC-5). The playbook now names the supported form — write a
+    # file, pass the path — and keeps the heredoc named as the anti-pattern.
+    assert "pass the path" in text
+    assert "heredoc" in text
     assert "python -m http.server" not in text
 
 

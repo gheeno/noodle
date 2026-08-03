@@ -150,12 +150,17 @@ def test_the_negative_is_read_before_the_positive():
     assert _EVIDENCE_NEG.search("no screenshot needed")   # and wins
 
 
-def test_none_compiles_the_opt_out_onto_the_step():
+def test_none_compiles_the_opt_out_as_tag_metadata_not_step_prose():
+    """NOOD_0227 (D1) — checks[].evidence is metadata end to end now: the
+    step body stays clean prose and the directive rides the scenario tag
+    (@evidence:steps= / @evidence:skip=), which
+    reporting/evidence.step_directives reads back at run time. The engine
+    never emits the prose marker again — EVIDENCE_MARKER_RE stays read-only,
+    for hand-authored features."""
     from noodle.repl.goal import _check_step
-    assert _check_step({"see": "x", "evidence": "none"})[0].endswith(
-        "( no screenshot )")
-    assert _check_step({"see": "x", "evidence": "screenshot"})[0].endswith(
-        "( take a screenshot )")
+    assert not _check_step({"see": "x", "evidence": "none"})[0].endswith(")")
+    assert not _check_step(
+        {"see": "x", "evidence": "screenshot"})[0].endswith(")")
     assert not _check_step({"see": "x"})[0].endswith(")")
 
 
