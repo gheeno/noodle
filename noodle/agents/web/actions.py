@@ -620,6 +620,15 @@ def assert_visible(page: Page, text: str):
                 return
     except Exception:
         pass
+    # Phase 3.5 (NOOD_0227, E3): decoration-insensitive rendered-text pass.
+    # A heading rendered "🍔 Home Page" must satisfy sees "Home Page": the
+    # emoji is presentation, and failing on it produced a full author+run lap
+    # whose only fix was retyping the page's decoration into the assertion.
+    # Still literal — the comparison reads document.body.innerText (rendered
+    # text only) and normalizes ONLY case, whitespace and leading/trailing
+    # non-word decoration per line; inner punctuation still has to match.
+    if _decor_lines_contain(_rendered_lines(page), text):
+        return
     _assert_visible_ocr_or_fail(page, text)
 
 
@@ -651,6 +660,38 @@ def _find_probe_visible(page: Page, text: str, poll: bool = False) -> bool:
         return False
 
 
+# NOOD_0227 (E3) — leading/trailing decoration (emoji, bullets, pipes,
+# ornamental punctuation) is presentation, not content. Unicode-aware: [\W_]
+# keeps letters/digits of any script, exactly the goal-side _norm rule.
+_DECOR_EDGE_RE = re.compile(r"^[\W_]+|[\W_]+$", re.UNICODE)
+
+
+def _decor_norm(s: str) -> str:
+    """Casefold, collapse whitespace, strip leading/trailing decoration.
+    Inner punctuation survives — 'Order #123' still requires the '#'."""
+    s = re.sub(r"\s+", " ", str(s or "")).strip().casefold()
+    return _DECOR_EDGE_RE.sub("", s)
+
+
+def _rendered_lines(page) -> list[str]:
+    """The page's rendered text, one normalized line each. innerText only
+    reports CSS-rendered content, so this never resurrects a hidden node.
+    Never raises."""
+    try:
+        body = page.evaluate("() => document.body.innerText") or ""
+    except Exception:
+        return []
+    return [n for ln in body.splitlines() if (n := _decor_norm(ln))]
+
+
+def _decor_lines_contain(lines: list[str], text: str) -> bool:
+    """True when a rendered line contains the expectation once both are
+    decoration-normalized. Guarded at 3+ characters — a one-letter want
+    would match nearly any page."""
+    want = _decor_norm(text)
+    return len(want) >= 3 and any(want in ln for ln in lines)
+
+
 def assert_any_visible(page: Page, alternatives: list[str],
                        min_count: int = 1):
     """NOOD_0197 — a real disjunction: passes when at least `min_count` of the
@@ -664,7 +705,12 @@ def assert_any_visible(page: Page, alternatives: list[str],
     deadline = time.monotonic() + _find_timeout_ms() / 1000
     seen: list[str] = []
     while True:
-        seen = [a for a in alternatives if _find_probe_visible(page, a)]
+        # NOOD_0227 (E3) — same decoration-insensitive fallback as
+        # assert_visible's phase 3.5, one innerText read per sweep.
+        rendered = _rendered_lines(page)
+        seen = [a for a in alternatives
+                if _find_probe_visible(page, a)
+                or _decor_lines_contain(rendered, a)]
         if len(seen) >= min_count:
             logger.info(f"\n  ✓ any-of satisfied by {seen} "
                         f"(needed {min_count} of {alternatives})")

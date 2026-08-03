@@ -119,16 +119,76 @@ def drift(workspace: str = ".") -> list[dict]:
     return out
 
 
+# NOOD_0227 (A5) — the FOOTPRINT of shell improvisation. The engine cannot
+# see an agent's shell, but a heredoc'd spec, a scratch script, or a
+# hand-copied POM all leave bytes inside the engine-managed tree. Suffixes
+# only: a data fixture an app test legitimately reads is none of our
+# business, but nothing engine-authored is ever a .py/.sh/.tmp/.bak, and a
+# .feature/.yaml the manifest doesn't know arrived from outside the engine.
+_FOREIGN_SUFFIXES = {".py", ".sh", ".bash", ".zsh", ".ps1", ".tmp", ".bak"}
+_TRACKED_SUFFIXES = {".feature", ".yaml", ".yml"}
+_FOREIGN_CAP = 20
+
+
+def foreign_artifacts(workspace: str = ".") -> list[str]:
+    """NOOD_0227 (A5) — files inside the tests tree that no author
+    transaction wrote: scripts/temp files anywhere, and .feature/.yaml files
+    the ownership manifest doesn't know. Telemetry, never a gate — the
+    scaffold's sample packages are skipped, absence of a manifest reports
+    nothing (a hand-authored workspace is a legitimate workflow), and the
+    list is capped. The point is that the shell-improvisation class
+    self-reports instead of surfacing months later as an unregenerable
+    file."""
+    from noodle import config
+    owned = load(workspace)
+    if not owned:
+        return []
+    root = Path(workspace) / config.load(workspace).get(
+        "tests_dir", "noodle_tests")
+    if not root.is_dir():
+        return []
+    out = []
+    try:
+        for p in sorted(root.rglob("*")):
+            if len(out) >= _FOREIGN_CAP:
+                break
+            if not p.is_file():
+                continue
+            rel = _rel(p, workspace)
+            parts = set(p.parts)
+            if {"sample_app", "sample_api", "report", "artifacts",
+                    "__pycache__"} & parts:
+                continue
+            suffix = p.suffix.lower()
+            if suffix in _FOREIGN_SUFFIXES or (
+                    suffix in _TRACKED_SUFFIXES and rel not in owned):
+                out.append(rel)
+    except OSError:
+        return out
+    return out
+
+
 def gate(workspace: str = ".", override: bool | None = None) -> dict:
     """{'ok': True} when the run may proceed. Under strict mode a drifted
     file blocks with the one command that re-establishes ownership — the
     point is to send the caller back through the engine, not to leave them
-    guessing which of the two copies is real."""
+    guessing which of the two copies is real.
+
+    NOOD_0227 (A5) — a passing strict gate still reports `foreign` files
+    (the shell-improvisation footprint), advisory only."""
     if not enabled(workspace, override):
         return {"ok": True, "strict": False}
     found = drift(workspace)
     if not found:
-        return {"ok": True, "strict": True}
+        out = {"ok": True, "strict": True}
+        if foreign := foreign_artifacts(workspace):
+            out["foreign"] = foreign
+            out["foreign_note"] = (
+                f"{len(foreign)} file(s) in the tests tree that no author "
+                "transaction wrote — engine-foreign artifacts (hand-written "
+                "or shell-created); they run, but nothing can regenerate "
+                "them")
+        return out
     lines = ", ".join(f'{d["path"]} ({d["kind"]})' for d in found[:5])
     more = f", +{len(found) - 5} more" if len(found) > 5 else ""
     return {

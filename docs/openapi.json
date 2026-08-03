@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Noodle Engine API",
-    "version": "unknown (not installed)",
+    "version": "1.0.0a41",
     "description": "Drive the Noodle test engine from another system: every MCP tool as a plain JSON endpoint (NOOD_0193), for callers that can't speak MCP.\n\nThis is the ENGINE API \u2014 the caller side. It is not the 'api wok', which is Noodle testing someone else's REST service with @api feature files; nothing here is a test target.\n\nCalls are SYNCHRONOUS: a run returns when it finishes, so set client read timeouts in minutes, not seconds. One call runs at a time per server. Green means `failed == 0` AND `verified == true`."
   },
   "servers": [
@@ -1712,6 +1712,77 @@
                   }
                 },
                 "title": "stop_report_serverArguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool's payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed JSON body"
+          },
+          "401": {
+            "description": "missing or wrong API key"
+          },
+          "404": {
+            "description": "no such tool"
+          },
+          "500": {
+            "description": "the tool itself failed; `error` names the cause"
+          }
+        }
+      }
+    },
+    "/api/tools/reset_intent": {
+      "post": {
+        "summary": "NOOD_0227 \u2014 clear recorded intent contract(s): `feature` (path or",
+        "description": "NOOD_0227 \u2014 clear recorded intent contract(s): `feature` (path or\nfilename) clears one, omit it to clear all. The recovery for a stale\nBLOCKED contract refusing auto-runs \u2014 previously only hand-editing\nartifacts/agent_state.json could do this. The next goal author re-records\nthe contract from fresh evidence; manual feature_content still never\nclaims intent_verified.",
+        "operationId": "reset_intent",
+        "tags": [
+          "tools"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "feature": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Feature"
+                  },
+                  "workspace": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Workspace"
+                  }
+                },
+                "title": "reset_intentArguments",
                 "type": "object"
               }
             }

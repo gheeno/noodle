@@ -22,6 +22,7 @@ actions but no checks gains an explicit generated `Then`, or blocks),
 zero-search-results blocking, and unscoped repeated-control blocking.
 """
 import json
+import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -761,14 +762,21 @@ def test_unprobed_destination_blocks():
 
 
 def test_screenshot_evidence_rides_the_verification_step():
-    """The NOOD_0153 marker lands ON the verification Then — never a
-    standalone screenshot business step — and still matches the dictionary."""
+    """The directive attaches to the verification Then — never a standalone
+    screenshot business step. NOOD_0227 (D1): as TAG METADATA
+    (@evidence:steps=<pos>) naming that Then's 1-based position, not as
+    prose appended to the step text."""
     goal = _shop_goal()
     ev = goal_mod.evidence(goal, _shop_probe())
     feat, _ = goal_mod.compile_goal(goal, ev, "APP")
-    assert 'Then the user sees "Paw Patrol Toy Truck" ( take a screenshot )' \
-        in feat
+    assert 'Then the user sees "Paw Patrol Toy Truck"' in feat
+    assert "take a screenshot" not in feat       # never step-text prose now
     assert "takes a screenshot" not in feat      # no separate step
+    m = re.search(r"@evidence:steps=(\d+)", feat)
+    assert m, feat.splitlines()[0]
+    steps = [ln.strip() for ln in feat.splitlines()
+             if ln.strip().startswith(("Given", "When", "Then", "And", "But"))]
+    assert 'sees "Paw Patrol Toy Truck"' in steps[int(m.group(1)) - 1]
     chk = _validate.check_feature(feat)
     assert chk["error"] is None and _validate.unmatched(chk) == []
 
@@ -1043,8 +1051,10 @@ def test_add_to_compiles_probed_mutation_control_and_identity_check():
                      'And User waits for the network to be idle',
                      'And User clicks "Cart"']
     assert feat.count('clicks "Cart"') == 1
-    assert 'Then the user sees "Paw Patrol Toy Truck" ( take a screenshot )' \
-        in feat
+    # NOOD_0227 (D1) — the identity assertion's shot request is tag metadata
+    assert 'Then the user sees "Paw Patrol Toy Truck"' in feat
+    assert "@evidence:steps=" in feat
+    assert "take a screenshot" not in feat
     assert "should be at least" not in feat      # identity, never a count
     assert "#pdp-add" in pom
     chk = _validate.check_feature(feat)

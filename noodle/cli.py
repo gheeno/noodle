@@ -1411,8 +1411,8 @@ can't": read the wok.
    ONE command = package+run+reports:
    `noodle author --prompt "<the ask, verbatim>" --run --json`
    (MCP: `author_test`) — ask passed RAW, never `--help` first;
-   a refusal names the rewrite. `--spec '<yaml>'`
-   (inline, never a heredoc) or `goal` once `--prompt` refuses;
+   a refusal names the rewrite. `--spec <file|-|yaml>`
+   (multi-line → a file) or `goal` once `--prompt` refuses;
    feature_content only on a named goal blocker. `ready: true` =
    parsed, matched, POM scoped, `{env:}` resolved — do not validate/
    preflight separately; run next. `ready: false`? Fix `blocking`,
@@ -2018,13 +2018,15 @@ def ship(
 
 @app.command()
 def author(
-    spec: str = typer.Option(None, "--spec", help="A JSON or YAML spec: a file path, '-' for stdin, or the document itself inline (NOOD_0197 — no heredoc or temp file needed: --spec \"$(cat)\" style plumbing is never required, quote the YAML directly). Fields: app_name, base_url, feature_path, and EITHER feature_content (one Gherkin string; pom_content is likewise one YAML string, never a filename map) OR goal (NOOD_0137 constrained mode — the engine probes and compiles the feature/POM itself; see author_test). Optionally: environment_values, required_secret_keys, secret_values, overwrite."),
+    spec: str = typer.Option(None, "--spec", help="A JSON or YAML spec, three forms: a FILE PATH (the right one for any multi-line spec — write spec.yaml, pass the path), '-' for stdin, or the document inline (one-liners only; shell quoting mangles quotes/$/*). Fields: app_name, base_url, feature_path, and EITHER feature_content (one Gherkin string; pom_content is likewise one YAML string, never a filename map) OR goal (the engine probes and compiles the feature/POM itself; see author_test). Optionally: environment_values, required_secret_keys, secret_values, overwrite. (NOOD_0197/0227)"),
     prompt: str = typer.Option(None, "--prompt", help="NOOD_0169 — numbered plain-English steps ('1. go to <url> 2. search for X 3. add to cart 4. verify cart has X'), inline OR (NOOD_0198) a file path / '-' for stdin, so a generator upstream can hand off a written file without `\"$(cat ...)\"` mangling its backticks; the engine expands them deterministically into a goal (ambiguous steps borrow their subject from neighbouring steps, every inference echoed under prompt_expansion.assumptions) and derives app_name/base_url/feature_path from the URL. No spec file needed; combine with --run for prompt → authored → run → reports in ONE call."),
     workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
     run: bool = typer.Option(False, "--run", help="NOOD_0137 — atomic author+run: after a ready author, run once (headless, retries=0), serve both reports, and fail when 0 scenarios passed. Blocked authoring launches no browser."),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing .feature at the target path. A blocked authoring attempt leaves its files behind (fix-in-place contract) — without this flag the retry refuses. Spec key `overwrite` works too; prompt mode has only this flag."),
     vocabulary: bool = typer.Option(False, "--vocabulary", help="NOOD_0197 — print the goal vocabulary, a minimal example, and the prompt grammar as JSON, then exit. The schema on demand instead of discoverability-by-rejection (no more scraping --help for it)."),
+    section: str = typer.Option(None, "--section", help="NOOD_0227 — with --vocabulary: print ONE schema section (checks | actions | goal | probe | dismissals | prompt) instead of the whole blob, so one fact never costs a python3 pipe."),
+    reset_intent: str = typer.Option(None, "--reset-intent", help="NOOD_0227 — clear the recorded intent contract for a feature (path or filename; 'all' clears every one), then exit. The recovery for a stale BLOCKED contract that refuses auto-runs — no more hand-editing agent_state.json."),
     auto_fix: int = typer.Option(0, "--auto-fix", help="NOOD_0223 — with --run, let the engine take up to N self-heal laps on a RED run: re-derive the goal from the run's own failure evidence, re-probe, re-author, re-run. Engine-only — no hand edits, no step suggestions to copy — and every file each lap rewrote is listed under auto_fix.engine_edits. Bounded and narrow: a lap runs ONLY when every failure classifies as test-side (assertion wording, locator rot, wrong/ambiguous target, overlay); one app-regression, app-rejected-action, test-data or environment failure in the run and no lap runs at all, because re-authoring against a broken app is a green-forcing retry. Default 0 — a lap costs a probe plus a run."),
 ):
     """NOOD_0128 — write a whole test package in one transaction (app package +
@@ -2055,17 +2057,50 @@ def author(
     import yaml
 
     from noodle.repl import core
+    # Direct (non-CLI) calls leave unfilled typer defaults as OptionInfo
+    # objects — unit tests and the REPL both invoke author() as a function.
+    if not isinstance(section, str):
+        section = None
+    if not isinstance(reset_intent, str):
+        reset_intent = None
+    if reset_intent:
+        # NOOD_0227 (C2) — clear a recorded intent contract. The only prior
+        # reset was hand-editing artifacts/agent_state.json — a shell-out.
+        result = core.reset_intent(
+            None if reset_intent.strip().lower() == "all" else reset_intent,
+            workspace=workspace)
+        _json_out(result, indent=None)
+        raise typer.Exit(0 if result.get("ok") else 1)
     if vocabulary:
         # NOOD_0197 — the goal schema + prompt grammar on demand. Before this
         # the only machine-readable copy rode a rejection payload, so agents
         # learned the vocabulary by failing (or by paging --help through sed).
         from noodle.repl import goal as goal_mod
         from noodle.repl.prompt_expander import VERBS_HELP
+        # NOOD_0227 (A2) — --section returns ONE slice, so a single fact
+        # (what may evidence: take?) never costs a python3 pipe over the blob.
+        if section:
+            if section.strip().lower() == "prompt":
+                _json_out({"ok": True, "prompt_grammar": VERBS_HELP},
+                          indent=None)
+                raise typer.Exit(0)
+            sec = goal_mod.vocabulary_section(section)
+            if sec is None:
+                _json_out({"ok": False,
+                           "error": f"unknown section {section!r}",
+                           "sections": [*goal_mod._VOCAB_SECTIONS, "prompt"]},
+                          indent=None)
+                raise typer.Exit(1)
+            _json_out({"ok": True, "section": section, **sec}, indent=None)
+            raise typer.Exit(0)
         # NOOD_0215 — compact: 3.3 KB on one line, not 5.3 KB over 245.
         _json_out({"ok": True, "example": goal_mod.EXAMPLE,
                    "vocabulary": goal_mod.vocabulary(),
                    "prompt_grammar": VERBS_HELP}, indent=None)
         raise typer.Exit(0)
+    if section:
+        raise typer.BadParameter("--section requires --vocabulary",
+                                 param_hint="'--section'")
     if (spec is None) == (prompt is None):
         raise typer.BadParameter("pass exactly one of --spec or --prompt",
                                  param_hint="'--spec' / '--prompt'")

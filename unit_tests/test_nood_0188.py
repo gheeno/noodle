@@ -42,9 +42,10 @@ def test_new_check_kinds_are_in_the_vocabulary():
     vocab = goal_mod.vocabulary()
     assert "not_see" in vocab["check_keys"]
     assert "url_contains" in vocab["check_keys"]
-    # the notes prose is generated from the kinds tuple, so it cannot drift
+    # NOOD_0227 (A3) — the kinds are a structured field now, still generated
+    # from the same tuple validate() enforces, so they still cannot drift.
     for kind in goal_mod._CHECK_KINDS:
-        assert kind in vocab["notes"]
+        assert kind in vocab["check_kinds"]["one_of"]
 
 
 def test_every_new_action_compiles_to_a_step_the_runtime_matches():

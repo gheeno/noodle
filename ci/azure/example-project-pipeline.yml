@@ -21,7 +21,7 @@ resources:
     - repository: noodle
       type: git                    # 'github' for a GitHub-hosted engine
       name: Tooling/noodle         # <Project>/<Repo> in Azure Repos
-      ref: refs/tags/1.0.0a40       # PIN IT. A moving ref is not a build.
+      ref: refs/tags/1.0.0a41       # PIN IT. A moving ref is not a build.
       # endpoint: my-github-connection   # only when type: github
 
 jobs:

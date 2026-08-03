@@ -233,11 +233,14 @@ POM, feature, and empty placeholders for the secret keys you name — validates
 the Gherkin, and rolls back every file it wrote if anything fails.
 
 Over the CLI, prefer `--prompt "<the ask, verbatim>"` — no file, no shell
-quoting beyond one string. When you do need a spec, pass it **inline**
-(`--spec '<yaml>'`) — never a heredoc (a raw shell construct that costs a
-human approval in most harnesses) and never a temp spec file.
+quoting beyond one string. When you do need a spec, `--spec` takes **three
+forms**: a file path (`--spec spec.yaml`), `-` for stdin, or the document
+inline (`--spec '<yaml>'`). A multi-line spec — anything with quotes, `$`,
+`*`, or emoji that shell single-quoting mangles — goes in a file: write
+`spec.yaml` with your editor/Write tool and pass the path (NOOD_0227). No
+heredoc gymnastics are ever required; inline is for one-liners.
 The spec keys are exactly `author_test`'s arguments, listed in the MCP tool
-schema and in `noodle author --vocabulary`. If the
+schema and in `noodle author --vocabulary` (`--section <name>` filters it). If the
 original prompt supplied credential *values* (NOOD_0130), pass them once as
 `secret_values={KEY: value}`: they are written ONLY into the gitignored
 `<app>_secrets.env`, never echoed back or returned, and never placed in a
@@ -286,6 +289,22 @@ EVIDENCE_MISSING / EXTERNAL_FAILURE / RUN_FAILED /
 NEEDS_INTERPRETATION / CONTRACT_BLOCKED); on a block, repair the one
 `next_action` gap and re-author — never hand-edit the compiled Gherkin
 (write_feature refuses it under an intent contract).
+
+**Intent contracts and their two escape hatches (NOOD_0227).** A goal
+author records an intent contract for its feature (feature-path scope
+only); a BLOCKED contract refuses auto-runs of hand-written
+`feature_content` for that one feature. Authoring payloads say up front
+whether the gate would refuse: `run_will_proceed: false` next to
+`ready: true` means fix the goal, not the Gherkin. A contract that is
+simply stale (the goal experiment is abandoned, the app changed) is
+cleared with `noodle author --reset-intent <feature>` (`all` clears every
+one; MCP: `reset_intent`) — the next goal author re-records it from fresh
+evidence. `allow_unverified_intent: true` is the OTHER hatch and it is
+human-only: it runs Gherkin whose intent the engine never verified, so
+its decision rule is "a human has read the feature and vouches for it".
+An autonomous agent must never set it — for an agent, the answer to a
+blocked contract is always repair-the-goal or `--reset-intent`, both of
+which keep the provenance chain honest.
 
 A prompt the grammar can only partly place now returns `goal_yaml`
 (NOOD_0223): the accepted goal as a **complete, valid `--spec` document**
@@ -959,8 +978,8 @@ an exit code alone is neither. Before reporting success:
    `{item_in_destination: "<destination>", expected_from: <pick id>,
    evidence: screenshot}` asserts that SAME caption in the destination
    — any collection the app moves items into (cart, wishlist, queue,
-   folder) — with the
-   `( take a screenshot )` marker on the verification step. A
+   folder) — with the shot request compiled onto the verification step
+   as tag metadata (`@evidence:steps=<pos>`, NOOD_0227). A
    destination count can never satisfy item identity; an extra action without probe
    provenance blocks instead of compiling; a standalone screenshot step
    is never authored. `author_test` returns `intent_verified: true` only
@@ -1056,13 +1075,18 @@ Both reports carry per-step **evidence screenshots** (NOOD_0153): by default
 the final step of every passing web scenario ships a viewport-only JPEG with
 the asserted element boxed in green — proof the test did what it claims. A
 tester requests more with a trailing `( take a screenshot )` marker on any
-step, the `@evidence`/`@no_evidence` tags, or `NOODLE_EVIDENCE=all|last|off`
+hand-written step, the `@evidence`/`@no_evidence` tags, per-step tag
+metadata (`@evidence:steps=2,7` / `@evidence:skip=3` — 1-based positions,
+NOOD_0227), or `NOODLE_EVIDENCE=all|last|off`
 (see docs/steps_dictionary.md § Evidence screenshots). **Never hand-author
 either** (NOOD_0225): the brief already says what it wants — "take evidence
 screenshot on this step", "attach evidence per each step", "DO NOT ADD
-SCREENSHOTS" — and the prompt compiler turns that into the marker
-(`evidence: screenshot|none` on a check) or the run-wide tag
-(`evidence: all|assertions|off` on the goal) for you. In rca.md the
+SCREENSHOTS" — and the prompt compiler turns that into per-check metadata
+(`evidence: screenshot|none` on a check, compiled to `@evidence:steps=`)
+or the run-wide tag (`evidence: all|assertions|off` on the goal) for you.
+Goal-compiled features never carry the prose marker (NOOD_0227): the
+engine emits tag metadata only, and the marker regexes stay read-only for
+hand-authored features. In rca.md the
 Evidence section lists file paths only (token-lean — never inline pixels);
 rca.html inlines bounded thumbnails. Don't screenshot the page yourself to
 prove a run worked — point at the reports' evidence instead.

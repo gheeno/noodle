@@ -1111,6 +1111,38 @@ def _evidence_last_step(scenario):
     return None
 
 
+def _resolved_element_line(context) -> str:
+    """NOOD_0227 (A4) — the most recent element resolution, one line for the
+    failure payload: phrase, selector, visible text and page URL. Labelled
+    honestly when it belongs to an earlier step (a failing assertion resolves
+    nothing itself). Empty string when nothing resolved yet; never raises."""
+    try:
+        from noodle.agents.web import locator as _loc
+        from noodle.orchestrator.runner import ctx_get
+        lm = _loc.last_match()
+        if lm is None:
+            return ""
+        phrase, loc = lm
+        m = re.search(r"selector='(.*?)'>?$", repr(loc))
+        sel = m.group(1) if m else ""
+        txt = ""
+        try:
+            txt = " ".join((loc.inner_text(timeout=250) or "").split())[:80]
+        except Exception:
+            pass
+        seq0 = ctx_get(context, "_match_seq_at_step_start", None)
+        own = seq0 is not None and _loc.match_seq() != seq0
+        return ("resolved element"
+                + ("" if own else " (from an earlier step)")
+                + f": '{log.redact(str(phrase))}'"
+                + (f" → {sel}" if sel else "")
+                + (f" — text: '{log.redact(txt)}'" if txt else "")
+                + (f" on {_safe_url(_loc.last_match_url())}"
+                   if _loc.last_match_url() else ""))
+    except Exception:
+        return ""
+
+
 @_report_engine_crash
 def after_step(context, step):
     _run_hooks("after_step", context, step)
@@ -1225,11 +1257,19 @@ def after_step(context, step):
                 # nobody OCRs the screenshot to learn "Your cart is empty".
                 # Redacted: a login page can echo typed credentials as text.
                 shown = _actions.page_text(context.page)
+                # NOOD_0227 (A4) — WHICH element the engine last acted on,
+                # in the failure payload itself: "which element did the click
+                # hit?" cost the reviewed session four ~10×-priced vision
+                # screenshot reads that this one line answers. After the
+                # verdict + URL lines — compact RCA reads those first.
+                rline = _resolved_element_line(context)
                 step_warnings = (([note] if note else [])
                                  + ([stuck] if stuck else [])
                                  + ([resp] if resp else [])
                                  + ([log.redact(shown)] if shown else [])
-                                 + [f"URL: {_safe_url(context.page.url)}", *step_warnings])
+                                 + [f"URL: {_safe_url(context.page.url)}"]
+                                 + ([rline] if rline else [])
+                                 + [*step_warnings])
             except Exception:
                 pass
         ar = _allure_result(context)
@@ -1268,6 +1308,23 @@ def after_step(context, step):
         context._evidence_request = False
         context._evidence_suppress = False
         page = ctx_get(context, "page")
+        # NOOD_0227 (D1) — per-step directives also arrive as scenario tags
+        # (@evidence:steps=2,7 / @evidence:skip=3), compiled by goal mode
+        # from checks[].evidence: run configuration as metadata, never
+        # step-text prose. Merged into the same request/suppress flags the
+        # prose markers set, so precedence stays one rule.
+        try:
+            from noodle.reporting import evidence as _ev_dir
+            _sc = ctx_get(context, "scenario")
+            _want, _skip = _ev_dir.step_directives(
+                getattr(_sc, "effective_tags", None) or [])
+            if _want or _skip:
+                _steps = getattr(_sc, "steps", None) or []
+                _pos = _steps.index(step) + 1 if step in _steps else None
+                requested = requested or _pos in _want
+                suppressed = suppressed or _pos in _skip
+        except Exception:
+            pass
         if manual and not suppressed:
             evidence_path, evidence_name = manual, "screenshot"
         elif not ctx_get(context, "_scenario_failed", False):
