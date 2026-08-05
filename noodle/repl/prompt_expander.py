@@ -447,6 +447,8 @@ VERBS_HELP = ("go to / open url / then url <url>; "
               "search for <term>; "
               "click <name>; click the suggestion <option> (after a search); "
               "enter <value> in <field>; "
+              # NOOD_0232 — the one gated-app action the grammar lacked.
+              "log in as <user> with password <pass>; "
               "select <option> from <list>; add [<item>] to <destination>; "
               "check/uncheck <name> checkbox; hover over <name>; "
               "upload <file> to <field>; press Enter; go back; "
@@ -546,6 +548,14 @@ _VERBS = [
         r"(?:bar|box|field|input)?\s*[,:]?\s*"
         r"(?:enter|type|fill|search(?:\s+for)?)s?\s+"
         r"[\"']?([^\"'—–]+?)[\"']?\s*(?:[—–].*)?$", re.I)),
+    # NOOD_0232 — a `search <box> for <term>` verb was tried here and REVERTED.
+    # It made "search movies for The Shining" reach the right box, but it also
+    # turned "search gifts for mum" into a search for "mum" — silently
+    # changing WHICH TERM is searched, on a phrasing that was correct before.
+    # A heuristic that cannot tell a control name from half the search term
+    # has no business guessing: the generic rule below keeps the whole tail,
+    # which is wrong in a visible way (no search box found) rather than a
+    # hidden one.
     ("search", re.compile(r"^search(?:es)?(?:\s+for)?\s+(.+)$", re.I)),
     # NOOD_0188 — go_back before nav so "goes back" is never read as a click.
     ("go_back", re.compile(
@@ -606,7 +616,147 @@ _VERBS = [
         r"[\"']?(.+?)[\"']?$", re.I)),
     ("click", re.compile(
         r"^(?:click|press|tap)s?\s+(?:on\s+)?(.+)$", re.I)),
+    # NOOD_0232 — "log in as <user> with password <pass>", the one action every
+    # gated app needs and the ONLY grammar hole behind all three shapes the
+    # benchmark could not author. Measured: B3 ("one sentence") refused on
+    # exactly this clause while `search movies for The Shining` and `verify
+    # The Shining is shown` in the SAME sentence both parsed; spelled out as
+    # enter/enter/click, the identical sentence compiled. So neither prose nor
+    # one-liners were the blocker — a missing verb was.
+    #
+    # LAST in the table on purpose. It is the loosest pattern here, and every
+    # explicit verb must win first: "click login" is a click, "enter X in the
+    # login field" is an enter, "verify you are logged in" is a verify. Placed
+    # anywhere earlier it would steal all three.
+    ("login", re.compile(
+        r"^(?:please\s+|now\s+)?"
+        # an optional leading locator preamble — "On <url> log in as …" is how
+        # a one-sentence spec carries both the URL and the login.
+        r"(?:(?:on|at|from|in)\s+\S+,?\s+)?"
+        r"(?:log|sign)s?(?:ed)?\s*-?\s*(?:in|on)(?:to)?\b(?P<rest>.*)$", re.I)),
 ]
+
+# NOOD_0232 — the credential pair, pulled out of whatever prose carries it:
+# "as reel_ryan with password Popcorn1!", "to <site> at <url> using the
+# account reel_ryan with the password Popcorn1!". Two separate patterns
+# rather than one alternation-heavy monster, because the two halves arrive in
+# either order and with any amount of filler between them.
+# A QUOTED value is taken whole — `with password "correct horse battery"` is
+# one passphrase, and the unquoted `\S+` form below stops at the first space,
+# which would have authored a login with the first word of it.
+#
+# The anchor words may STACK — "log in as user bob", "as an admin user bob" —
+# so the value is taken after the LAST of them, not the first. Taking the
+# first captured the anchor itself as the username ("user", "an"), and the
+# credential lift then wrote that into the secrets file, where a wrong value
+# is one indirection further from the author's eye than a literal in the
+# Gherkin ever was.
+_LOGIN_ANCHOR = (r"(?:as|with|using|user(?:\s*name)?|account|login|e-?mail"
+                 r"|id|an?|the)")
+_LOGIN_USER = re.compile(
+    # anchors STACK — "as user", "as an admin user" — so consume a run of them
+    r"\b" + _LOGIN_ANCHOR + r"\b(?:\s+" + _LOGIN_ANCHOR + r"\b)*"
+    r"\s*(?::|=)?\s*"
+    r"(?:(?P<uq>[\"'])(?P<user_quoted>(?:(?!(?P=uq)).)+)(?P=uq)"
+    r"|(?P<user>[\w.@+\-]+))", re.I)
+# Words that are never the username however they land after an anchor: the
+# anchors themselves, articles, the password clause that follows, and the
+# noun-phrase fillers a human writes instead of naming an account
+# ("with the account details and password X" names no user — refusing that is
+# right, and inventing "details" as the username is not).
+_NOT_A_USER = frozenset(
+    "as with using user username account login email e-mail id a an the "
+    "my your our their admin password passphrase passwd credentials "
+    "credential details detail info information account_details".split())
+
+
+def _login_user(rest: str) -> str | None:
+    """The username, from the FIRST anchor whose value is a real value.
+
+    Anchor words stack — "log in as user bob", "as an admin user bob" — so
+    taking the first match captured the anchor itself ("user", "an") and the
+    credential lift then wrote THAT into the secrets file. Walking the matches
+    and skipping non-values is what a stacked anchor needs, and it is far
+    easier to read than the lookahead that tried to do it in one pattern.
+    """
+    for m in _LOGIN_USER.finditer(rest or ""):
+        if quoted := m.group("user_quoted"):
+            return quoted                       # quoted is always a value
+        value = m.group("user")
+        if value and value.casefold() not in _NOT_A_USER:
+            return value
+    return None
+# NOT $-anchored: `log in as bob with password Secret1 on the login page` is
+# ordinary phrasing, and demanding end-of-clause reported "password missing"
+# with the password sitting right there — a refusal that misnames what is
+# missing costs the caller a lap chasing the wrong thing.
+_LOGIN_PASS = re.compile(
+    r"\bpass(?:word|phrase|wd)?\b\s*(?:is\s+|[:=]\s*)?"
+    r"(?:(?P<pq>[\"'])(?P<password_quoted>(?:(?!(?P=pq)).)+)(?P=pq)"
+    r"|(?P<password>[^\s,;]+))", re.I)
+# The control names a login lowers to. INFERRED, not read off the page — this
+# module is pure text→dict and never probes (its own docstring: surface
+# controls may not be inferred, only named). So the lowering emits the
+# canonical trio and every one of them is echoed as an assumption with
+# provenance; when the app calls them something else, the probe says so in
+# `blocking` and the near-miss reword (NOOD_0218) fixes them downstream, where
+# there IS page evidence. Guessing here and correcting there is the same
+# division of labour `add_to` already uses.
+_LOGIN_CONTROLS = ("username", "password", "login")
+
+# NOOD_0232 — fields whose VALUE is a credential, so the compiler routes it to
+# the workspace's gitignored secrets file and puts `{env:KEY}` in the Gherkin
+# instead of the literal.
+#
+# The benchmark found this by reading its own output: a spec authored verbatim
+# from `Enter "Popcorn1!" in the "password" field` shipped that password into a
+# committed .feature. The engine has had the right mechanism the whole time
+# (`secret_values` → gitignored `<app>_secrets.env` → `{env:KEY}`), and the
+# goal path uses it — but the prompt path, the one a pasted spec goes through,
+# could not reach it. A credential a user types into a prompt is still a
+# credential; where it lands is the engine's job, not theirs.
+# TWO TIERS, and the split is load-bearing. A `password` field is a secret
+# wherever it appears. An `email` field is a secret on a LOGIN form and plain
+# customer data on a checkout form — and lifting it there would push a
+# customer's address into a secrets file and leave the test asking for a value
+# nobody set (a real regression this rule caused before the tiers existed).
+# So the identity half is lifted only when a SECRET field appears in the same
+# flow, which is the difference between a login form and every other form.
+_SECRET_FIELD = re.compile(
+    r"^(?:the\s+)?(?P<name>pass(?:word|phrase|wd)?|pin|otp|"
+    r"(?:api[\s_-]*)?(?:key|token|secret))\b", re.I)
+_IDENTITY_FIELD = re.compile(
+    r"^(?:the\s+)?(?P<name>user(?:\s*name)?|e-?mail(?:\s+address)?|"
+    r"login|account)\b", re.I)
+# Canonical key per field family, so two phrasings of one field ("user name",
+# "username") never mint two keys for one credential.
+_SECRET_KEY = ((re.compile(r"pass", re.I), "PASSWORD"),
+               (re.compile(r"pin|otp", re.I), "OTP"),
+               (re.compile(r"key|token|secret", re.I), "API_TOKEN"),
+               (re.compile(r"mail", re.I), "EMAIL"),
+               (re.compile(r"user|login|account", re.I), "USERNAME"))
+
+
+def secret_key_for(target: str, *, identity_too: bool = True) -> str | None:
+    """The env key a credential field's value belongs under, or None.
+
+    `identity_too=False` asks the narrow question — is this field a SECRET —
+    which is what decides whether the flow is a login at all.
+    """
+    t = (target or "").strip().strip("\"'")
+    m = _SECRET_FIELD.match(t) or (_IDENTITY_FIELD.match(t)
+                                   if identity_too else None)
+    if not m:
+        return None
+    for rx, key in _SECRET_KEY:
+        if rx.search(m.group("name")):
+            return key
+    return None
+# The login phrase, unanchored — the verb-table entry above is ^-anchored for
+# matching a clause; review_contract needs to ask "did the prompt ask to log
+# in at all?" of the whole text.
+_LOGIN_WORDS = re.compile(
+    r"\b(?:log|sign)s?(?:ed)?\s*-?\s*(?:in|on)(?:to)?\b", re.I)
 
 # NOOD_0188 — canonical key spellings for press_key (the runtime step wants
 # Playwright's names).
@@ -1068,6 +1218,11 @@ _SUGGEST_RULES = (
     (re.compile(r"pop.?up|cookie|banner|location|notification|consent"
                 r"|close|dismiss", re.I),
      '"close popups" / "close location prompt"'),
+    # NOOD_0232 — ahead of the enter/click rules, both of which would offer a
+    # single-field rewrite for a clause that means three steps.
+    (re.compile(r"\b(?:log|sign)s?(?:ed)?\s*-?\s*(?:in|on)(?:to)?\b"
+                r"|\bcredentials?\b|\blogin\b", re.I),
+     'log in as "<user>" with password "<password>"'),
     (re.compile(r"enter|type|fill|input", re.I), 'enter "<value>" in <field>'),
     (re.compile(r"select|choose|pick", re.I),
      'select "<option>" from <control>'),
@@ -1213,6 +1368,26 @@ def _parse_clause(c: dict) -> dict:
             pass                      # no payload — the verb IS the action
         elif kind == "verify":
             node["rest"] = m.group(1).strip()
+        elif kind == "login":
+            rest = (m.group("rest") or "").strip()
+            p = _LOGIN_PASS.search(rest)
+            node["user"] = _login_user(rest)
+            node["password"] = (p.group("password_quoted")
+                                or p.group("password")) if p else None
+            # "On <url> log in as …" carries the flow's ONLY URL inside this
+            # clause. Every other verb that can swallow a URL hands it back as
+            # navigation; without this the whole prompt refused for want of a
+            # URL it contained, which is the most confusing refusal there is.
+            if url := _URL_IN_TEXT.search(text):
+                node["url"] = _normalize_url(url.group(0))
+            # A clause that merely MENTIONS a login is prose, not a step: "the
+            # login page appears" carries no credentials and no imperative,
+            # and the table's other verbs never saw it because this one is
+            # last. Hand it back to the narrative branch rather than compiling
+            # a login nobody asked for — inventing a flow out of scene-setting
+            # is worse than refusing it.
+            if not (node["user"] or node["password"]) and _NARRATION.match(text):
+                node["kind"] = "observation"
         elif kind == "click":
             node["target"] = _target_clean(m.group(1))
         elif kind == "click_within":
@@ -1939,6 +2114,40 @@ def expand(text: str, base_url: str | None = None) -> dict:
             actions.append({"do": "enter", "target": n["target"],
                             "value": n["value"]})
             _cover(n, "action")
+        elif n["kind"] == "login":
+            # The URL this clause carried is navigation, and it has to be
+            # registered even when the credentials below turn out incomplete —
+            # otherwise a coachable login refusal ALSO costs the prompt its URL
+            # and returns a second, misleading "no URL in the prompt" error.
+            if (u := n.get("url")) and u not in urls:
+                urls.append(u)
+            # NOOD_0232 — ONE named action, lowered to the three surface steps
+            # it has always meant. Both halves are required: a login missing
+            # either credential cannot be compiled, and guessing one would
+            # author a test that proves the app accepts a blank password.
+            if not (n.get("user") and n.get("password")):
+                missing = "password" if n.get("user") else \
+                    "username" if n.get("password") else "username and password"
+                _refuse(n, f"a login step needs both credentials — {missing} "
+                           "missing. Rewrite as: log in as \"<user>\" with "
+                           "password \"<password>\"")
+                continue
+            for target, value in zip(_LOGIN_CONTROLS[:2],
+                                     (n["user"], n["password"])):
+                actions.append({"do": "enter", "target": target,
+                                "value": value})
+            actions.append({"do": "click", "target": _LOGIN_CONTROLS[2]})
+            _cover(n, "action")
+            # Provenance, because these three control names were INFERRED and
+            # the prompt named none of them. An assumption the caller can read
+            # and contradict is the difference between a lowering and a guess.
+            assumptions.append(
+                f"step {no} '{n['raw']}': logging in = enter the username, "
+                f"enter the password, click "
+                f"\"{_LOGIN_CONTROLS[2]}\" — the three control names "
+                f"({', '.join(_LOGIN_CONTROLS)}) are inferred from the verb, "
+                "not named in the prompt; the probe corrects them against the "
+                "page if the app words them differently")
         elif n["kind"] == "select":
             actions.append({"do": "select", "target": n["target"],
                             "option": n["option"]})
@@ -2497,7 +2706,7 @@ def expand(text: str, base_url: str | None = None) -> dict:
             "'close popups' also dismisses the browser location prompt "
             "(a conditional no-op when the page never asks)")
 
-    labels = []
+    labels, check_labels = [], []
     for a in actions:
         if a["do"] == "search":
             labels.append(f"search '{a['term']}'")
@@ -2519,19 +2728,55 @@ def expand(text: str, base_url: str | None = None) -> dict:
                           f"{a.get('target', '')}".strip())
     for c in checks:
         if "item_in_destination" in c:
-            labels.append(f"verify {c['item_in_destination']}")
+            check_labels.append(f"verify {c['item_in_destination']}")
         elif "status" in c:
-            labels.append(f"status {c['status']}")
+            check_labels.append(f"status {c['status']}")
+        # NOOD_0232 — a plain see/not_see check reaches the title too. It was
+        # the ONE check kind that did not, and it is the commonest: two tests
+        # over the same actions with different assertions ("verify Jaws" vs
+        # "verify Casablanca") therefore compiled to the SAME Feature and
+        # Scenario name, hence the same Allure historyId — so authoring both
+        # into one package left the second EVICTING the first from the
+        # accumulating report (NOOD_0229 replaces per scenario key). A report
+        # holding one of two tests, silently, because they were named alike.
+        # The assertion is the most identifying part of a test; the action
+        # values deliberately stay out (a title carrying `enter 'Popcorn1!'`
+        # would print a credential into every Allure report).
+        elif "see" in c:
+            check_labels.append(f"verify {c['see']}")
+        elif "not_see" in c:
+            check_labels.append(f"verify no {c['not_see']}")
     # NOOD_0209 — a hard [:80] cut mid-label left Feature: titles truncated
     # mid-quote and unbalanced, and the filename slugged from that fragment.
     # Truncate at a label boundary, and never leave a dangling quote.
-    scenario = ", ".join(labels)
+    #
+    # NOOD_0232 — and truncate the ACTIONS, never the checks. The check labels
+    # go last, so a boundary cut took them first: a login-then-search flow with
+    # a long assertion lost exactly the label that distinguished it from the
+    # next test over the same actions, which put both under one Feature name,
+    # one Allure historyId, and left the second EVICTING the first from the
+    # accumulating report. What identifies a test is what it asserts.
+    scenario = ", ".join(labels + check_labels)
     if len(scenario) > 80:
-        cut = scenario[:80]
+        keep = list(labels)
+        while keep and len(", ".join([*keep, "…", *check_labels])) > 80:
+            keep.pop()
+        scenario = ", ".join(
+            [*keep, *(["…"] if len(keep) < len(labels) else []), *check_labels])
+    if len(scenario) > 80:                 # checks alone overflow — boundary
+        cut = scenario[:80]                # cut, as before
         scenario = cut.rsplit(", ", 1)[0] if ", " in cut else cut
     if scenario.count("'") % 2:
         scenario = re.sub(r"\s*'[^']*$", "", scenario).strip(" ,")
     scenario = scenario or "prompt flow"
+
+    # NOOD_0232 — lift credential VALUES out of the goal before it is compiled.
+    # Done here, after the actions are final and before anything is written, so
+    # every downstream consumer (the Gherkin, the POM, the payload, the probe's
+    # do-strings) only ever sees `{env:KEY}`. The literals leave in `secrets`,
+    # which author_test hands to the write-only secrets path and nothing else.
+    secrets, lift_notes = lift_credentials(actions)
+    assumptions += lift_notes
 
     goal = {"scenario": scenario, "dismissals": dismissals,
             "actions": actions, "checks": checks}
@@ -2543,8 +2788,7 @@ def expand(text: str, base_url: str | None = None) -> dict:
         goal["evidence"] = evidence_mode
 
     app = app_from_url(first_url or base_url)
-    slug = re.sub(r"[^a-z0-9]+", "_", scenario.casefold()).strip("_")[:40] \
-        or "prompt_flow"
+    slug = feature_slug(labels, check_labels, scenario)
     return {"ok": True, "goal": goal, "base_url": first_url or base_url,
             "app_name": app,
             "feature_path": f"noodle_tests/{app}/features/{slug}.feature",
@@ -2552,7 +2796,96 @@ def expand(text: str, base_url: str | None = None) -> dict:
                                  else "deterministic-fast-path"),
             "clauses": clauses, "coverage": coverage,
             "inferences": inferences, "unresolved": [], "conflicts": [],
-            "assumptions": assumptions, "unrecognized": []}
+            "assumptions": assumptions, "unrecognized": [],
+            # Write-only, and deliberately NOT part of `goal`: author_test
+            # forwards it to the secrets writer and drops it. Anything that
+            # serializes the expansion (the payload, prompt_expansion, a cached
+            # probe key) sees the goal, which by here carries only {env:} refs.
+            "secrets": secrets}
+
+
+def lift_credentials(actions: list) -> tuple[dict, list]:
+    """Move credential VALUES out of a goal's actions, in place.
+
+    Returns ({KEY: value}, [assumption]). The actions come back carrying
+    `{env:KEY}`, so every downstream consumer — the Gherkin, the POM, the
+    payload, the probe's do-strings — only ever sees the reference. The
+    literals leave in the mapping, which author_test hands to the write-only
+    secrets path and nothing else.
+
+    Shared by BOTH doors on purpose (NOOD_0232). The prompt door lifted and
+    the goal door did not, so the identical value in the identical field
+    landed in a committed .feature depending only on which door the caller
+    used — and the goal door said nothing about it.
+
+    TWO TIERS, and the split is load-bearing. A `password` field is a secret
+    wherever it appears. An `email` field is a secret on a LOGIN form and
+    plain customer data on a checkout form — lifting it there would push a
+    customer's address into a secrets file and leave the test asking for a
+    value nobody set. So the identity half is lifted only when a SECRET field
+    appears in the same flow, which is what tells a login form from a
+    checkout form.
+    """
+    secrets, notes = {}, []
+
+    def _fillable(a):
+        return (isinstance(a, dict) and a.get("do") == "enter"
+                and isinstance(a.get("value"), str)
+                # already a reference — leave the caller's own wiring alone
+                and not a["value"].startswith(("{env:", "{var:")))
+
+    is_login = any(secret_key_for(a.get("target") or "", identity_too=False)
+                   for a in actions or [] if _fillable(a))
+    for a in actions or []:
+        if not _fillable(a):
+            continue
+        if not (key := secret_key_for(a.get("target") or "",
+                                      identity_too=is_login)):
+            continue
+        # Same field twice with different values is two credentials and one
+        # key: number the second rather than silently overwrite the first.
+        k, n = key, 2
+        while k in secrets and secrets[k] != a["value"]:
+            k, n = f"{key}_{n}", n + 1
+        secrets[k] = a["value"]
+        a["value"] = f"{{env:{k}}}"
+        # The key is named WITHOUT a prefix because author_test app-scopes it
+        # afterwards (APP_X_PASSWORD); quoting the bare key sent the reader
+        # looking for something in neither the secrets file nor the feature.
+        notes.append(
+            f"'{a['target']}' is a credential field, so its value was written "
+            "to the app's gitignored secrets file and the test references it "
+            f"as {{env:…_{k}}} (the key is prefixed with the app name) — the "
+            "literal never enters the .feature, the POM or this payload")
+    return secrets, notes
+
+
+def _slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(text).casefold()).strip("_")
+
+
+def feature_slug(labels: list, check_labels: list, scenario: str,
+                 cap: int = 40) -> str:
+    """The generated .feature FILENAME — keeping the part that distinguishes it.
+
+    NOOD_0232 — a blind `scenario[:40]` cut the name off before the assertion,
+    so every test behind the same login preamble derived the SAME filename:
+    `enter_username_enter_password_click_logi`. The second one refused to
+    author, the engine's own advice was "re-send with overwrite: true", and
+    following it silently replaced a passing test with an unrelated one. Data
+    loss, from a truncation.
+
+    The checks are what tell two tests apart (the same reason they now reach
+    the scenario title), so they are kept and the ACTION head is what gets
+    squeezed. Falls back to the plain cut when there are no checks to keep.
+    """
+    head, tail = _slugify(", ".join(labels)), _slugify(", ".join(check_labels))
+    if not tail:
+        return _slugify(scenario)[:cap] or "prompt_flow"
+    if len(tail) >= cap:                       # the assertion alone fills it
+        return tail[:cap]
+    room = cap - len(tail) - 1
+    return (f"{head[:room]}_{tail}".strip("_") if head else tail) or "prompt_flow"
 
 
 def app_from_url(url: str) -> str:
@@ -2604,7 +2937,20 @@ def review_contract(exp: dict) -> dict:
         # three: an ungated one could have its control label invented by the
         # model fallback with no source clause behind it.
         if a.get("do") in goal_mod._TARGETED_ACTIONS and a.get("target"):
-            if not _overlaps(a["target"], text):
+            # NOOD_0232 — the login lowering is the one exemption, and it is
+            # deliberately narrow: ONLY when the prompt actually says "log in"
+            # (or "sign in"), and ONLY for the three canonical control names
+            # that lowering is allowed to emit. The rule exists to stop a
+            # model inventing a control label; these three are not invented,
+            # they are the fixed expansion of a verb the author wrote, and
+            # they still have to survive the probe — if the app names its
+            # field "Email", authoring blocks with that name in `blocking`
+            # exactly as it would for any other unmatched target. Anything
+            # outside this trio, or any prompt that never asked to log in,
+            # is refused as before.
+            login_lowered = (a["target"] in _LOGIN_CONTROLS
+                             and _LOGIN_WORDS.search(text))
+            if not _overlaps(a["target"], text) and not login_lowered:
                 problems.append(
                     f'{a["do"]} "{a["target"]}" has no source clause — '
                     "surface controls come from the prompt or probe "

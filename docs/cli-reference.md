@@ -812,17 +812,17 @@ $ noodle cost noodle_tests/web/shop/features/checkout.feature --model anthropic/
   💰 Estimate for noodle_tests/web/shop/features/checkout.feature: 412 input tokens | ~$0.0012 input-cost floor (output tokens unknowable pre-run) | model anthropic/claude-sonnet-5
 ```
 
-## noodle feature-regression
+## noodle benchmark --gate
 
 Core-product regression benchmark (NOOD_0185): prove prompt → `.feature`
 generation is still fast and accurate after engine changes. **Runs only when
 asked**, and since NOOD_0190 the bare command *runs it* — one call generates
 both canonical test cases, runs them, serves the reports and prints the
 benchmark table. Full guide:
-[docs/feature-regression.md](feature-regression.md).
+[docs/benchmark.md](benchmark.md).
 
 ```
-noodle feature-regression [--json] [--init] [--score results.json]
+noodle benchmark --gate [--json] [--init] [--score results.json]
 ```
 
 Exit **0 = PASS, 1 = REGRESSED**.

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/noodle-bowl.svg" alt="Noodle Test Framework" width="320">
+  <img src="docs/assets/noodle-bowl.svg" alt="Noodle Test Framework — pixel-art ramen bowl, steaming hot" width="320">
 </p>
 
 # Noodle Test Framework
@@ -75,7 +75,8 @@ No prior AI, automation, or Python experience assumed.
 | [docs/design-history.md](docs/design-history.md) | maintainers | The rationale trail behind every capability, condensed from the build phases — including the retired target-architecture vision sketch and the RCA design plan |
 | [docs/codebase-spec.md](docs/codebase-spec.md) | maintainers | Formal repo inventory — every package, entrypoint, data layout, and config surface, as of a point in time. Not a how-to. |
 | [docs/feature-packages.md](docs/feature-packages.md) | testers building a new app-under-test | Per-app packaging: `features/`, `resources/`, resolution order, in-repo vs external workspace |
-| [docs/feature-regression.md](docs/feature-regression.md) | engine maintainers, AI coding agents | The `noodle feature-regression` benchmark: prove prompt → `.feature` generation is still fast, cheap and accurate after engine changes — protocol, budget, PASS/REGRESSED scoring, bisect guide |
+| [docs/benchmark.md](docs/benchmark.md) | engine maintainers, AI coding agents | The `noodle benchmark --gate` gate: prove prompt → `.feature` generation is still fast, cheap and accurate after engine changes — protocol, budget, PASS/REGRESSED scoring, bisect guide |
+| [docs/benchmark-specs.md](docs/benchmark-specs.md) | anyone benchmarking Noodle | The five `noodle benchmark` specs, in the wording it sends them — a paragraph, a numbered list, one sentence, an ambiguous short spec, and one that must fail. Copy-paste-ready for a session or an MCP client, and parsed by the benchmark itself, so there is one copy of each |
 | [docs/native-apps.md](docs/native-apps.md) | testers targeting Android/iOS/Windows 11/macOS | Native-app testing via Appium platform tags, per-platform setup, and the OCR fallback for apps with no accessible names |
 | [docs/llm-setup.md](docs/llm-setup.md) | testers configuring an LLM provider | Picking/configuring a model, cloud cost comparison, and reaching an LLM through a locked-down work GitHub/Copilot/Azure account |
 | [docs/agent-playbook.md](docs/agent-playbook.md) | AI coding agents | Decision procedure for building/running a Noodle test by driving the CLI directly |

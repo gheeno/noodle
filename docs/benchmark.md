@@ -1,13 +1,30 @@
-# Feature-generation regression benchmark (NOOD_0185)
+# The benchmark (NOOD_0185, NOOD_0232)
+
+`noodle benchmark` measures this build on two axes, and which one you want
+decides the flag:
+
+| | `noodle benchmark --gate` | `noodle benchmark` |
+|---|---|---|
+| Question | can the engine still generate a good test | can it still take a request phrased the way people phrase them |
+| Varies | the **flow** — 5 fixed flows, one fixed phrasing | the **shape** — 5 phrasings, one fixed app |
+| Target | Wikipedia + a static fixture | BusterBlock, behind its login gate |
+| Role | **required** before any engine-code PR | on demand, and before a release |
+| Cost | ~90s | ~2-3 min |
+| Documented | this page | [benchmark-specs.md](benchmark-specs.md) |
+
+The gate holds the phrasing still so generation itself can be measured; the
+default holds the app still so the phrasing can be. A build can pass one and
+fail the other, and which one it fails tells you something different each
+time. **The rest of this page is the gate.**
 
 Not a unit test. An end-to-end "is the core product still good" check:
-three fixed test cases → authored `.feature` files → green verified runs —
+fixed test cases → authored `.feature` files → green verified runs —
 measured on **time**, **accuracy** and **size**, per test case and on
 average. It exists so that after new engine capabilities land, one command
 tells you whether the thing Noodle is actually for — fast, correct test
 generation — regressed.
 
-It runs on demand ("run feature-regression") and, since NOOD_0197, as the
+It runs on demand ("run the benchmark") and, since NOOD_0197, as the
 **pre-PR gate for every engine branch**: after the branch's single squashed
 commit, before opening the PR, exit 0 required (see CONTRIBUTING.md).
 Nothing schedules it; CI does not run it (it drives a live site) — the
@@ -20,10 +37,10 @@ the whole benchmark itself, so there is nothing for an agent to improvise.
 ## The flow
 
 ```
-noodle feature-regression            # RUNS it: generate → run → serve → table
-noodle feature-regression --json     # one bounded payload instead of the table
-noodle feature-regression --init     # only scaffold the fresh workspace, don't run
-noodle feature-regression --score results.json   # re-score an existing run
+noodle benchmark --gate            # RUNS it: generate → run → serve → table
+noodle benchmark --gate --json     # one bounded payload instead of the table
+noodle benchmark --gate --init     # only scaffold the fresh workspace, don't run
+noodle benchmark --gate --score results.json   # re-score an existing run
 ```
 
 Exit **0 = PASS, 1 = REGRESSED**. One call from anywhere — a bare terminal,
@@ -32,7 +49,7 @@ authors and runs all three canonical cases, runs them again combined onto one
 Allure + RCA, scores, serves, prints the table.
 
 ```
-🧪 feature-regression — noodle 1.0.0a6
+🧪 benchmark — noodle 1.0.0a6
    workspace: /…/regression_runs/20260727-101500_1.0.0a6_6859c75
 
    TEST CASE                  GENERATE    RUN   CORR  LINES  GREEN  VERIFIED
@@ -147,8 +164,19 @@ whether the engine regressed, and on a host with no billing API it could only
 be guessed. The engine figure read `none` every run — the deterministic fast
 path makes zero model calls (`translation_mode: deterministic-fast-path`,
 `interpretation_model_calls: 0`). Generated line count is the size signal
-that actually moves. If you want to compare *agent* cost across hosts, that
-is [llm-performance.md §7](llm-performance.md), not this benchmark.
+that actually moves here. If you want to compare *agent* cost across hosts,
+that is [llm-performance.md §7](llm-performance.md), not this benchmark.
+
+**Cost is measured in the drill instead** (NOOD_0232), and door-native: the
+bytes each door actually returns for one authoring lap — `len(stdout)` for
+the CLI, the serialized tool result for MCP — at bytes ÷ 4. That survives
+where the host figure did not, because it is deterministic, needs no billing
+API, is identical on every machine, moves the moment a payload grows, and
+measures the only part of an agent's bill the engine controls. It is also
+**build-agnostic**, which is the property that matters for the job the old
+column kept failing: one drill can measure two engine versions whose
+internals differ, which is what a "did this release get more expensive"
+question actually requires.
 
 ## Budget
 
@@ -185,7 +213,7 @@ A REGRESSED verdict says the *current checkout* is worse — not which commit
 did it. Confirm before blaming:
 
 1. `git checkout main` (or the last known-good SHA) && `noodle update`
-2. `noodle feature-regression` again — it scaffolds its own fresh workspace.
+2. `noodle benchmark --gate` again — it scaffolds its own fresh workspace.
 3. Baseline also REGRESSED → the site changed, not the engine. Baseline PASS
    → walk the suspect commits (`git checkout <sha>` + `noodle update` each
    time) until the verdict flips.
@@ -193,7 +221,42 @@ did it. Confirm before blaming:
 If numbers look absurd or the behavior looks old, first suspect a stale
 install shadowing the checkout — `noodle doctor`.
 
-## Live drill — a real retail site
+## The other axis — `noodle benchmark` (NOOD_0232)
+
+```
+noodle benchmark
+```
+
+The gate above varies the **flow** and holds the phrasing pinned at exactly
+one value: every one of its cases is a numbered imperative list. So it cannot
+answer the question a user asks before adopting Noodle — *does it still work
+when I don't phrase my request the way your benchmark does.* A build that
+generates perfect tests from perfectly-shaped prompts scores PASS here
+whatever it does with a paragraph, a one-liner, or a half-specified ticket.
+
+`noodle benchmark` is that axis. It holds the **app** constant — the repo's
+own bundled **BusterBlock** site (`test-apps/busterblock`), behind its login
+gate — and varies only how the request is phrased: a paragraph, a numbered
+list, a single sentence, a short ambiguous spec, and **one spec whose
+assertion is deliberately wrong**. Because the app is fixed, any difference
+between rows is attributable to the phrasing and nothing else.
+
+It is not a PR gate. Run it when touching the prompt compiler, the agent
+doors or payload sizes, and before a release.
+
+| | `noodle benchmark --gate` | `noodle benchmark` |
+|---|---|---|
+| Varies | the flow (5 flows, one shape) | the shape (5 shapes, one app) |
+| Target | Wikipedia + a static fixture | BusterBlock, behind its login gate |
+| Role | **required** before any engine-code PR | on demand, before a release |
+| Cost | ~90s | ~2-3 min |
+
+The specs, what each column means, and what a change to any of them means
+live in **[benchmark-specs.md](benchmark-specs.md)** — which is also the file
+the benchmark parses its prompts out of, so the block a human pastes into a
+session is byte-for-byte the one measured.
+
+## Live drill — a real site
 
 The benchmark grew out of a pair of prompts against a live retail store
 front. Templates below: substitute your own site and its real copy. This is

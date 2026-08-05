@@ -804,7 +804,7 @@ def _auth_synonyms(target: str) -> list[str]:
 # visible instances are duplicates of one control, MANY are one-per-card. This
 # is that ceiling, shared — without it the ambiguity gate below blocked an
 # ordinary two-instance header link that resolves and runs green (the
-# feature-regression benchmark's tc2 caught exactly that).
+# benchmark's tc2 caught exactly that).
 _DUPLICATE_CEILING = 3
 
 

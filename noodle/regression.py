@@ -1,13 +1,13 @@
 """Feature-generation regression benchmark (NOOD_0185).
 
 Runs ONLY when a human asks for it ("run the feature regression"), and
-NOOD_0190 makes `noodle feature-regression` actually run it: `execute()`
+NOOD_0190 makes `noodle benchmark --gate` actually run it: `execute()`
 authors + runs both canonical prompts, one combined run serves the
 reports, `score()` returns the verdict. Every measurement comes out of
 the payload `author_test(run_after_author=True)` already hands back — an
 agent never hand-copies JSON it was given, and never reports a number it
 guessed. The prose (what "regressed" means, HIL review, bisecting a
-regression to a commit) lives in docs/feature-regression.md.
+regression to a commit) lives in docs/benchmark.md.
 
 NOOD_0190 dropped the host AIC/token accounting and the engine LLM
 ledger: the first measured how lost the DRIVING AGENT got (and on a host
@@ -25,7 +25,7 @@ from pathlib import Path
 # popup tolerance, cross-page navigation and plain-text assertions are the
 # capabilities under test, and the benchmark must go green from any machine —
 # retail sites bot-gate automated browsers (the original retail-store pair,
-# kept in docs/feature-regression.md as a live drill, proved that). Site
+# kept in docs/benchmark.md as a live drill, proved that). Site
 # drift = update the content here, never the scoring.
 # tc1/tc2 are numbered PROMPTS — the plain-English path a human/agent actually
 # sends (the AC: the benchmark must mimic real usage, never hand-built
@@ -361,7 +361,7 @@ def score(results: dict, workspace: str | None = None) -> dict:
             "next": ("no regression — ship it" if not regressions else
                      "confirm the culprit: `git checkout <last-known-good>` (or main) + "
                      "`noodle update`, rerun this benchmark, compare verdicts — "
-                     "docs/feature-regression.md § Bisecting a regression")}
+                     "docs/benchmark.md § Bisecting a regression")}
 
 
 def render_html(verdict: dict) -> str:
@@ -382,7 +382,7 @@ def render_html(verdict: dict) -> str:
                 fails="; ".join(t["failures"]) or "—"))
     b = v["budget"]
     return f"""<!doctype html><meta charset="utf-8">
-<title>feature-regression verdict</title>
+<title>benchmark verdict</title>
 <style>body{{font:15px/1.5 system-ui;margin:2rem auto;max-width:64rem;padding:0 1rem}}
 table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #d0d7de;padding:.4rem .6rem;text-align:left}}
 .v{{color:#fff;background:{color};display:inline-block;padding:.2rem .8rem;border-radius:.4rem}}</style>
@@ -406,7 +406,7 @@ lines — is the engine still generating simple tests):</p>
 
 
 def render_table(verdict: dict) -> str:
-    """The benchmark as a terminal table — what `noodle feature-regression`
+    """The benchmark as a terminal table — what `noodle benchmark --gate`
     prints. Plain f-strings on purpose: no rich, no tabulate, no dependency
     for six columns."""
     v = verdict
@@ -415,7 +415,7 @@ def render_table(verdict: dict) -> str:
 
     def _n(x):
         return "—" if x is None else f"{x:g}"
-    rows = [f"🧪 feature-regression — noodle {v.get('engine') or 'unknown'}",
+    rows = [f"🧪 benchmark — noodle {v.get('engine') or 'unknown'}",
             f"   workspace: {v.get('workspace') or '—'}", "",
             f"   {'TEST CASE':<26}{'GENERATE':>9}{'RUN':>7}{'CORR':>7}"
             f"{'LINES':>7}  {'GREEN':<7}{'VERIFIED'}"]

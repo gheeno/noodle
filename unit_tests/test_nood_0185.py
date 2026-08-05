@@ -166,7 +166,7 @@ def test_init_refuses_a_stale_install(tmp_path, monkeypatch):
     monkeypatch.setattr(install_check, "version_report",
                         lambda: {"installed": "1.0.0a1", "source": "1.0.0a2",
                                  "mismatch": True})
-    out = CliRunner().invoke(cli.app, ["feature-regression", "--init"])
+    out = CliRunner().invoke(cli.app, ["benchmark", "--init"])
     assert out.exit_code == 1
     assert "noodle update" in out.output and "1.0.0a2" in out.output
     assert not (tmp_path / "regression_runs").exists()   # nothing half-scaffolded
@@ -181,8 +181,8 @@ def test_init_makes_a_new_workspace_every_run_inside_the_clone(tmp_path, monkeyp
     monkeypatch.chdir(sub)
     _matched_install(monkeypatch, tmp_path)
     r = CliRunner()
-    assert r.invoke(cli.app, ["feature-regression", "--init"]).exit_code == 0
-    assert r.invoke(cli.app, ["feature-regression", "--init"]).exit_code == 0
+    assert r.invoke(cli.app, ["benchmark", "--init"]).exit_code == 0
+    assert r.invoke(cli.app, ["benchmark", "--init"]).exit_code == 0
     runs = list((tmp_path / "regression_runs").iterdir())
     assert len(runs) == 2 and all((d / "noodle.yaml").is_file() for d in runs)
     assert not (sub / "regression_runs").exists()
@@ -194,7 +194,7 @@ def test_bare_command_runs_the_benchmark(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _matched_install(monkeypatch, tmp_path)
     _fake_author(monkeypatch)
-    out = CliRunner().invoke(cli.app, ["feature-regression"])
+    out = CliRunner().invoke(cli.app, ["benchmark", "--gate"])
     assert out.exit_code == 0
     assert "VERDICT: PASS" in out.output
     for p in regression.PROMPTS:
@@ -209,7 +209,7 @@ def test_a_regressed_run_exits_1(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _matched_install(monkeypatch, tmp_path)
     _fake_author(monkeypatch, failed=1)
-    out = CliRunner().invoke(cli.app, ["feature-regression"])
+    out = CliRunner().invoke(cli.app, ["benchmark", "--gate"])
     assert out.exit_code == 1 and "VERDICT: REGRESSED" in out.output
 
 
@@ -217,7 +217,7 @@ def test_score_writes_verdict_next_to_results(tmp_path):
     results = tmp_path / "results.json"
     results.write_text(json.dumps(
         _full()), encoding="utf-8")
-    out = CliRunner().invoke(cli.app, ["feature-regression", "--score", str(results)])
+    out = CliRunner().invoke(cli.app, ["benchmark", "--score", str(results)])
     assert out.exit_code == 0
     assert json.loads((tmp_path / "verdict.json").read_text(encoding="utf-8"))["verdict"] == "PASS"
     # the ACs (development time, accuracy, size) get a browser page too

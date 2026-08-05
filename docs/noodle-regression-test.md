@@ -17,11 +17,11 @@ Everything you write goes in `tmp/`, which is gitignored.
 | **Never bend a budget to pass** | Record the breach. A breach ends in a plan, not a patch. |
 | **Never estimate a cost number** | Report your own counter or leave it blank. |
 
-### Why this exists next to `noodle feature-regression`
+### Why this exists next to `noodle benchmark --gate`
 
 Keep both — neither replaces the other.
 
-| | `noodle feature-regression` | this drill |
+| | `noodle benchmark --gate` | this drill |
 |---|---|---|
 | Driven by | the engine, one command | you, by hand |
 | Measures | generation time, corrections, lines | **dev time + agent AIC per case** |
@@ -38,7 +38,7 @@ half. It cannot gate a PR: an LLM in the loop means no stable exit code.
 
 ```bash
 noodle update
-noodle feature-regression
+noodle benchmark --gate
 ```
 
 - **Exit 0** → continue to phase 1.
@@ -276,7 +276,7 @@ as `regression_runs/` for the engine gate.
 
 ## See also
 
-- [feature-regression.md](feature-regression.md) — the engine gate phase 0 runs
+- [benchmark.md](benchmark.md) — the engine gate phase 0 runs
 - [agent-playbook.md](agent-playbook.md) — the conventions you are being measured against
 - [session-diagnostics.md](session-diagnostics.md) — the session scan and its triggers
 - [llm-performance.md](llm-performance.md) — where the AIC bar comes from

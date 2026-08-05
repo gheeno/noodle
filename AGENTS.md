@@ -31,7 +31,7 @@ unlogged, and invisible to the reports the engine has to produce.
 | the goal / prompt schema | `noodle author --vocabulary` |
 | a step phrasing | `noodle step-search "<description>"` |
 | install, env, or config health | `noodle doctor` |
-| whether the engine still works end to end | `noodle feature-regression` |
+| whether the engine still works end to end | `noodle benchmark --gate` |
 
 **No noodle command for what you need? Say so and stop.** An unmet
 observability need is an engine gap to report — not a shell command to

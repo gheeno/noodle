@@ -3010,10 +3010,33 @@ def probe(urls: list[str], timeout_ms: int = 15000,
                             "--follow ignored: it requires --suggest")
                     if search and acting:
                         _search(page, pg, search, timeout_ms)
+                        # NOOD_0232 — a GATED app inverts NOOD_0168's ordering
+                        # below. There, the do-chain is the steps that follow a
+                        # search, so it runs after it. Behind a login gate the
+                        # do-chain is how you REACH the search box: run it
+                        # first, or the search hunts the login page, finds
+                        # nothing, and the whole flow refuses with "no search
+                        # box found" on a site that plainly has one.
+                        # Driven by evidence, not by guessing which shape the
+                        # caller meant: this only fires when the search
+                        # actually failed and there is an unrun chain to try.
+                        did_do = False
+                        if pg.get("search_warning") and do_actions:
+                            page = _do(page, pg, do_actions, timeout_ms)
+                            did_do = True
+                            pg["search_after_do"] = (
+                                "no search box on the landing page — ran the "
+                                "do-chain first, then searched")
+                            pg.pop("search_warning", None)
+                            _search(page, pg, search, timeout_ms)
                         if pick:
                             page = _pick(page, pg, search, pick,
                                          timeout_ms, mutate=mutate)
-                        if do_actions:
+                        # `did_do`, never `do_actions = None`: the skeleton
+                        # below is built FROM do_actions, and clearing it to
+                        # mark the chain spent would drop the whole chain from
+                        # the goal notation the probe hands back.
+                        if do_actions and not did_do:
                             # NOOD_0168 — a do-transaction sharing the
                             # call with a search targets the page the
                             # search/pick LANDED on, not the start page
