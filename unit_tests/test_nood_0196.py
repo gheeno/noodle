@@ -1,6 +1,6 @@
 """NOOD_0196 — an --expect verdict answers for a goal that never searches.
 
-The feature-regression benchmark went REGRESSED on tc3 while the test it
+The benchmark went REGRESSED on tc3 while the test it
 generated ran green and verified: the compiler blocked authoring with
 
     check "From Wikipedia, the free encyclopedia": no probed heading or

@@ -1659,6 +1659,19 @@ def init(
     that drifted from the current scaffold are reported (refresh with
     --force, originals saved as *.bak), and your config/POM files are never
     overwritten."""
+    # Called as a PLAIN FUNCTION (the benchmark scaffolds its workspace that
+    # way) an unpassed typer.Option arrives as its OptionInfo, and OptionInfo
+    # is TRUTHY — so `if not llm` was False and _env_stub wrote a literal
+    # `NOODLE_MODEL=<typer.models.OptionInfo object at 0x…>` into the
+    # workspace .env. _model_configured then read that as a configured model,
+    # every interpretation call died inside litellm on a model name that is a
+    # repr, and the rejection blamed the model instead of naming the real
+    # gap. Same trap author() guards at `section` and benchmark() at `gate`.
+    if not isinstance(llm, str):
+        llm = None
+    if not isinstance(model, str):
+        model = None
+    force = force is True
     if path == "mcp":
         return init_mcp(".", force=force)
     root = Path(path)
@@ -2529,9 +2542,12 @@ def _regression_workspace(quiet: bool = False) -> Path:
         import contextlib
         import io
         with contextlib.redirect_stdout(io.StringIO()):
-            init(path=str(ws))
+            init(path=str(ws), llm=None, model=None, force=False)
     else:
-        init(path=str(ws))
+        # every option spelled out: init() defends itself against typer
+        # sentinels now, but a plain call saying what it means does not
+        # depend on that defence staying there
+        init(path=str(ws), llm=None, model=None, force=False)
     return ws
 
 
@@ -2554,23 +2570,15 @@ def _write_verdict(verdict: dict, workspace: Path) -> dict:
     return verdict
 
 
-@app.command("feature-regression")
-def feature_regression(
-    score_file: str = typer.Option(None, "--score", help="Re-score an existing run's results JSON instead of running the benchmark — prints the table and writes verdict.json/html next to it"),
-    init_ws: bool = typer.Option(False, "--init", help="Only scaffold the fresh benchmark workspace under <clone>/regression_runs/<stamp>_<build>_<sha>/ and stop — don't run the benchmark"),
-    as_json: bool = typer.Option(False, "--json", help="One bounded JSON payload instead of the table"),
-):
-    """Core-product regression benchmark (NOOD_0185): prove prompt → .feature
-    generation is still fast and accurate after engine changes. Runs only when
-    asked; nothing schedules it.
+def _benchmark_gate(score_file, init_ws: bool, as_json: bool):
+    """`noodle benchmark --gate` (NOOD_0185, renamed from `benchmark --gate`
+    in NOOD_0232): prove prompt → .feature generation is still fast and
+    accurate after engine changes. Runs only when asked; nothing schedules it.
 
-    No args → it RUNS (NOOD_0190): fresh workspace, both canonical prompts
-    authored + run, one combined Allure + RCA + verdict served, benchmark
-    table printed. Exit 0 = PASS, 1 = REGRESSED. Every number comes from the
+    Fresh workspace, every canonical prompt authored + run, one combined
+    Allure + RCA + verdict served, table printed. Every number comes from the
     engine's own payload — generation time, run time, corrections (self-heal
-    events, flaky retries, re-author passes), generated feature+POM lines.
-    --init scaffolds the workspace without running; --score re-scores an
-    existing results.json. Triage prose: `noodle docs feature-regression`."""
+    events, flaky retries, re-author passes), generated feature+POM lines."""
     from noodle import regression
     if score_file:
         # NOOD_0188 — score against the workspace holding the run's artifacts,
@@ -2594,6 +2602,177 @@ def feature_regression(
         _json_out(verdict)
     else:
         typer.echo(regression.render_table(verdict))
+    raise typer.Exit(0 if verdict["verdict"] == "PASS" else 1)
+
+
+def _session_marker() -> Path:
+    """Where the newest open session lives. A pointer file in the clone, not a
+    search of regression_runs/ — a session spans many turns and the `--table`
+    call must land on the run that was opened, never on whichever build folder
+    happens to sort last."""
+    from noodle import install_check
+    return (install_check.clone_root() or Path.cwd()) / "regression_runs" \
+        / ".open_session"
+
+
+def _benchmark_session(want_table: bool, as_json: bool) -> int:
+    """NOOD_0232 — the agent-driven benchmark. --session opens it and prints
+    the runbook; --table closes it and scores the ledger."""
+    from noodle import benchmark as bench
+    from noodle import install_check
+    marker = _session_marker()
+    if want_table:
+        try:
+            ws = marker.read_text(encoding="utf-8").strip()
+            verdict = bench.score(bench.session_table(ws))
+        except (OSError, bench.BenchmarkError) as exc:
+            typer.echo(f"no open benchmark session — {exc}"
+                       if isinstance(exc, bench.BenchmarkError) else
+                       "no open benchmark session; start one with "
+                       "`noodle benchmark --session`", err=True)
+            return 2
+        verdict["build"] = install_check.build_line()
+        ws_p = Path(ws)
+        (ws_p / "benchmark_verdict.json").write_text(
+            bench.redact(json.dumps(verdict, indent=2, default=str)),
+            encoding="utf-8")
+        (ws_p / "benchmark_verdict.html").write_text(
+            bench.redact(bench.render_html(verdict)), encoding="utf-8")
+        left_running = bench.session_stop(ws)
+        marker.unlink(missing_ok=True)
+        if left_running:
+            verdict.setdefault("warnings", []).append(left_running)
+        if as_json:
+            _json_out(verdict)
+        else:
+            typer.echo(bench.render_table(verdict))
+            typer.echo(f"\n   📄 {ws_p / 'benchmark_verdict.html'}")
+        return 0 if verdict["verdict"] == "PASS" else 1
+    # A second --session while one is open orphaned the first: a new workspace
+    # was scaffolded, _host_detached saw the port answered and recorded pid
+    # None, and the marker was overwritten — so the first session's real pid
+    # became unreachable and BusterBlock survived every later --table.
+    if marker.is_file():
+        typer.echo(
+            f"a benchmark session is already open in "
+            f"{marker.read_text(encoding='utf-8').strip()}"
+            " — finish it with `noodle benchmark --table`, or delete "
+            f"{marker} if it is stale", err=True)
+        return 2
+    try:
+        # Validate BEFORE scaffolding, so a missing `npm ci` does not leave an
+        # orphan build folder behind (the headless path already does this).
+        bench.load_specs()
+        ws = _regression_workspace(quiet=True)
+        out = bench.session_start(str(ws))
+    except bench.BenchmarkError as exc:
+        typer.echo(f"benchmark cannot start — {exc}", err=True)
+        return 2
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(str(ws), encoding="utf-8")
+    if as_json:
+        _json_out({k: v for k, v in out.items() if k != "full_specs"})
+    else:
+        typer.echo(f"🥢 benchmark session open — {install_check.build_line()}")
+        typer.echo(f"   app under test: BusterBlock @ {out['base_url']}"
+                   + (f" (pid {out['pid']})" if out.get("pid") else
+                      " (already running — left alone)"))
+        typer.echo("")
+        typer.echo(out["runbook"])
+    return 0
+
+
+@app.command("benchmark")
+def benchmark(
+    session: bool = typer.Option(False, "--session", help="Open an AGENT-DRIVEN run — the workflow the product ships in: starts BusterBlock, scaffolds the workspace, arms the ledger and prints the runbook for THIS LLM session to follow. The agent is the interpreter, so no spec is blocked by phrasing; what is measured is how much work the loop took. Finish with --table"),
+    table: bool = typer.Option(False, "--table", help="Print the table for the open --session run, from the ledger the engine wrote (never from what the agent remembers doing), then stop the app"),
+    gate: bool = typer.Option(False, "--gate", help="Run the PR GATE instead: the same 5 canonical FLOWS every time (Wikipedia + a static fixture), which is what a branch has to pass before its PR. ~90s. Without it, the 5 request SHAPES against BusterBlock, which is the release benchmark"),
+    as_json: bool = typer.Option(False, "--json", help="One bounded JSON payload instead of the table"),
+    specs_file: str = typer.Option(None, "--specs", help="Read the specs from this markdown file instead of docs/benchmark-specs.md"),
+    score_file: str = typer.Option(None, "--score", help="--gate only: re-score an existing run's results JSON instead of running — prints the table and writes verdict.json/html next to it"),
+    init_ws: bool = typer.Option(False, "--init", help="--gate only: scaffold the fresh benchmark workspace under <clone>/regression_runs/<stamp>_<build>_<sha>/ and stop"),
+):
+    """Benchmark this build. Two axes, one command.
+
+    Default — the SPEC-SHAPE benchmark (NOOD_0232): can the engine still take
+    a request phrased the way people phrase them? Five specs — a paragraph, a
+    numbered list, one sentence, a short ambiguous spec, and one whose
+    assertion is deliberately WRONG — all against the bundled BusterBlock site
+    behind its login gate. The specs are parsed from docs/benchmark-specs.md,
+    so the block a human pastes into a session (or an MCP client sends as
+    `prompt`) is byte-for-byte the one measured here. One `noodle init`
+    workspace stamped with the build holds all five as one app package: five
+    feature files, five runs, ONE served Allure report. Prints development
+    time, run time, corrections, token cost and the final result per spec.
+    ~2-3 min; run it on demand and before a release.
+
+    --gate — the PR GATE (NOOD_0185): the same five canonical FLOWS every
+    time, holding the phrasing still so generation itself is measured. ~90s,
+    required before any PR that changes engine code.
+
+    The gate varies the flow; the default varies the request. Exit 0 = PASS,
+    1 = REGRESSED. Triage prose: `noodle docs benchmark`."""
+    # `is True`, never truthiness: called as a plain function (which the tests
+    # do) an unpassed typer.Option arrives as its OptionInfo, and OptionInfo is
+    # truthy — a bare `if gate:` would send every programmatic caller down the
+    # gate path. --score/--init only mean anything for the gate, so passing
+    # either selects it without also having to say --gate.
+    if gate is True or init_ws is True or isinstance(score_file, str):
+        return _benchmark_gate(score_file, init_ws is True, as_json is True)
+    from noodle import benchmark as bench
+    from noodle import install_check
+    if session is True or table is True:
+        raise typer.Exit(_benchmark_session(table is True, as_json is True))
+    try:
+        specs = bench.load_specs(specs_file)
+        # The version check happens INSIDE the try with the app check, and
+        # before any workspace exists: _regression_workspace exits 1 on a
+        # stale install with the `noodle update` instruction, which is step 1
+        # of the documented flow and the only thing standing between these
+        # numbers and being filed under code that never ran.
+        ws = _regression_workspace(quiet=True)
+        if not as_json:
+            typer.echo(f"🥢 noodle benchmark — {len(specs)} specs from "
+                       f"{bench.spec_doc() if not specs_file else specs_file}")
+            typer.echo(f"   workspace: {ws}")
+        results = {**bench.execute(str(ws), specs=specs,
+                                   log=None if as_json else typer.echo),
+                   "engine": install_check.version_report().get("source")}
+    except bench.BenchmarkError as exc:
+        # A setup fault is not a REGRESSED verdict. Reporting one would blame
+        # the engine for a missing `npm ci`, and the next reader would bisect.
+        typer.echo(f"benchmark cannot run — {exc}", err=True)
+        raise typer.Exit(2) from None
+    # NOOD_0232 — every artifact goes through bench.redact(): a blocked spec is
+    # reported with the clauses the compiler rejected, quoted verbatim, so the
+    # credential inside a spec rode into all three files and the verdict.html
+    # that gets served. Masked at the WRITE, not at the render, so no path to
+    # disk can miss it.
+    (ws / "benchmark_results.json").write_text(
+        bench.redact(json.dumps(results, indent=2, default=str)),
+        encoding="utf-8")
+    verdict = bench.score(results)
+    (ws / "benchmark_verdict.json").write_text(
+        bench.redact(json.dumps(verdict, indent=2, default=str)),
+        encoding="utf-8")
+    html = bench.redact(bench.render_html(verdict))
+    (ws / "benchmark_verdict.html").write_text(html, encoding="utf-8")
+    verdict["saved"] = str(ws / "benchmark_verdict.json")
+    try:
+        # ...and into the served reports root, so the scorecard sits at
+        # /verdict.html beside /allure-report/index.html and /rca.html — the
+        # three artifacts a reader needs are then one server apart.
+        reports = _paths.last_run_root(str(ws.resolve())) / "reports"
+        if reports.is_dir():
+            (reports / "verdict.html").write_text(html, encoding="utf-8")
+            verdict["served"] = str(reports / "verdict.html")
+    except OSError:
+        pass                      # the build-folder copy stands on its own
+    if as_json:
+        _json_out(verdict)
+    else:
+        typer.echo("\n" + bench.render_table(verdict))
+        typer.echo(f"\n   📄 {ws / 'benchmark_verdict.html'}")
     raise typer.Exit(0 if verdict["verdict"] == "PASS" else 1)
 
 

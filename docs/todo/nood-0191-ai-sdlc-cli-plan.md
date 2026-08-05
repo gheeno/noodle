@@ -42,7 +42,7 @@ without copy-pasting 400 lines of hard-won Allure wiring.
 | 4 | Multiple concurrent callers | 🟡 | Solid per-workspace; not per-run-in-one-workspace — **only matters for §6** (§5) |
 | 5 | Understands off-template prompts | 🟡 | Numbered English compiles deterministically; free-form prose has no route and no negotiation reply (§2) |
 | 6 | Headed and headless | 🟢 | **No work needed** (§7) |
-| 7 | Cheap, fast, accurate | 🟢 | Zero engine-side LLM calls on the happy path; `noodle feature-regression` asserts it |
+| 7 | Cheap, fast, accurate | 🟢 | Zero engine-side LLM calls on the happy path; `noodle benchmark --gate` asserts it |
 
 ### 1.1 What's already done (do not rebuild)
 
@@ -409,7 +409,7 @@ is a flaky-test generator. The reasoning loop stays in the caller.
 
 Employer-specific references removed from the public repo:
 
-- `docs/feature-regression.md` — the live-drill retail prompts → site-neutral
+- `docs/benchmark.md` — the live-drill retail prompts → site-neutral
   templates with `https://<your-retail-site>/…` placeholders.
 - `noodle/regression.py` — comment reference → "the original retail-store pair".
 - `CHANGELOG.md` — the same phrase in the NOOD_0185 entry.
@@ -434,7 +434,7 @@ only its three agent-hardening lessons (§4.5), described generically.
 | Headless-only CI, headed stays local (§7) | template has no `--headed`; a test keeps it that way |
 | Project-repo delivery documented (§3) | `docs/ci-project-repo.md`; `ai-sdlc-integration.md` §3/§4.0/§5/§6 rewritten |
 | Tag convention `1.0.0aN` → `1.0.0bN` → `1.0.0` (§4.5) | `CONTRIBUTING.md`; obsolete `v`-prefixed tag deleted |
-| Public-safety redaction (§9) | `docs/feature-regression.md`, `noodle/regression.py`, `CHANGELOG.md` |
+| Public-safety redaction (§9) | `docs/benchmark.md`, `noodle/regression.py`, `CHANGELOG.md` |
 | Routing table + pipeline drift guards | `unit_tests/test_nood_0191.py` |
 
 ### Deliberately not done
@@ -443,12 +443,12 @@ only its three agent-hardening lessons (§4.5), described generically.
 |---|---|
 | Concurrency hardening (§5) | Only matters if Noodle becomes a shared service. In the shipped flow each pipeline run owns its agent and checkout, so it is already isolated. Findings recorded above so they aren't re-derived. |
 | Container app / HTTP front door (§6) | The pipeline path covers the stated need with no new service. If the container route is taken later, §5 lands first and Container Apps *Jobs* beat a long-lived server. |
-| An off-template prompt case in `feature-regression` | Worth adding once real builder-agent prompts exist to draw from — a fixture invented here would only test the classifier against itself. |
+| An off-template prompt case in `benchmark --gate` | Worth adding once real builder-agent prompts exist to draw from — a fixture invented here would only test the classifier against itself. |
 | `allure-python-commons` removal | It is imported nowhere, but deleting a dependency is its own ticket with its own install-matrix check. |
 | `azure-pipelines-windows.yml` parity | The template is bash/POSIX. Windows agents keep the existing pipeline; the version-pin guard still covers it. |
 
 **Cost stance (criterion 7):** the execution path makes **zero** LLM calls by
 construction. The authoring path stays at zero engine-side calls too — the
 classifier and the prompt compiler are both deterministic;
-`noodle feature-regression`'s zero-cost guard (NOOD_0189) is the falsifiable
+`noodle benchmark --gate`'s zero-cost guard (NOOD_0189) is the falsifiable
 assertion, and P4 extends it to the new door.

@@ -416,6 +416,61 @@ def _overlap_warnings(content: str, feat_dest: Path, app_dir: Path,
             "removed with `noodle remove <path>`."]
 
 
+_PAGE_TAG_RE = re.compile(r"@page:([A-Za-z0-9_]+)")
+# Page keys live under a `pages:` block and NOWHERE else. The 2-space matcher
+# alone read a FLAT pom.yaml — the documented hand-written shape, `username:`
+# with `  css: "#username"` under it — as three page keys called "css", and
+# reported them as orphans on every author call in that package. Anchoring to
+# the block is the difference between a warning and noise.
+_POM_PAGES_BLOCK = re.compile(
+    r"^pages:\s*$(?P<body>(?:\n(?:[ \t].*)?$)*)", re.M)
+_POM_PAGE_RE = re.compile(r"^  ([A-Za-z0-9_]+):", re.M)
+
+
+def _orphan_pom_warnings(app_dir: Path, _cap: int = 4) -> list[str]:
+    """POM page keys no feature in this package pins any more (NOOD_0232).
+
+    A page key is bound to a feature by its `@page:` tag, and the tag is
+    derived from the scenario title — so re-authoring a feature whose title
+    changed leaves any HAND-WRITTEN entry under the old key unreachable. The
+    generated POM rewrites itself and stays consistent; a shared, hand-
+    maintained `pom.yaml` does not, and it fails silently: the locators are
+    still there, still valid, and simply never consulted again.
+
+    Advisory only, and never a blocker — an unreferenced page key is also
+    exactly what a work-in-progress POM looks like. It exists so the breakage
+    is LOUD, which is the whole complaint.
+    """
+    pom_dir = Path(app_dir) / "resources" / "pageobjects"
+    feat_dir = Path(app_dir) / "features"
+    if not pom_dir.is_dir() or not feat_dir.is_dir():
+        return []
+    try:
+        pinned = {t for f in feat_dir.glob("*.feature")
+                  for t in _PAGE_TAG_RE.findall(f.read_text(encoding="utf-8"))}
+        orphans = {}
+        for pom in sorted(pom_dir.glob("*.yaml")):
+            block = _POM_PAGES_BLOCK.search(pom.read_text(encoding="utf-8"))
+            if not block:
+                continue          # a FLAT pom has no page keys to orphan
+            for key in _POM_PAGE_RE.findall(block.group("body")):
+                if key not in pinned:
+                    orphans.setdefault(pom.name, []).append(key)
+    except OSError:
+        return []
+    if not orphans:
+        return []
+    shown = list(orphans.items())[:_cap]
+    return ["POM page key(s) no feature pins any more — their locators are "
+            "still valid and will never be consulted: "
+            + "; ".join(f"{name} → {', '.join(keys)}" for name, keys in shown)
+            + (f" (+{len(orphans) - len(shown)} more file(s))"
+               if len(orphans) > len(shown) else "")
+            + ". A page key comes from the feature's @page: tag, so this is "
+            "usually a feature that was re-authored under a new scenario "
+            "title: re-point the entry, or delete it if it is superseded."]
+
+
 def _app_dir_for(feature_rel: str, workspace: str) -> Path | None:
     """The app package dir a run target points at — the `features/` parent when
     the target is a .feature, or the dir itself when it already holds a
@@ -497,6 +552,31 @@ def _dotenv_quote(v: str) -> str:
     if v and not re.search(r"[\s#'\"\\]", v):
         return v
     return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _preseed_secrets(workspace: str, values: dict) -> None:
+    """Write lifted credentials to the workspace's gitignored `secrets.env`
+    before anything probes (NOOD_0232).
+
+    Never raises and never clobbers: an existing key keeps its value, because
+    a workspace whose secrets were edited by hand outranks a literal somebody
+    left in a prompt. The authoring transaction still writes the package copy,
+    which wins at run time — this exists purely so the PROBE can resolve them.
+    """
+    try:
+        from dotenv import dotenv_values
+        path = Path(workspace) / "secrets.env"
+        have = set(dotenv_values(path)) if path.is_file() else set()
+        new = {k: v for k, v in values.items() if k not in have}
+        if not new:
+            return
+        body = "".join(f"{k}={v}\n" for k, v in new.items())
+        old = path.read_text(encoding="utf-8") if path.is_file() else ""
+        path.write_text(
+            old + ("" if not old or old.endswith("\n") else "\n") + body,
+            encoding="utf-8")
+    except OSError:
+        pass          # the transaction's own package copy is the real write
 
 
 def _validate_secret_values(values: dict) -> tuple[dict, str | None]:
@@ -809,7 +889,7 @@ def _slug(text: str, fallback: str) -> str:
         or fallback
 
 
-def author_test(*, prompt: str | None = None,
+def _author_test_door(*, prompt: str | None = None,
                 app_name: str | None = None, base_url: str | None = None,
                 feature_path: str | None = None,
                 goal: dict | None = None,
@@ -841,7 +921,14 @@ def author_test(*, prompt: str | None = None,
     shipping a test that quietly proves less than was asked.
     `evidence_requests=[{"step": 2}, {"step": 4, "skip": true}]` is the
     explicit form for a caller that already knows the position."""
+    # NOOD_0232 — both clocks, for the benchmark ledger at the end of this
+    # function: wall time to order attempts across a multi-turn session, and
+    # monotonic to measure one attempt's duration without a clock adjustment
+    # turning it negative.
     expansion, model_calls, discovery = None, 0, None
+    # NOOD_0232 — credentials lifted out of whichever door was used,
+    # scoped and wired in ONE place below so the two doors cannot drift.
+    pending_secrets, lift_notes = {}, []
     if prompt is not None:
         if goal is not None or feature_content is not None:
             return {"ok": False, "error":
@@ -917,6 +1004,13 @@ def author_test(*, prompt: str | None = None,
         base_url = base_url or exp["base_url"]
         app_name = app_name or exp["app_name"]
         feature_path = feature_path or exp["feature_path"]
+        # NOOD_0232 — credentials the compiler lifted out of the prompt. They
+        # go straight to the write-only secrets path (gitignored
+        # <app>_secrets.env) and are required by key, so the compiled test
+        # references {env:KEY}. An explicit secret_values from the caller wins:
+        # they know their own vault key names, and this is a fallback for the
+        # values a user typed into a sentence.
+        pending_secrets = exp.get("secrets") or {}
         expansion = {"goal": goal, "assumptions": exp["assumptions"],
                      "translation_mode": exp.get("translation_mode"),
                      "coverage": exp.get("coverage") or [],
@@ -924,6 +1018,15 @@ def author_test(*, prompt: str | None = None,
                      "unresolved": []}
         if discovery is not None and base_url:
             expansion["discovered_base_url"] = base_url
+    # NOOD_0232 — the goal door gets the SAME lift as the prompt door. It did
+    # not, so the identical value in the identical field landed in a COMMITTED
+    # .feature depending only on which door the caller used, and the goal door
+    # warned about nothing. A caller who already wired {env:}/{var:} is
+    # untouched; only a bare literal moves.
+    if prompt is None and isinstance(goal, dict) and goal.get("actions"):
+        from noodle.repl import prompt_expander as _pe
+        pending_secrets, lift_notes = _pe.lift_credentials(goal["actions"])
+
     # NOOD_0201 — goal mode with no base_url: a pure-API goal has a
     # discoverable host (the dev-loop app on loopback). One unambiguous
     # candidate fills base_url — and, when absent, app_name from the spec's
@@ -979,6 +1082,34 @@ def author_test(*, prompt: str | None = None,
             feature_content, brief, evidence_requests)
         if err:
             return err
+    if pending_secrets:
+        # APP-SCOPED keys, the same convention `base_url_key` uses
+        # (APP_127_0_0_1_3333). A bare PASSWORD collides across app packages:
+        # hooks._load_package_env loads each package's secrets with
+        # override=True but MEMOIZES per directory, so two apps' features
+        # interleaved in one process leave the second app's PASSWORD in place
+        # for the first. _norm_app, not raw upper(): app_name="My Shop" would
+        # otherwise mint "MY SHOP_PASSWORD", which _validate_secret_values
+        # rejects — an invalid-key error for a key the caller never supplied.
+        pre = f"{_norm_app(app_name).upper()}_" if app_name else ""
+        scoped = {f"{pre}{k}": v for k, v in pending_secrets.items()}
+        for a in (goal.get("actions") or []) if isinstance(goal, dict) else []:
+            v = a.get("value")
+            if isinstance(v, str) and v.startswith("{env:") \
+                    and v[5:-1] in pending_secrets:
+                a["value"] = f"{{env:{pre}{v[5:-1]}}}"
+        kw["secret_values"] = {**scoped, **(kw.get("secret_values") or {})}
+        kw["required_secret_keys"] = sorted(
+            {*(kw.get("required_secret_keys") or []), *scoped})
+        # ...and land them BEFORE the probe runs. A `probe: {perform: true}`
+        # goal needs these values RESOLVED to walk past a login gate, and the
+        # probe runs inside the same transaction that would otherwise be
+        # writing them — which then rolls back on the block it just caused.
+        # Lifting without this turned a working goal into a blocked one.
+        # Credentials are workspace SETUP, the same as they are for a human,
+        # who fills in secrets.env before writing the first test; the package
+        # copy the transaction writes still wins at run time.
+        _preseed_secrets(kw.get("workspace", "."), scoped)
     result = _author_test_impl(app_name=app_name, base_url=base_url,
                                feature_path=feature_path, goal=goal,
                                feature_content=feature_content, **kw)
@@ -1003,10 +1134,43 @@ def author_test(*, prompt: str | None = None,
     if discovery is not None and isinstance(result, dict) and base_url:
         # provenance: this URL was discovered, not user-supplied
         result["discovered_base_url"] = base_url
+    # The goal door has no prompt_expansion to carry them, and a value that
+    # silently moved to another file is exactly what has to be said out loud.
+    if lift_notes and prompt is None and isinstance(result, dict):
+        result.setdefault("warnings", []).extend(lift_notes)
     if expansion and isinstance(result, dict):
         result["prompt_expansion"] = expansion
         if result.get("author") or result.get("blocking") is not None:
             result["planner"] = _planner_verdict(result, model_calls)
+    # NOOD_0232 — one ledger line per attempt while a benchmark session is
+    # open. Here, at the PUBLIC author door, because that is the one every
+    # agent goes through (MCP tool, CLI --json, REPL) — hooking a door lower
+    # down would measure only whichever one this session happened to pick.
+    # A no-op with no session file, and it never raises.
+    return result
+
+
+
+def author_test(**kw) -> dict:
+    """The public authoring door (see _author_test_door for the contract).
+
+    NOOD_0232 — a thin wrapper for ONE reason: the benchmark ledger has to see
+    every attempt, and the implementation returns early from four places — a
+    refused expansion, an unusable mode combination, a missing app/base_url, a
+    blocked contract. Recording at the bottom of the implementation therefore
+    logged only the attempts that got FAR ENOUGH, so a spec the engine refused
+    twice and then took reported `attempts: 1, corrections: 0` and started its
+    clock at the successful lap. The refusals are the measurement; they are
+    what the caller paid a round trip for.
+    """
+    started, t0 = time.time(), time.monotonic()
+    result = _author_test_door(**kw)
+    if isinstance(result, dict):
+        from noodle import benchmark as _bench
+        _bench.record(kw.get("workspace", "."),
+                      feature_path=kw.get("feature_path"),
+                      started=started, seconds=time.monotonic() - t0,
+                      result=result)
     return result
 
 
@@ -1538,7 +1702,18 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         if not browserless:
             probe_result, cache_hit = _cached_probe(
                 workspace, probe_urls, act_on, p_args, str(feat_dest),
-                lambda: probe_page(probe_urls, act_on=act_on, **p_args))
+                # NOOD_0232 — `workspace=`, which this call never passed. The
+                # probe resolves `{env:}` in its do-actions from the
+                # WORKSPACE's env files, so without it a goal carrying
+                # {env:USER}/{env:PASSWORD} resolved against the current
+                # DIRECTORY and refused with "set in the workspace env files
+                # first" — naming files it had never looked at. Unreachable
+                # from the CLI standing in the workspace, and unavoidable for
+                # every agent, which always passes `workspace=` explicitly.
+                # That made a credentialed login goal unauthorable through the
+                # MCP door, which is the door the product ships on.
+                lambda: probe_page(probe_urls, act_on=act_on,
+                                   workspace=workspace, **p_args))
             # NOOD_0227 (E1) — fold what this probe SAW into the app's
             # persistent page graph (fresh evidence only: a cache hit's
             # pages were recorded when they were actually looked at).
@@ -1887,6 +2062,7 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     # nothing said the second one was re-treading the first. Advisory: two
     # features CAN legitimately share a flow.
     warnings += _overlap_warnings(content, feat_dest, app_dir)
+    warnings += _orphan_pom_warnings(app_dir)
     # NOOD_0199 — a check the engine cut down to its probe-proven substring is
     # a weaker assertion than the one asked for, so it is stated, never silent.
     for nar in ((goal_ev or {}).get("narrowed") or []):

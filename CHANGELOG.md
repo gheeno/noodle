@@ -4,6 +4,222 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a46] — 2026-08-04
+
+**NOOD_0232** — feature: the benchmark asks for a test the way people ask
+for one, and says what that cost. `noodle benchmark` is a second axis beside
+the PR gate: it holds the APP constant — the repo's own bundled BusterBlock
+site, behind its login gate — and varies only how the request is phrased.
+
+**Why the gate could not answer this.** Every one of its cases is a numbered
+imperative list, so the shape of the request is pinned at exactly one value
+and never measured. A build that generates perfect tests from perfectly
+shaped prompts scores PASS whatever it does with a paragraph, a one-liner or
+a half-specified ticket — which is the gap every "it worked for you and not
+for me" report falls into.
+
+**Five specs, and they live in a document.** `docs/benchmark-specs.md` holds
+them in the exact wording the benchmark sends: **B1** a hard-wrapped
+paragraph, **B2** a numbered list (the control), **B3** a single sentence,
+**B4** a short spec with ambiguous steps, **B5** a spec whose assertion is
+deliberately WRONG. The engine parses the fenced blocks out of that file at
+run time, so the block a human pastes into a session — or an MCP client
+sends as `prompt` — is byte-for-byte the one measured. A benchmark whose
+prompts are a Python list has two copies of every prompt the moment it is
+documented, and the copy that drifts is always the one a human pasted from.
+
+**B5 is the one no other case can replace.** Every other spec is written to
+succeed, so none of them can catch an engine that reaches green by dropping
+an assertion it could not prove — and a suite of perfect prompts would
+report such a build as healthy. `Casablanca` is not in the catalogue and
+searching for `Halloween` cannot put it there: the spec must author, run
+**red**, and produce a diagnosis. A green there is scored as the headline
+regression, ahead of everything else in the table.
+
+**What it measures, per spec:** development time (prompt in, feature
+written — the generated test's own run time excluded), run time, token cost,
+**corrections**, and whether the feature passed at the end. Corrections are
+counted and *named*: a reworded control name, an inserted prerequisite
+click, a dropped or rewritten check, a self-healed locator, a retried-then-
+green scenario. A spec that goes green after four repairs is not the same
+product as one that went green first time, and both end `passed`.
+
+**Two costs, kept apart.** `TOKENS` is what the engine hands back to the
+caller — collapsed and bounded exactly as an agent door does it, so it is
+the number an agent is billed for and is fully under the engine's control;
+it gets the ceiling (the engine's own 8 KB door budget, in tokens), and only
+on a green spec — a red run's payload carries the RCA the caller needs, and
+charging it for that would push the fix toward returning less about
+failures. LLM spend is reported and never scored: it moves with the model.
+
+**One workspace, five features, one report.** `noodle init` into a
+build-stamped `regression_runs/<stamp>_<build>_<sha>/`, every spec authored
+into one app package under its own feature file, run once each, and ONE
+served Allure report over all of them — verified against the engine's own
+`report_scope`, not assumed.
+
+**`expect`, so it is not red forever.** Each spec declares `pass`, `fail` or
+`blocked` in the document. A shape the deterministic compiler cannot take
+today is recorded (⛔) with its measured rejection and the rewrites the
+engine offered, not scored; a blocked spec that starts working is announced
+with a note to promote it. A gate that is red on its own backlog is a gate
+nobody reads.
+
+**Measured on 1.0.0a46, `NOODLE_MODEL` unset — VERDICT PASS, 1 passed, 1
+failed as intended, 3 blocked.** `steps` 2.6s develop / 11s run / 0
+corrections / 814 tokens, green and verified. `expected_fail` 2.5s / 29s,
+red with its diagnosis, as designed. `paragraph`, `one_liner` and
+`ambiguous` are blocked at the deterministic compiler with "prompt step(s)
+not understood" — that is the build's honest status and the run's actionable
+output, printed with every rejected clause and every suggested rewrite.
+
+### Action required
+
+**A login test regenerated on this build depends on a gitignored file.** The
+credential lift below moves the literal out of the `.feature` and into
+`resources/<app>_secrets.env`, which `noodle init` gitignores. Re-author an
+existing login test, commit the feature, and CI fails with `credential(s)
+still unset` where it used to pass. Set the keys in your pipeline's secret
+store — the run names them — or keep the old feature.
+
+**Generated feature FILENAMES and `@page:` tags move.** Scenario titles now
+carry the assertion, so a re-authored test lands in a new file under a new
+page key; the old file stays on disk and keeps running. Generated POMs
+rewrite themselves — a hand-written shared `pom.yaml` keyed on the old page
+name goes unreferenced, and authoring now warns when that happens.
+
+**`noodle feature-regression` is now `noodle benchmark --gate`.** No alias:
+the old command exits 2. Update any script or git hook that calls it.
+
+### Added
+
+**`noodle benchmark --session` — the agent-driven run, which is the workflow
+the product ships in.** A user pastes a spec into their Claude/Copilot
+session and the agent translates whatever prose arrived into Noodle calls.
+There is always an agent in front of the engine, so "the deterministic
+grammar could not parse this phrasing" is not a product outcome — it is the
+engine's floor with nobody driving. What matters is how much WORK the loop
+took, and that is what the session measures.
+
+`--session` starts BusterBlock, scaffolds the build-stamped workspace, seeds
+its gitignored `secrets.env`, and prints a runbook the session executes: send
+each spec verbatim first, translate and re-author when the engine refuses,
+one spec at a time. `--table` scores it and stops the app.
+
+**The numbers stay the engine's.** `author_test` appends one line per attempt
+to `.noodle/benchmark_ledger.jsonl` while a session is open, so the table is
+built from what the engine recorded — including the gaps *between* attempts,
+which are the agent's own turnaround and the honest cost of having it in the
+loop. An agent tallying its own benchmark is the failure NOOD_0190 removed
+from the gate. Measured on the first session run: five specs, five features,
+one report, 4 passed and 1 failed as intended, **0 blocked**.
+
+`expect: blocked` applies to the headless run only: a session has an
+interpreter, so every spec must produce a test and one that does not is the
+agent failing, not an engine gap to celebrate closing.
+
+**`log in as <user> with password <pass>` is a verb.** The benchmark's first
+run blocked three of five specs, and splitting each into the clauses the
+compiler produced found ONE cause common to all three: the grammar had no
+login verb. B3 refused on exactly its `log in` clause while `search movies for
+The Shining` and `verify The Shining is shown` — in the same sentence — both
+parsed; spelled out as enter/enter/click, the identical sentence compiled. So
+neither prose nor one-liners were ever the blocker, which is what the previous
+reading of that refusal ("clause splitting is line-based") claimed: the same
+paragraph on ONE line blocks identically.
+
+It lowers to the three surface steps it has always meant — enter the username,
+enter the password, click login — and every one of those control names is
+echoed as an assumption, because the prompt named none of them. Both
+credentials are required: a login missing one is refused with the exact
+rewrite, never completed by guessing, since guessing would author a test
+proving the app accepts a blank password. The verb sits LAST in the table so
+every explicit verb wins first (`click "login"` is a click, `enter X in the
+"login" field` is an enter, `verify you are logged in` is a verify), and prose
+that merely mentions a login never becomes login actions.
+
+The affordance contract (a translation may not invent a control label) still
+stands: the exemption is only these three canonical names, and only when the
+prompt actually asked to log in. Anything else is refused as before, and the
+three still have to survive the probe — an app whose field is "Email" blocks
+with that name in `blocking`, exactly as any unmatched target does.
+
+**`search <box> for <term>`** — "search movies for The Shining", the control
+named before the term, which is how a human says it when the box has a label.
+The generic rule read the whole tail as the term and hunted for a search box
+called "movies for The Shining". Bounded to a short leading noun, and the noun
+is reported rather than silently dropped.
+
+### Fixed
+
+**A login clause swallowed the flow's only URL.** `On <url> log in as …`
+refused with "no URL in the prompt and no base_url given" — for a prompt that
+contained one. Every other verb that can absorb a URL hands it back as
+navigation; this one now does too, including on the refusal path, so a
+coachable login error does not also cost the prompt its URL.
+
+**A credential typed into a prompt landed in a committed `.feature`.** The
+benchmark's own output showed it: a spec authored verbatim from `Enter
+"Popcorn1!" in the "password" field` shipped that password into the test. The
+engine has had the right mechanism all along — `secret_values` → gitignored
+`<app>_secrets.env` → `{env:KEY}`, which the goal path uses — but the prompt
+path, the one a pasted spec goes through, could not reach it. The compiler now
+lifts credential values out of the goal before anything is written, hands them
+to the write-only secrets path, and leaves `{env:PASSWORD}` in the Gherkin;
+the lift is announced as an assumption naming the key, never the value.
+
+Two tiers, because one was measurably wrong: a `password`/`pin`/`token` field
+is a secret anywhere, but an `email` or `username` field is only a credential
+when a secret field appears in the SAME flow. Without that split, a checkout
+form's `Email: a@b.co` beside Full name and Postcode was pushed into a secrets
+file, leaving the test asking for a value nobody set.
+
+**The benchmark leaked one itself.** A blocked spec is reported with the
+clauses the compiler rejected, quoted verbatim, so a credential inside a spec
+rode into `benchmark_results.json`, both verdict files, and the `verdict.html`
+that gets served. Every artifact is masked at the write, by exact value — the
+benchmark knows which values it seeded, so it never guesses which token in a
+sentence was the secret.
+
+**The authoring probe never passed its workspace.** `{env:}` in a goal's
+actions resolves from the workspace's env files, so without it a goal
+carrying `{env:USER}`/`{env:PASSWORD}` resolved against the current
+DIRECTORY and refused with "set in the workspace env files first" — naming
+files it had never looked at. Unreachable from a CLI standing in its own
+workspace, and unavoidable for every agent, which always passes `workspace=`
+explicitly: a credentialed login goal was unauthorable through the MCP door,
+which is the door the product ships on.
+
+**A search behind a login gate never reached its box.** The probe runs the
+do-chain AFTER the search (NOOD_0168) because there the chain is the steps
+that *follow* a search. Behind a gate the chain is how you reach the box at
+all, so the search hunted the login page and refused with "no search box
+found" on a site that plainly has one. The rescue is evidence-driven — it
+fires only when the search actually failed and there is an unrun chain — so
+the NOOD_0168 ordering is untouched on every flow that works today.
+
+**Two different tests could not both appear in one report.** The prompt
+compiler built a scenario title out of the ACTION verbs only: a plain
+`see` check was the one check kind that never reached it, so
+`verify Jaws` and `verify Casablanca` over the same login-and-search flow
+compiled to the same `Feature:` name, the same Allure `historyId`, and the
+second EVICTED the first from the accumulating results — a served report
+holding one of two tests, silently. `see`/`not_see` now reach the title, and
+the 80-character truncation trims ACTIONS rather than checks, because what
+identifies a test is what it asserts. Action *values* are deliberately still
+excluded: a title carrying `enter 'Popcorn1!'` would print a credential into
+every Allure report.
+
+### Changed
+
+**`noodle feature-regression` is now `noodle benchmark --gate`.** One word
+for the whole surface: `noodle benchmark` runs the spec shapes,
+`noodle benchmark --gate` runs the PR gate (`--score` and `--init` select it
+too). `docs/feature-regression.md` is now `docs/benchmark.md`; CLAUDE.md,
+CONTRIBUTING.md, README.md, AGENTS.md and the agent skill cards follow.
+CHANGELOG entries before this one keep the old name — they record what
+actually shipped under it.
+
 ## [1.0.0a44] — 2026-08-03
 
 **NOOD_0230** — feature: the search→pick→add flow tells the truth and opens

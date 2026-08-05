@@ -101,7 +101,7 @@ def test_a_responsive_duplicate_pair_is_one_control_not_a_grid():
     so `matches: 2` on a header link is ONE control at two breakpoints — both
     instances go to the same place. NOOD_0168 already settled this rule for
     the mutation path; the gate above shares its ceiling. Caught live: without
-    it the feature-regression benchmark's tc2 went from green to blocked.
+    it the benchmark's tc2 went from green to blocked.
     """
     result, _ = _grid()
     result["pages"][0]["controls"] = [_ctrl("Create account", "#pt-createaccount",

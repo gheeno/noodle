@@ -15,7 +15,7 @@ slices, pinned here:
            assertion, proving nothing at ~20s a lap. The explicit click is
            the opener now. The settle survives per NOOD_0218: its removal
            was measured RED (it protects the in-flight mutation request).
-  F0       the flow joins `noodle feature-regression` on the engine's own
+  F0       the flow joins `noodle benchmark --gate` on the engine's own
            fixture grid, and a failed attempt's evidence can be preserved
            (NOODLE_REG_KEEP_ATTEMPTS=1) instead of overwritten
   Plan 1   duplicate-feature hygiene: `noodle remove` (file + POM sidecar +

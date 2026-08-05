@@ -309,9 +309,9 @@ curl -X POST $BASE/api/tools/serve_report -H "x-api-key: $KEY" \
 **Not exposed here: `verdict.html`.** That's the engine-wide regression
 benchmark (NOOD_0185) — it answers *"did this **Noodle** build regress?"*, not
 *"did my test pass"*, and it scaffolds its own workspace to do it. It stays a
-CLI command in the engine clone, `noodle feature-regression`, where whoever
+CLI command in the engine clone, `noodle benchmark --gate`, where whoever
 upgrades Noodle runs it. Your per-run verdict is `failed`/`verified` in the run
-payload. See [feature-regression.md](feature-regression.md).
+payload. See [benchmark.md](benchmark.md).
 
 ---
 

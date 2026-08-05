@@ -1,6 +1,6 @@
 """NOOD_0227 (SC-3) — the benchmark's self-contained multi-page shop.
 
-The 65.9-AIC blowout shipped because nothing in `noodle feature-regression`
+The 65.9-AIC blowout shipped because nothing in `noodle benchmark --gate`
 covered the single most common shape in web test automation: a multi-page
 flow with a per-card row-scoped click and a same-URL DOM-mutation panel.
 The live-site cases can't host it — retail sites bot-gate, and the benchmark

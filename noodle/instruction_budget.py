@@ -107,7 +107,7 @@ Ceiling accounting (moved verbatim from the retired test asserts):
   rationale lives in docs/cli-reference.md. 5321 B used at the bump.
 - NOOD_0190: copilot skill card 5888 → 6144 and copilot digest 7168 → 7424
   (+256 each; the Claude card absorbed the same line inside its cap). All
-  three learn that `noodle feature-regression` RUNS the benchmark in one
+  three learn that `noodle benchmark --gate` RUNS the benchmark in one
   call. Same NOOD_0179 rule at command scale: a command an agent never
   learns exists is a command it improvises around, and that improvisation
   — reading docs, guessing flags, hand-writing results.json, digging

@@ -154,14 +154,14 @@ Branches follow the pattern `feature/nood_XXXX` or `patch/nood_XXXX` — `featur
 
 ---
 
-## Feature-regression gate — before every engine-branch PR
+## Benchmark gate — before every engine-branch PR
 
 After the branch's single squashed commit is formed (which, given the
 squash rule, is also "after every commit") and **before opening or
 updating a PR**, run:
 
 ```bash
-noodle feature-regression
+noodle benchmark --gate
 ```
 
 Exit 0 (PASS) is required; exit 1 (REGRESSED or stale install) blocks the
@@ -170,7 +170,7 @@ costs zero LLM tokens, and CI deliberately does not run it (it drives a
 live site) — so this local run is the only gate. Applies to branches that
 change engine code (`noodle/`, `pyproject.toml`); docs-only and
 workspace-only branches are exempt. Details:
-[docs/feature-regression.md](docs/feature-regression.md).
+[docs/benchmark.md](docs/benchmark.md).
 
 ## General workflow rules
 
