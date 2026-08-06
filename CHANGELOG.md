@@ -4,6 +4,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a47] — 2026-08-06
+
+**NOOD_0233** — feature: walk the login gate before looking behind it.
+Authoring "log in, then search" against a gated app blocked at authoring
+time with `search: no search box found` — the app plainly has a search box;
+it is behind the login the message never mentioned. The probe only looked
+at the starting page, and the NOOD_0232 benchmark measured the cost: 3 of 5
+request shapes needed the same human rescue (spell the login out, add
+`probe: {perform: true}`).
+
+**The gate-only chain.** A goal whose actions open with a login prelude —
+credential-shaped enters plus one submit click, detected by SHAPE via the
+compiler's own `secret_key_for` rule, never by the word "login" — now hands
+that prelude to the probe as `gate_do`, a rescue-only channel. The probe
+types it solely when its search/typeahead phase has already failed AND the
+page visibly shows a password field, walks to the gate, stops, and looks
+again. Nothing past the submit click is ever walked (the NOOD_0156
+author-time-mutation guardrail), signup-shaped submits are refused outright
+(their click CREATES an account), and `probe: {perform: true}` keeps its
+existing whole-tail meaning. Because the chain never runs in the NOOD_0168
+post-search position, no goal that authors today can newly fail.
+
+**The walk is transport, not evidence.** Gate-walk states are excluded from
+every proof scope (`_page_blocks` phase `gate`), so an `after: start` check
+can never be "proven" by a post-login page and post-gate checks stay
+runtime-asserted — the NOOD_0195 lesson. The payload says the probe logged
+in first (`search_after_gate` → warnings).
+
+**The wall is named.** "no search box found" on a page that visibly shows a
+password field now says so; an UNDECLARED wall (a flow that never logs in)
+blocks with the wall named, the login-prelude repair spelled out, and —
+names only, never values, never os.environ — whether workspace credentials
+that would walk it already exist. Credentials are never guessed and an
+undeclared wall is never auto-walked: the authored feature would carry no
+login steps, so its run could never reach the state its evidence came from.
+
+**Wrong credentials fail bounded and observed.** The walk types the goal's
+credentials at most twice (`_GATE_ATTEMPTS` — more courts a lockout; two
+exists because SPA login forms swallow the first submit while hydrating).
+After each attempt that leaves the phase walled, the probe reads the page's
+OWN rejection wording (alert/status regions, error-classed elements,
+error-shaped headings) and the blocker carries it: *"the login walk ran 2×
+with the goal's own credentials and the page rejected it: 'Invalid
+credentials' — fix the credential values, not the search."* A chain that
+fails structurally (control not found) never retries — do_failed already
+names the exact step, and an identical chain re-sent is a guessed fix.
+
 ## [1.0.0a46] — 2026-08-04
 
 **NOOD_0232** — feature: the benchmark asks for a test the way people ask

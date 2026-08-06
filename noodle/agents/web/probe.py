@@ -1635,6 +1635,144 @@ def _results_block(page, pg: dict, term: str) -> dict:
     return res
 
 
+# NOOD_0233 — is the page a login wall? Evidence = a VISIBLE password input;
+# the summarized controls deliberately drop input `type`, so this asks the
+# live DOM. Field names come from the password field's own form so the
+# blocker can quote the wall in the app's words.
+_LOGIN_WALL_JS = """
+() => {
+  const vis = el => { const r = el.getBoundingClientRect();
+    return !!(r.width || r.height) &&
+           getComputedStyle(el).visibility !== 'hidden'; };
+  const pw = [...document.querySelectorAll('input[type="password"]')]
+    .filter(vis);
+  if (!pw.length) return null;
+  const name = el => (el.getAttribute('aria-label') ||
+    el.getAttribute('placeholder') || el.getAttribute('name') ||
+    (el.labels && el.labels[0] ? el.labels[0].innerText.trim() : '') ||
+    el.id || el.type || '').trim().slice(0, 40);
+  const form = pw[0].closest('form') || document;
+  const fields = [...form.querySelectorAll(
+      'input[type="text"], input[type="email"], input:not([type]), ' +
+      'input[type="password"]')].filter(vis).map(name)
+      .filter(Boolean).slice(0, 4);
+  const sub = form.querySelector(
+      'button[type="submit"], input[type="submit"], button');
+  return { fields,
+           submit: sub ? (sub.innerText || sub.value || '')
+                           .trim().slice(0, 40) : '' };
+}"""
+
+
+def _login_wall(page) -> dict | None:
+    """{fields, submit} when the page visibly shows a login form, else None.
+    Best-effort — a wall we cannot read is reported as the plain old
+    "no search box found", never an error."""
+    try:
+        return page.evaluate(_LOGIN_WALL_JS)
+    except Exception:
+        return None
+
+
+def _no_search_box(pg: dict, page, flag: str, term: str, label: str) -> None:
+    """NOOD_0233 — name the wall when there is one. The bare "no search box
+    found" on a gated app cost two of the three NOOD_0232 B1 attempts: it
+    sent the reader hunting a search-box problem on a site that plainly has
+    a search box — behind the login the message never mentioned."""
+    wall = _login_wall(page)
+    if wall:
+        pg["login_wall"] = wall
+        pg[flag] = (f'{label} "{term}": no search box found — the page '
+                    'shows a login form; the search box is behind it')
+    else:
+        pg[flag] = f'{label} "{term}": no search box found'
+
+
+def _walk_gate(page, pg: dict, gate_actions: list, timeout_ms: int):
+    """NOOD_0233 — run the goal's own login prelude (and NOTHING past it)
+    through the `--do` executor, tagging every state it drove through as
+    `gate_walk` so evidence() can keep the walk out of every proof scope
+    (transport, not evidence). Returns (page, ok)."""
+    n0 = len(pg.get("revealed") or [])
+    page = _do(page, pg, gate_actions, timeout_ms)
+    for rev in (pg.get("revealed") or [])[n0:]:
+        rev["gate_walk"] = True
+    return page, not pg.get("do_failed")
+
+
+# NOOD_0233 — how many times the gate walk may type the goal's credentials.
+# Bounded at 2: these are real credentials on a real app, so more attempts
+# court a lockout — and past the second, an identical retry only repeats the
+# page's answer. Two exists at all because SPA login forms swallow the first
+# submit while hydrating; a second attempt tells that apart from rejection.
+_GATE_ATTEMPTS = 2
+
+# NOOD_0233 — the page's OWN words for a refused login: an alert/status
+# region, an error-classed element, or an error-shaped heading (a submit that
+# lands on a server error page has no alert to read). First visible match,
+# bounded — this rides a blocker, not a page dump.
+_LOGIN_REJECTION_JS = """
+() => {
+  const vis = el => { const r = el.getBoundingClientRect();
+    return !!(r.width || r.height) &&
+           getComputedStyle(el).visibility !== 'hidden'; };
+  const sel = '[role="alert"], [role="status"], [aria-live="assertive"], ' +
+    '[aria-live="polite"], [class*="error" i], [class*="invalid" i], ' +
+    '[class*="danger" i], [class*="fail" i], [id*="error" i]';
+  for (const el of document.querySelectorAll(sel)) {
+    if (!vis(el)) continue;
+    const t = (el.innerText || '').trim();
+    if (t) return t.slice(0, 200);
+  }
+  const h = document.querySelector('h1, h2');
+  const t = h && vis(h) ? (h.innerText || '').trim() : '';
+  return /error|exception|denied|unavailable|forbidden/i.test(t)
+    ? t.slice(0, 200) : null;
+}"""
+
+
+def _login_rejection(page) -> str | None:
+    """The page's rejection wording after a refused login, or None."""
+    try:
+        return page.evaluate(_LOGIN_REJECTION_JS)
+    except Exception:
+        return None
+
+
+def _rescue_through_gate(page, pg: dict, gate_actions: list, timeout_ms: int,
+                         flag: str, again, note_key: str, note_text: str):
+    """NOOD_0233 — walk the login prelude and re-run the failed phase, at
+    most _GATE_ATTEMPTS times.
+
+    Wrong credentials are LET FAIL — but observed: after each attempt that
+    leaves the phase still walled, the page's own rejection wording is read
+    (_login_rejection) onto pg["login_wall"]["rejection"] and the attempt
+    count onto pg["gate_attempts"], so the eventual blocker can say "the
+    page rejected these credentials: <its words>" instead of pointing at a
+    search box or a login form that are both fine. A walk whose CHAIN fails
+    (control not found) never retries — an identical chain against the same
+    page is a guessed fix, and do_failed already names the exact step.
+
+    `flag` is the warning key the phase sets (search_warning /
+    suggest_warning), `again` re-runs the phase on the current page,
+    `note_key`/`note_text` record success in the payload."""
+    for attempt in range(1, _GATE_ATTEMPTS + 1):
+        page, ok = _walk_gate(page, pg, gate_actions, timeout_ms)
+        if not ok:
+            break
+        pg.pop(flag, None)
+        again(page)
+        pg["gate_attempts"] = attempt
+        if not pg.get(flag):
+            pg[note_key] = note_text + (
+                f" ({attempt} attempts — the first submit produced no "
+                "observable login)" if attempt > 1 else "")
+            return page
+        if rej := _login_rejection(page):
+            pg.setdefault("login_wall", {})["rejection"] = rej
+    return page
+
+
 def _search(page, pg: dict, term: str, timeout_ms: int) -> None:
     """NOOD_0117 — perform the site search and summarize the RESULTS page
     before any test is authored: the ambiguous count element, the exact
@@ -1645,7 +1783,7 @@ def _search(page, pg: dict, term: str, timeout_ms: int) -> None:
         box = _open_search_box(page, timeout_ms,
                                [c for b in _blocks(pg) for c in b["controls"]])
         if box is None:
-            pg["search_warning"] = f'--search "{term}": no search box found'
+            _no_search_box(pg, page, "search_warning", term, "--search")
             return
         box.fill(term)
         box.press("Enter")
@@ -2023,7 +2161,7 @@ def _suggest(page, pg: dict, term: str, timeout_ms: int,
         box = _open_search_box(page, timeout_ms,
                                [c for b in _blocks(pg) for c in b["controls"]])
         if box is None:
-            pg["suggest_warning"] = f'--suggest "{term}": no search box found'
+            _no_search_box(pg, page, "suggest_warning", term, "--suggest")
             return
         box.click()
         armed = _arm(page)
@@ -2862,6 +3000,7 @@ def _origin_error(url: str, exc: Exception) -> str:
 def probe(urls: list[str], timeout_ms: int = 15000,
           clicks: list[str] | None = None,
           do: list[str] | None = None,
+          gate_do: list[str] | None = None,
           search: str | None = None, suggest: str | None = None,
           pick: str | None = None, mutate: str | None = None,
           follow: str | None = None, expect: list[str] | None = None,
@@ -2891,7 +3030,10 @@ def probe(urls: list[str], timeout_ms: int = 15000,
     clicks, diffing the page state after every action, so a fill → save →
     new-state flow is one probe session. NOOD_0156 — `mutate` (with
     search+pick) proves the requested mutation path on the picked landed
-    page (_prove_mutation); `act_on="last"` runs the interactive phases
+    page (_prove_mutation); `gate_do` (NOOD_0233) is the goal's login
+    prelude, executed ONLY as a rescue — when a search/typeahead phase
+    failed on a page that visibly shows a password field — and never past
+    its own submit click; `act_on="last"` runs the interactive phases
     (clicks/do/search/pick/suggest/expect/discover) only on the FINAL url —
     the ordered-navigation contract where earlier URLs are setup
     navigation, not action pages."""
@@ -2899,6 +3041,10 @@ def probe(urls: list[str], timeout_ms: int = 15000,
     do_notes: list[str] = []
     try:
         do_actions = parse_do(do, notes=do_notes) if do else None
+        # NOOD_0233 — the goal's login prelude, rescue-only: executed solely
+        # when a search/typeahead phase failed on a page that visibly shows a
+        # password field. Never in the NOOD_0168 post-search position.
+        gate_actions = parse_do(gate_do) if gate_do else None
     except ValueError as e:
         return {"pages": [], "errors": [{"url": ", ".join(urls),
                                          "error": str(e)}]}
@@ -3002,14 +3148,49 @@ def probe(urls: list[str], timeout_ms: int = 15000,
                         for b in list(_blocks(pg)):
                             _auto_open(page, b, seen, seen_head, timeout_ms,
                                        max_reveal_depth, budget)
+                    gate_spent = False
                     if suggest and acting:
                         _suggest(page, pg, suggest, timeout_ms,
                                  follow=follow)
+                        # NOOD_0233 — same wall, same rescue as the search
+                        # phase below: evidence-gated twice over (the
+                        # typeahead actually failed AND the page visibly
+                        # shows a password field), walks the goal's own
+                        # login steps to the gate and stops.
+                        if pg.get("suggest_warning") and gate_actions \
+                                and pg.get("login_wall") and not gate_spent:
+                            gate_spent = True
+                            page = _rescue_through_gate(
+                                page, pg, gate_actions, timeout_ms,
+                                "suggest_warning",
+                                lambda p: _suggest(p, pg, suggest,
+                                                   timeout_ms, follow=follow),
+                                "suggest_after_gate",
+                                "no search box on the landing page — walked "
+                                "the goal's own login steps, then typed the "
+                                "suggestion")
                     elif follow and acting:
                         pg["suggest_warning"] = (
                             "--follow ignored: it requires --suggest")
                     if search and acting:
                         _search(page, pg, search, timeout_ms)
+                        # NOOD_0233 — the goal's OWN login prelude as the
+                        # rescue, no probe.perform needed: fires only when
+                        # the search actually failed and the page visibly
+                        # shows a password field, walks enter/enter/click to
+                        # the gate — never one action past it — and looks
+                        # again, at most _GATE_ATTEMPTS times, reading the
+                        # page's own rejection wording after each refusal.
+                        if pg.get("search_warning") and gate_actions \
+                                and pg.get("login_wall") and not gate_spent:
+                            gate_spent = True
+                            page = _rescue_through_gate(
+                                page, pg, gate_actions, timeout_ms,
+                                "search_warning",
+                                lambda p: _search(p, pg, search, timeout_ms),
+                                "search_after_gate",
+                                "no search box on the landing page — walked "
+                                "the goal's own login steps, then searched")
                         # NOOD_0232 — a GATED app inverts NOOD_0168's ordering
                         # below. There, the do-chain is the steps that follow a
                         # search, so it runs after it. Behind a login gate the

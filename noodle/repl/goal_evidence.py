@@ -168,10 +168,20 @@ def probe_args(goal: dict) -> dict:
               for t in ([c["see"]] if isinstance(c.get("see"), str)
                         else [x for x in (c.get("any_of") or [])
                               if isinstance(x, str)])][:8]
+    # NOOD_0233 — the goal's own login prelude as a RESCUE-ONLY chain: the
+    # probe types it solely when its search/typeahead phase has already
+    # failed AND the page visibly shows a password field (login_wall). It is
+    # never run in the NOOD_0168 post-search position — on an ungated app the
+    # landing search succeeds and the chain is never touched, so no goal that
+    # authors today can newly fail. `perform: true` supersedes: its chain
+    # already walks the whole tail, prelude included, by explicit opt-in.
+    gate_do = (gate_chain(goal) if (search or suggest) and not perform
+               else [])
     return {"search": search, "suggest": suggest, "pick": pick,
             "mutate": mutate, "follow": follow, "expect": expect or None,
             "click": clicks or None,
             "do": do or None,
+            "gate_do": gate_do or None,
             "open_native_controls": any(a["do"] == "select" for a in actions),
             "discover": bool((goal.get("probe") or {}).get("discover")),
             "perform": perform}
@@ -251,6 +261,68 @@ def perform_do(goal: dict) -> list[str]:
         if len(out) >= _PERFORM_CAP:
             break
     return out
+
+
+# NOOD_0233 — a signup-shaped submit CREATES an account: walking it at author
+# time is the NOOD_0156 state-mutation hazard, while a login submit only
+# establishes a session. Negative filter by write-verb, not a positive
+# "login" allowlist — the gate walk must refuse the known account-writing
+# shapes in any wording, and everything else the credential shape admits.
+_SIGNUP_RE = re.compile(
+    r"sign\s?-?\s?up|register|registr|create|join|inscri|cadastr", re.I)
+
+
+def _gate_prefix(actions: list) -> tuple[list, dict] | None:
+    """NOOD_0233 — the goal's login prelude, or None: the run of
+    credential-shaped `enter` actions that OPENS the runtime gate, plus the
+    submit click that follows them.
+
+    Detection is by SHAPE — the same enter/enter/click the prompt door's
+    login verb lowers to — never by the word "login": every enter in the run
+    must be credential-shaped (secret_key_for, the compiler's own two-tier
+    rule), exactly ONE of them a true secret (two password fields is a
+    signup/confirm form, none is not a login), and the submit must not be
+    signup-shaped (_SIGNUP_RE). A prefix that fails any test is a form, not a
+    gate, and is never walked."""
+    from noodle.repl.prompt_expander import secret_key_for
+    acts = [a for a in actions if isinstance(a, dict)]
+    gate = _runtime_gate(acts)
+    if gate is None or acts[gate].get("do") != "enter":
+        return None
+    i, enters = gate, []
+    while i < len(acts) and acts[i].get("do") == "enter" \
+            and isinstance(acts[i].get("target"), str) and acts[i]["target"]:
+        enters.append(acts[i])
+        i += 1
+    if not enters or len(enters) > 3 or i >= len(acts):
+        return None
+    submit = acts[i]
+    if submit.get("do") != "click" or not submit.get("target") \
+            or _SIGNUP_RE.search(str(submit["target"])):
+        return None
+    if any(secret_key_for(a["target"], identity_too=True) is None
+           for a in enters):
+        return None            # a non-credential field: a form, not a gate
+    if sum(1 for a in enters
+           if secret_key_for(a["target"], identity_too=False)) != 1:
+        return None            # no secret = not a login; two = signup/confirm
+    return enters, submit
+
+
+def gate_chain(goal: dict) -> list[str]:
+    """NOOD_0233 — the login prelude as probe do-strings, [] when the goal
+    has none. The chain STOPS at the gate's submit click: nothing past it is
+    ever included, however many actions follow (the NOOD_0156 guardrail — a
+    goal continuing into add_to/place-order must not have its tail walked at
+    author time). Pure detection; probe_args decides when the probe actually
+    receives it (`perform: true` supersedes — its chain walks the whole tail
+    by explicit opt-in)."""
+    pre = _gate_prefix(goal.get("actions") or [])
+    if not pre:
+        return []
+    enters, submit = pre
+    return [f"enter {a.get('value', '')} in {a['target']}" for a in enters] \
+        + [_click_do_string(submit)]
 
 
 def _evidence_gate(actions: list) -> int | None:
@@ -346,6 +418,58 @@ def _reach_label(actions: list, reach: int | None) -> str:
     what = a.get("target") or a.get("destination") or a.get("term") or ""
     do = str(a.get("do") or "")
     return f'{do} "{what}"' if what else do
+
+
+# NOOD_0233 — env-key suffixes that look like login credentials. Matched
+# against KEY NAMES from workspace/app files only (never os.environ — the
+# shell's own USER/USERNAME would read as workspace credentials).
+_CRED_KEY_RE = re.compile(
+    r"(USER(NAME)?|E?MAIL|PASS(WORD|PHRASE|WD)?|PWD)$")
+
+
+def _wall_clause(pg: dict, actions: list, env_keys: list | None) -> str:
+    """NOOD_0233 — the one sentence a blocker needs when the probe hit a
+    login wall the goal never declared: what the wall is, and whether
+    credentials that would walk it already exist in the workspace.
+
+    Empty when there is no wall evidence, or when the goal already carries a
+    login prelude — there the walk itself reports its own failure
+    (do_failed / near-miss blockers name the exact step), and re-coaching
+    "add a login step" over steps that exist would send the repair the wrong
+    way. Credentials are NAMED, never used: walking a wall the user never
+    asked to log into would author a feature with no login steps — a test
+    that cannot reach at run time the very state its evidence came from."""
+    wall = pg.get("login_wall")
+    if not isinstance(wall, dict) or _gate_prefix(actions):
+        return ""
+    fields = ", ".join(str(f) for f in (wall.get("fields") or [])[:4]) \
+        or "a password field"
+    creds = sorted(k for k in (env_keys or [])
+                   if _CRED_KEY_RE.search(str(k).upper()))[:4]
+    hint = (" — workspace credentials that could walk it exist ("
+            + ", ".join(creds) + "; reference as {env:KEY})" if creds
+            else " — no workspace credentials found (pass secret_values)")
+    return (f" — the page is a login wall ({fields}); this flow never logs "
+            "in. Add the login prelude — enter <user>, enter <password>, "
+            'click <submit> — or say `log in as "<user>" with password '
+            '"<pass>"` in a prompt' + hint)
+
+
+def _rejection_clause(pg: dict) -> str:
+    """NOOD_0233 — when the probe walked the login with the goal's own
+    credentials and the page refused, the blocker carries the page's OWN
+    words. Without this the reader is sent at the search box ("no search box
+    found") or at the login steps (the wall) — both fine; the defect is the
+    credential VALUES, and only the page's rejection message says so.
+    Empty unless a rejection was captured (undeclared walls are never
+    walked, so the two clauses cannot both fire)."""
+    wall = pg.get("login_wall")
+    if not isinstance(wall, dict) or not wall.get("rejection"):
+        return ""
+    n = pg.get("gate_attempts") or 1
+    return (f" — the login walk ran {n}× with the goal's own credentials "
+            f'and the page rejected it: "{wall["rejection"]}" — fix the '
+            "credential values, not the search")
 
 
 def _runtime_gate(actions: list) -> int | None:
@@ -734,19 +858,30 @@ def _block_texts(blk: dict) -> list[str]:
 def _page_blocks(pg: dict) -> list[tuple[dict, str, str | None]]:
     """Provenance-tagged blocks of one probed page: (block, phase, trigger).
 
-    phase is 'initial' | 'reveal' | 'discovered' | 'performed' | 'search'. A
-    revealed block the probe reached by AUTOMATIC discovery (auto/discovered)
-    is 'discovered' — its controls are never reachable without an explicit
-    goal click that opens them. An explicitly-clicked reveal keeps phase
-    'reveal' and carries the trigger name so the compiler can require that
-    click first.
+    phase is 'initial' | 'reveal' | 'discovered' | 'performed' | 'gate' |
+    'search'. A revealed block the probe reached by AUTOMATIC discovery
+    (auto/discovered) is 'discovered' — its controls are never reachable
+    without an explicit goal click that opens them. An explicitly-clicked
+    reveal keeps phase 'reveal' and carries the trigger name so the compiler
+    can require that click first.
 
     NOOD_0208 — 'performed' is the state the probe WALKED to by executing the
     goal's own post-gate actions (probe.perform). It carries no trigger: it is
     reachable because those actions are in the test, so requiring a reveal
-    click for it would block the very flow that produced it."""
+    click for it would block the very flow that produced it.
+
+    NOOD_0233 — 'gate' is the state the LOGIN-GATE walk drove through
+    (rescue-only, no probe.perform). Deliberately its own phase so evidence()
+    can exclude it wholesale: the walk exists to carry the browser to the
+    search box, not to widen what may be called probe-proven — an
+    `after: start` check proving against a post-login snapshot would be the
+    NOOD_0195 failure ("a ready: true that checked nothing") wearing a new
+    hat."""
     blocks: list[tuple[dict, str, str | None]] = [(pg, "initial", None)]
     for rev in pg.get("revealed", []):
+        if rev.get("gate_walk"):
+            blocks.append((rev, "gate", None))
+            continue
         if rev.get("performed"):
             blocks.append((rev, "performed", None))
             continue
@@ -1169,12 +1304,16 @@ def _check_scope(check: dict, goal: dict) -> str:
     return "search" if anchor_i >= search_i else "initial"
 
 
-def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
+def evidence(goal: dict, probe_result: dict, pinned=frozenset(),
+             env_keys: list | None = None) -> dict:
     """Match every requested action/check against what the probe proved.
 
     `pinned` — normalized POM keys the caller supplied in pom_content. A
     pinned target has already been disambiguated by hand, so the ambiguity
     gate stands down for it (NOOD_0212).
+    `env_keys` (NOOD_0233) — KEY NAMES declared by the workspace/app env
+    files (never values, never os.environ), so an undeclared login wall can
+    say whether credentials that would walk it already exist.
     Returns {blocking, proven, runtime_asserted, permission_prompts,
     popups_closed, results_summary, controls}. An unproven request BLOCKS — it
     is never dropped or broadened — EXCEPT a check anchored after data the probe
@@ -1231,7 +1370,12 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
             nav_health.append(entry)
     else:
         pg = pages[0]
-    blocks = _page_blocks(pg)
+    # NOOD_0233 — gate-walk states are dropped BEFORE any scope is built:
+    # the login walk is transport, not evidence (see _page_blocks). With the
+    # filter here, every consumer below — controls, scopes, _locate, the
+    # reveal-trigger rules — behaves byte-identically to a probe that never
+    # walked, except that pg["search"] now holds the real results page.
+    blocks = [t for t in _page_blocks(pg) if t[1] != "gate"]
     actions = goal.get("actions") or []
     # NOOD_0227 — `performed` is honest to the CHAIN, not to block presence.
     # Pre-gate reveal clicks now ride the do-chain (probe_args), so a
@@ -1299,6 +1443,11 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
     # explains a chain that never opened must at least ride the warnings.
     for w in pg.get("click_warnings") or []:
         warnings.append(f"reveal {w}")
+    # NOOD_0233 — the probe walked the goal's own login prelude to reach the
+    # search box; say so, or the payload reads as if the landing page had one.
+    for k in ("search_after_gate", "suggest_after_gate"):
+        if pg.get(k):
+            warnings.append(f"probe: {pg[k]}")
     # NOOD_0200 — provenance per proven CHECK: which probe phase's page the
     # match came from (initial / search). Recording it is the structural
     # guard against the end-state false positive: a check whose compiled
@@ -1523,7 +1672,9 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
             continue
         if a["do"] == "search":
             if pg.get("search_warning"):
-                blocking.append(f"search: {pg['search_warning']}")
+                blocking.append(f"search: {pg['search_warning']}"
+                                + _wall_clause(pg, actions, env_keys)
+                                + _rejection_clause(pg))
             elif pg.get("search"):
                 proven["search"] = pg["search"]["term"]
             else:
@@ -1536,7 +1687,9 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset()) -> dict:
             # else substring) is what the compiler emits, so the step clicks
             # the string that actually renders, not the prompt's paraphrase.
             if pg.get("suggest_warning"):
-                blocking.append(f"suggest: {pg['suggest_warning']}")
+                blocking.append(f"suggest: {pg['suggest_warning']}"
+                                + _wall_clause(pg, actions, env_keys)
+                                + _rejection_clause(pg))
                 continue
             sg = pg.get("suggest")
             if not sg:
