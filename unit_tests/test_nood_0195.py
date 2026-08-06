@@ -279,7 +279,10 @@ def test_expect_verdicts_prove_a_title_the_captures_truncate():
             "actions": [{"do": "suggest", "term": "Vaccu",
                          "option": "vaccum cleaner", "id": "sg"}],
             "checks": [{"any_of": [_BISSELL, _HOOVER], "after": "sg"}]}
-    assert G.probe_args(goal)["expect"] == [_BISSELL, _HOOVER]
+    # NOOD_0234 — the flow's own term rides along behind the checks' literals
+    # (a results page renders its rows as plain text the structured capture
+    # does not hold); the literals still lead, which is what this pins.
+    assert G.probe_args(goal)["expect"] == [_BISSELL, _HOOVER, "Vaccu"]
     probe = _probe([])
     probe["pages"][0]["suggest"] = {"term": "Vaccu",
                                     "suggestions": ["vaccum cleaner"]}

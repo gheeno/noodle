@@ -399,6 +399,68 @@ def _harvest_urls(raw: str) -> list[str]:
             _URL_IN_TEXT.findall(raw or "")]
 
 
+# NOOD_0234 — the credentials a brief carries in a HEADER line rather than in
+# a step ("user: reel_ryan / Popcorn1!"). Kept out of _META_LABEL deliberately:
+# "Login: https://site/login" names a page, and folding these labels into the
+# metadata vocabulary would have taken that URL out of the flow. The value
+# decides — a URL-shaped one is still a URL label (_LABELLED_URL below).
+_CRED_LABEL = re.compile(
+    r"^(?P<label>user(?:\s*name)?|login|account|e-?mail|creds?|"
+    r"pass(?:word|phrase|wd)?)\s*[:=]\s*(?P<value>\S.*)$", re.I)
+# The pair separator, one line: "a / b", "a | b", "a, b". A single separator
+# only — a password containing one is ambiguous, and two parts or nothing is
+# the safe reading (see _meta_credentials).
+_CRED_SPLIT = re.compile(r"\s*[/|,]\s*")
+_SECRET_LABEL = re.compile(r"^pass", re.I)
+
+
+def _cred_line(text: str) -> tuple[str, str] | None:
+    """(label, value) when `text` is a brief's labelled credential line, else
+    None. A URL-shaped value is never one: `Login: https://…` is a page."""
+    m = _CRED_LABEL.match((text or "").strip())
+    if not m:
+        return None
+    value = m.group("value").strip()
+    if _URLISH.match(value) or _URL_IN_TEXT.search(value):
+        return None
+    return m.group("label").strip().casefold(), value
+
+
+def _meta_credentials(nodes: list[dict]) -> dict:
+    """NOOD_0234 — {user, password, label} read off the brief's OWN labelled
+    lines, or {}.
+
+    A bare `log in` refuses because guessing credentials is right. Drawing
+    them from a `user:` line three rows up is not guessing — it is the exact
+    wiring the session agent does by hand, and B4 of the benchmark ("a short
+    spec with ambiguous steps") is nothing but that shape. `label` is what
+    the provenance line names: the VALUE never rides an assumption, because
+    assumptions are an emitted surface and one of these two values is a
+    password (NOOD_0228's rule, NOOD_0232's leak).
+    """
+    creds: dict = {}
+    for n in nodes:
+        cl = _cred_line(_BULLET.sub("", n.get("raw", "")).strip())
+        if not cl or n.get("kind") != "metadata":
+            continue
+        label, value = cl
+        if _SECRET_LABEL.match(label):
+            creds.setdefault("password", value)
+            creds.setdefault("label", label)
+            continue
+        parts = [p.strip() for p in _CRED_SPLIT.split(value, maxsplit=1)]
+        parts = [p for p in parts if p]
+        if len(parts) == 2:            # "user: <name> / <password>"
+            creds.setdefault("user", parts[0])
+            creds.setdefault("password", parts[1])
+        elif len(parts) == 1:
+            creds.setdefault("user", parts[0])
+        else:
+            continue
+        creds.setdefault("label", label)
+    return creds
+
+
 # a bracketed template placeholder is punctuation around the value
 _BRACKETED = re.compile(r"^\[\s*(.*?)\s*\]$")
 # NOOD_0199 — ordering words that open a sentence in prose ("After that, …").
@@ -429,6 +491,25 @@ _NARRATION = re.compile(
     r"(?:appears?|shows?(?:\s+up)?|opens?|loads?|lists?|displays?|"
     r"contains?|is\s+(?:shown|displayed))\b",
     re.I)
+# NOOD_0234 — the temporal lead-in: "Once the catalogue loads, search it for
+# Alien". A subordinate clause that says WHEN, followed by the step itself.
+# The verb table is ^-anchored, so the lead-in hid a perfectly parseable
+# search and B1 of the benchmark refused on it. Two shapes, one vocabulary:
+# stripped when a recognizable step follows the comma (_depreamble), and
+# read as narration when the lead-in is the whole clause (_assemble).
+# Bounded by the appearance verb on both ends: what the PAGE does, never
+# what the user does — "After clicking login, search for X" names an action
+# the flow would lose, so it is deliberately not matched and still refuses.
+_APPEARS_VERB = (
+    r"(?:loads?|loaded|appears?|appeared|opens?|opened|renders?|rendered|"
+    r"shows?(?:\s+up)?|shown|displays?|displayed|ready|comes?\s+up|"
+    r"finish(?:es|ed)?\s+loading|is\s+(?:shown|displayed|visible|up))")
+_TEMPORAL_HEAD = (
+    r"^(?:once|after|when|whenever|as\s+soon\s+as|the\s+moment)\s+"
+    r"(?:the\s+|an?\s+)?[\w'-]+(?:\s+[\w'-]+){0,3}?\s+"
+    rf"(?:has\s+|have\s+|is\s+|are\s+)?{_APPEARS_VERB}")
+_TEMPORAL_LEADIN = re.compile(_TEMPORAL_HEAD + r"\s*,\s*", re.I)
+_TEMPORAL_ONLY = re.compile(_TEMPORAL_HEAD + r"\s*$", re.I)
 # NOOD_0199 — sentence boundary: prose prompts are paragraphs, not one step.
 # A capital starts one; so does a lowercase grammar verb, because humans type
 # their steps in lower case ("go to x.com. search for kettles"). Both arms
@@ -865,6 +946,21 @@ def _is_anaphoric(item: str) -> bool:
     return not item or _clean(item).casefold() in _ANAPHORA
 
 
+# NOOD_0234 — the assertion with no subject of its own: "it should be there",
+# three lines after the search that named what "it" is. `add_to` has resolved
+# exactly this back-reference since NOOD_0169 (the `searches` window); `verify`
+# was simply never wired to it, so B4 of the benchmark refused on a clause
+# whose subject the compiler was already tracking. Anchored end to end and
+# limited to the presence tail — a claim that says anything ABOUT the item
+# ("it should cost $3.99") names its own text and is untouched.
+_ANAPHORIC_CLAIM = re.compile(
+    r"^(?:it|that|this|they|them|the\s+(?:item|result|product|entry|listing))"
+    r"\s+(?:should|must|will|shall|ought\s+to)\s+"
+    r"(?:be|appear|show(?:\s+up)?|display|come\s+up|still\s+be)"
+    r"(?:\s+(?:there|shown|visible|present|listed|displayed|"
+    r"on\s+(?:the\s+)?(?:page|screen|list|results?)))?\s*$", re.I)
+
+
 def _normalize_url(u: str) -> str:
     u = u.strip().strip("\"'").rstrip("/")
     return u if "://" in u else f"https://{u}"
@@ -882,7 +978,7 @@ def _depreamble(ln: str) -> str:
     ln = _BULLET.sub("", ln).replace("`", "").strip().rstrip(".;,")
     if m := _BRACKETED.match(ln):
         ln = m.group(1)
-    if _META_LABEL.match(ln):
+    if _META_LABEL.match(ln) or _cred_line(ln):
         return ""                      # brief metadata — handled by the caller
     if m := _URL_LABEL.match(ln):
         value = ln[m.end():].strip()
@@ -912,6 +1008,12 @@ def _depreamble(ln: str) -> str:
     ln = _PAGE_PREAMBLE.sub("", ln)
     if cond := _CONDITIONAL.match(ln):
         ln = f"{cond.group('verb')} {cond.group('thing')}"
+    # NOOD_0234 — the temporal lead-in, dropped only when a real step follows
+    # it. Checked AFTER _CONDITIONAL, whose "when <thing> appears, close it"
+    # shape shares the opening word and owns its whole clause.
+    if m := _TEMPORAL_LEADIN.match(ln):
+        if _recognizable(rest := ln[m.end():].strip()):
+            ln = rest
     ln = _INSTRUMENT.sub("", ln)
     return ln.strip().rstrip(".;,")
 
@@ -1000,6 +1102,51 @@ def _split_compound(text: str) -> list[str]:
         rest = rest[cut.end():]
 
 
+# NOOD_0234 — the width a hard-wrapped line reaches before the column runs
+# out. A line that stops well short of one ended because its author pressed
+# Enter, so it is a step of its own and never a paragraph fragment. 45 sits
+# below every wrap width seen in the wild (64-80) and above the length of an
+# ordinary one-line step.
+_WRAP_MIN = 45
+
+
+def _starts_structure(ln: str) -> bool:
+    """NOOD_0234 — the line OPENS something of its own (a list item, a table
+    row, a labelled field, a header), so it is never the continuation of the
+    prose above it."""
+    s = (ln or "").strip()
+    if not s:
+        return True
+    bare = _BULLET.sub("", s).strip()
+    if s.startswith("|") or _BULLET.match(s) or _TABLE_RULE.match(s):
+        return True
+    if _META_LABEL.match(bare) or _cred_line(bare) or _URL_LABEL.match(bare) \
+            or _GOAL_LABEL.match(bare) or _DIRECTIVE_LABEL.match(bare) \
+            or _BARE_HEADER.match(bare) or _SECTION_HEADER.match(bare):
+        return True
+    m = _LABELLED_URL.match(bare)
+    return bool(m and _URLISH.match(m.group("url"))
+                and not _LABEL_VERB.search(m.group("label")))
+
+
+def _wraps_onto(prev: str, ln: str) -> bool:
+    """NOOD_0234 — `ln` is the flush-left continuation of `prev`.
+
+    Three conditions, and every one of them is load-bearing. `prev` ran OUT
+    of column (long, no sentence-ending punctuation, not a label); `ln` opens
+    no structure; and `ln` carries no grammar verb of its own — that last one
+    is what keeps a brief written one bare step per line ("go to x.com" /
+    "search for shoes") from being glued into a single clause."""
+    p = (prev or "").rstrip()
+    if len(p) < _WRAP_MIN or p[-1] in ".!?:;" or _starts_structure(p):
+        return False
+    s = (ln or "").strip()
+    # bounded before the verb table sees it, for the NOOD_0177 reason: this
+    # runs on RAW lines, ahead of the per-clause cap downstream.
+    return bool(s) and not _starts_structure(ln) \
+        and not _recognizable(s[:_MAX_CLAUSE_LEN])
+
+
 def _join_wrapped(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
     """NOOD_0212 — rejoin a numbered step that wrapped onto the next line.
 
@@ -1015,11 +1162,20 @@ def _join_wrapped(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
     A continuation is INDENTED and starts no list marker of its own. Table
     rows (`| … |`) are excluded: they are already parsed one check per row,
     and folding them into the narration above would lose every assertion.
+
+    NOOD_0234 — the flush-left twin. A paragraph pasted out of a ticket or an
+    email is hard-wrapped at a column width with no indent to mark the
+    continuation, so the same split shredded prose at its wrap points: B1 of
+    the benchmark lost its credentials ("reel_ryan with the password …") and
+    its search term ("for Alien") to verbless fragments that then refused on
+    their own, while the sentences they belonged to kept the verbs and lost
+    the data. `_wraps_onto` decides; every guard it applies is listed there.
     """
     out: list[tuple[int, str]] = []
     for no, ln in lines:
         cont = (out and ln[:1].isspace() and not ln.lstrip().startswith("|")
-                and not _BULLET.match(ln.strip()))
+                and not _BULLET.match(ln.strip())) \
+            or (out and _wraps_onto(out[-1][1], ln))
         if cont:
             out[-1] = (out[-1][0], out[-1][1].rstrip() + " " + ln.strip())
         else:
@@ -1073,7 +1229,7 @@ def _clauses(text: str) -> list[dict]:
         # the split unambiguous. The cap bounds the remaining polynomial.
         ln = ln.strip()[:_MAX_CLAUSE_LEN]
         bare = _BULLET.sub("", ln).strip()
-        if _META_LABEL.match(bare):
+        if _META_LABEL.match(bare) or _cred_line(bare):
             frags.append((line_no, bare))    # kept whole; parsed as metadata
             continue
         # NOOD_0211 — a run directive is decided on the RAW line and dropped
@@ -1271,6 +1427,9 @@ def _parse_clause(c: dict) -> dict:
     if m := _META_LABEL.match(text):   # NOOD_0199 — a brief field, not a step
         node.update(kind="metadata", label=m.group("label").strip().lower())
         return node
+    if cl := _cred_line(text):         # NOOD_0234 — a labelled credential
+        node.update(kind="metadata", label=cl[0])
+        return node
     if _RUN_MODE.search(text):
         node.update(kind="run_mode", mode=_RUN_MODE.search(text).group(0))
         return node
@@ -1279,6 +1438,12 @@ def _parse_clause(c: dict) -> dict:
         return node
     if not any(rx.match(text) for _, rx in _VERBS) and _NARRATION.match(text):
         node["kind"] = "observation"       # NOOD_0199 — scene-setting prose
+        return node
+    if _ANAPHORIC_CLAIM.match(text):
+        # NOOD_0234 — a presence claim whose subject is a back-reference.
+        # `rest` stays empty on purpose: _assemble resolves it against the
+        # flow's own nearest preceding search, or refuses when there is none.
+        node.update(kind="verify", rest="", anaphoric=True)
         return node
     for kind, rx in _VERBS:
         m = rx.match(text)
@@ -1340,6 +1505,16 @@ def _parse_clause(c: dict) -> dict:
                 node.update(kind="click", target=_target_clean(m.group(1)))
         elif kind == "search":
             node["term"] = _quoted_or_whole(m.group(1))
+            # NOOD_0234 — "search IT for Alien": the object is a pronoun for
+            # the page, not the first two words of the term. PRONOUNS ONLY.
+            # A noun subject ("search gifts for mum") keeps its whole tail —
+            # NOOD_0232 tried to strip that here and correctly reverted, and
+            # the box-name rule that CAN tell them apart lives at evidence
+            # time, where the search control's own name is known.
+            if pro := re.match(r"^(?:it|them|this|that|there|the\s+"
+                               r"(?:catalogue|catalog|site|page|list|results?)"
+                               r")\s+for\s+(?P<term>.+)$", node["term"], re.I):
+                node["term"] = _quoted_or_whole(pro.group("term"))
         elif kind == "pick_result":
             item = m.groupdict().get("item")
             node["item"] = _clean(item) if item else None
@@ -1859,6 +2034,12 @@ def expand(text: str, base_url: str | None = None) -> dict:
     # can mean. _run_directive only honours a unit that is nothing but the
     # directive.
     evidence_mode = _run_directive(text)
+    # NOOD_0234 — the brief's own credential header lines, read BEFORE the
+    # loop so a bare `log in` can borrow them whichever side of it they sit
+    # on. Values are used, never echoed: one of them is a password.
+    meta_creds = _meta_credentials(nodes)
+    creds_wanted = bool(meta_creds) and any(x.get("kind") == "login"
+                                            for x in nodes)
 
     def _cover(n, status, node_ids=()):
         coverage.append({"clause": n["clause"], "status": status,
@@ -1922,6 +2103,18 @@ def expand(text: str, base_url: str | None = None) -> dict:
                     and not _has_verb(n["raw"]) and not _URLISH.match(n["raw"])):
                 _cover(n, "metadata")
                 continue
+            # NOOD_0234 — a temporal lead-in standing on its own line ("Once
+            # the catalogue loads") says WHEN, and the step it qualifies is
+            # the next clause. _depreamble already strips it when the step
+            # shares its sentence; alone it is narration, and narration must
+            # never block a flow whose actions all resolved. Echoed, never
+            # silent, and only once a real action exists to be qualified.
+            if actions and _TEMPORAL_ONLY.match(n["raw"].strip().rstrip(".;,")):
+                assumptions.append(
+                    f"step {no} '{n['raw']}': names when the next step runs, "
+                    "not an instruction of its own — ignored here")
+                _cover(n, "metadata")
+                continue
             _refuse(n, "")
             continue
         if n["kind"] == "run_mode":
@@ -1968,6 +2161,22 @@ def expand(text: str, base_url: str | None = None) -> dict:
             # NOOD_0199 — a labelled brief field. Named, never silent, and
             # never a blocker: refusing them made PROMPT_TEMPLATE.md, the
             # thing users paste, unusable at the `--prompt` door.
+            # NOOD_0234 — a labelled credential line is answered WITHOUT
+            # echoing it. Every other metadata assumption quotes its raw
+            # clause; one of these two values is a password, and an
+            # assumption is an emitted surface (NOOD_0228) that rides a
+            # SUCCESSFUL authoring payload. The label is the provenance.
+            if cl := _cred_line(n["raw"]):
+                assumptions.append(
+                    f"step {no} '{cl[0]}: …': "
+                    + ("the login step's credentials — lifted into the app's "
+                       "gitignored secrets file, referenced as {env:…}; the "
+                       "value never enters the .feature, the POM or this "
+                       "payload" if creds_wanted else
+                       "a credential the flow has no login step to spend — "
+                       "ignored here"))
+                _cover(n, "metadata")
+                continue
             note = ("credentials belong in `--spec` secret_values (written to "
                     "the app's gitignored secrets.env), not in a step"
                     if n["label"].startswith("credential")
@@ -2125,6 +2334,23 @@ def expand(text: str, base_url: str | None = None) -> dict:
             # it has always meant. Both halves are required: a login missing
             # either credential cannot be compiled, and guessing one would
             # author a test that proves the app accepts a blank password.
+            # NOOD_0234 — before refusing, look at the brief's OWN labelled
+            # credential lines. Guessing a credential would author a test
+            # that proves the app accepts a blank password; reading one the
+            # author wrote three rows up is not a guess, it is the wiring a
+            # session agent does by hand. Provenance names the LABEL only —
+            # the value is a password and assumptions are an emitted surface.
+            borrowed = [half for half in ("user", "password")
+                        if not n.get(half) and meta_creds.get(half)]
+            for half in borrowed:
+                n[half] = meta_creds[half]
+            if borrowed and n.get("user") and n.get("password"):
+                assumptions.append(
+                    f"step {no} '{n['raw']}': the "
+                    + " and ".join("username" if h == "user" else h
+                                   for h in borrowed)
+                    + f" came from the brief's own '{meta_creds['label']}:' "
+                      "line — no credential was invented")
             if not (n.get("user") and n.get("password")):
                 missing = "password" if n.get("user") else \
                     "username" if n.get("password") else "username and password"
@@ -2278,6 +2504,21 @@ def expand(text: str, base_url: str | None = None) -> dict:
             _cover(n, "action", [pick["id"], add["id"]])
         elif n["kind"] == "verify":
             rest = n["rest"]
+            # NOOD_0234 — "it should be there" / "verify it": the subject is a
+            # back-reference to the nearest EARLIER search, the same window
+            # `add_to` has resolved since NOOD_0169. With nothing before it
+            # there is genuinely nothing to bind, and it still refuses.
+            if n.get("anaphoric") or (rest and _is_anaphoric(rest)):
+                back = [s for j, s in sorted(searches.items()) if j < i]
+                if not back:
+                    _refuse(n, "no earlier step names what 'it' is — put the "
+                               "text to look for in the step, or add a search "
+                               "before it")
+                    continue
+                rest = back[-1]["term"]
+                assumptions.append(
+                    f"step {no} '{n['raw']}': the subject is the term the "
+                    "flow searched for")
             if not rest:
                 _refuse(n, "nothing to verify")
                 continue

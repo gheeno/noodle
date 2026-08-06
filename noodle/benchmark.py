@@ -600,6 +600,13 @@ def _corrections(author: dict, run: dict, result: dict) -> tuple[int, list]:
             ("prerequisite_clicks", author,
              "prerequisite click(s) inserted to reach a hidden control"),
             ("rewritten_checks", author, "check(s) reworded"),
+            # NOOD_0234 — the engine changing WHICH TERM is searched is a
+            # repair on the caller's behalf like any other. It rode a
+            # free-text warning only, so this counter read zero on a run that
+            # had rewritten one.
+            ("narrowed_terms", author,
+             "search term(s) narrowed to what the search box's own name "
+             "licensed"),
             ("dropped_checks", author,
              "check(s) DROPPED — the test proves less than the spec asked"),
             ("healing_events", run, "locator(s) self-healed at run time"),

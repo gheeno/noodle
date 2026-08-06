@@ -1416,6 +1416,48 @@ def _open_search_box(page, timeout_ms: int, controls: list[dict] | None = None):
     return None
 
 
+# NOOD_0234 — the accessible name of the box the search actually landed in.
+# Same precedence the collection JS uses for a control's name, asked of the
+# one element instead of the whole document.
+_BOX_NAME_JS = """el => (el.getAttribute('aria-label') || el.getAttribute(
+  'placeholder') || el.getAttribute('title') || el.getAttribute('name')
+  || el.id || '').trim()"""
+# The words that name a search control rather than anything to search FOR.
+_BOX_FILLER = frozenset("search searches find finder for in the a an by".split())
+_TERM_CONNECTOR = frozenset(["for", "in", "on", "about"])
+
+
+def narrow_search_term(term: str, box_name: str) -> str | None:
+    """NOOD_0234 — the term with the SEARCH BOX'S OWN NAME taken off the
+    front, or None when nothing licenses a cut.
+
+    "search movies for The Shining" parses to the term "movies for The
+    Shining", because parse time cannot tell a box name from term words:
+    NOOD_0232 tried `search <box> for <term>` in the grammar and correctly
+    reverted it — "search gifts for mum" would have lost half its term.
+    Here the box has been FOUND and its accessible name read off the page, so
+    the leading run is not a guess: on a box named "Search movies", the word
+    "movies" is the box, and on a box named "Search", "gifts for mum" is the
+    whole term and this returns None.
+
+    Pure — the whole rule is these few lines, and it is unit-tested without a
+    browser."""
+    words = (term or "").split()
+    box = {w for w in re.findall(r"[\w']+", (box_name or "").casefold())
+           if w not in _BOX_FILLER}
+    if not words or not box:
+        return None
+    i = 0
+    while i < len(words) and words[i].strip(",.:").casefold() in box:
+        i += 1
+    if not i:
+        return None                       # the term names no part of the box
+    if i < len(words) and words[i].casefold() in _TERM_CONNECTOR:
+        i += 1                            # "movies FOR the shining"
+    rest = " ".join(words[i:]).strip()
+    return rest or None                   # never narrow a term away entirely
+
+
 def _diff_snapshot(page, seen: set, seen_head: set) -> dict:
     """Fresh collect, minus everything already probed — summarize()-shaped."""
     raw = page.evaluate(_COLLECT_JS)
@@ -1785,6 +1827,19 @@ def _search(page, pg: dict, term: str, timeout_ms: int) -> None:
         if box is None:
             _no_search_box(pg, page, "search_warning", term, "--search")
             return
+        # NOOD_0234 — the box is found, so its own name is now evidence: a
+        # term that OPENS with it ("movies for The Shining", box "Search
+        # movies") is a phrasing the parser could not disambiguate. Narrow
+        # here, search the narrowed term, and record both — the evidence pass
+        # carries the correction back onto the goal so the compiled feature
+        # searches what the run will find.
+        asked, box_name = term, ""
+        try:
+            box_name = (box.evaluate(_BOX_NAME_JS) or "").strip()
+        except Exception:
+            box_name = ""
+        if box_name and (cut := narrow_search_term(term, box_name)):
+            term = cut
         box.fill(term)
         box.press("Enter")
         _settle(page, timeout_ms)
@@ -1818,6 +1873,9 @@ def _search(page, pg: dict, term: str, timeout_ms: int) -> None:
                 break
             page.wait_for_timeout(500)
         pg["search"] = _results_block(page, pg, term)
+        if term != asked:
+            pg["search"]["term_narrowed_from"] = asked
+            pg["search"]["box_name"] = box_name
     except Exception as e:
         pg["search_warning"] = f'--search "{term}": {e}'
 

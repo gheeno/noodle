@@ -2081,9 +2081,28 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     # NOOD_0199 — a check the engine cut down to its probe-proven substring is
     # a weaker assertion than the one asked for, so it is stated, never silent.
     for nar in ((goal_ev or {}).get("narrowed") or []):
+        # NOOD_0234 — the probed text can BE the narrowed text (an --expect
+        # verdict is an exact full-text hit, not a containing phrase), and
+        # "found it inside 'Alien'" then read as nonsense to the caller.
+        where = (f" — the probe found it inside {nar['probed']!r}"
+                 if goal_mod._norm(nar["to"]) !=
+                 goal_mod._norm(nar.get("probed") or "")
+                 else " — the probe read that text off the page it is "
+                      "scoped to")
         warnings = [f"check narrowed: asked for {nar['from']!r}, asserting "
-                    f"{nar['to']!r} — the probe found it inside "
-                    f"{nar['probed']!r}"] + warnings
+                    f"{nar['to']!r}{where}"] + warnings
+    # NOOD_0234 — a narrowing is a check the engine REWROTE on the caller's
+    # behalf, and `docs/benchmark-specs.md` counts exactly that as a
+    # correction. It rode `warnings` as free text only, so every measurement
+    # of "how much did the engine change" scored it zero — the benchmark
+    # printed CORR 0 for a run in which it had weakened an assertion and
+    # rewritten a search term. Same structured shape the repair path uses, so
+    # one counter sees both.
+    if nars := ((goal_ev or {}).get("narrowed") or []):
+        result_rewritten = [{"from": n["from"], "to": n["to"]} for n in nars]
+    else:
+        result_rewritten = []
+    term_narrowed = list((goal_ev or {}).get("term_narrowed") or [])
     # NOOD_0208 — evidence-pass risks that are real but unproven (a
     # navigation-shaped mutation control). Blocking them would refuse working
     # flows; dropping them is the defect NOOD_0207 fixed everywhere else.
@@ -2114,6 +2133,13 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         "created_secret_keys": new_secret_keys,
         "missing_secret_keys": missing_secret_keys,
         "unmatched": unmatched_steps,
+        # NOOD_0234 — narrowings, structured rather than narrated. A narrowed
+        # CHECK is the same thing `rewritten_checks` already means, so it
+        # reports there. A narrowed search TERM gets its own key: it is not a
+        # control name reworded to the probed one, and reporting it as such
+        # named the wrong repair to anyone reading the correction detail.
+        **({"rewritten_checks": result_rewritten} if result_rewritten else {}),
+        **({"narrowed_terms": term_narrowed} if term_narrowed else {}),
         "warnings": warnings,
         "llm_required": llm_required,
         # NOOD_0135 — explicit: authoring already parsed, matched, linted and
