@@ -1732,8 +1732,22 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         # control is meant, which is the only thing the gate wants to know.
         pinned = frozenset(
             goal_mod._norm(k) for k in goal_mod._flat_pom_entries(pom_content))
+        # NOOD_0233 — KEY NAMES declared by workspace/app FILES only (never
+        # os.environ — the shell's own USER would read as a workspace
+        # credential, and values must never leave this function): enough for
+        # an undeclared login wall to say whether credentials that would walk
+        # it already exist, and under which {env:} keys.
+        env_keys = None
+        if not browserless:
+            try:
+                env_keys = sorted(
+                    set(_resolved_env(app_dir, workspace))
+                    - {k.upper() for k in os.environ})
+            except Exception:
+                env_keys = None
         goal_ev = (goal_mod.browserless_evidence(goal) if browserless
-                   else goal_mod.evidence(goal, probe_result, pinned))
+                   else goal_mod.evidence(goal, probe_result, pinned,
+                                          env_keys=env_keys))
         # NOOD_0156 — automatic postcondition synthesis: a goal with actions
         # but no checks gets an explicit generated `Then` derived from the
         # last meaningful action + probe evidence (emitted into the .feature,
@@ -1746,7 +1760,8 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             goal = dict(goal, actions=synth["actions"],
                         checks=synth["checks"])
             goal_ev = (goal_mod.browserless_evidence(goal) if browserless
-                       else goal_mod.evidence(goal, probe_result, pinned))
+                       else goal_mod.evidence(goal, probe_result, pinned,
+                                              env_keys=env_keys))
         goal_ev["blocking"] = goal_ev["blocking"] + synth["blocking"]
         # NOOD_0227 (E1) — dated page-graph pointers on unrouted blockers:
         # when a missed target was SEEN on another of this app's pages, say
@@ -2672,6 +2687,7 @@ def remove_feature(path: str, *, workspace: str = ".") -> dict:
 def probe_page(url: str, *, timeout_ms: int = 15000,
                click: list[str] | None = None,
                do: list[str] | None = None,
+               gate_do: list[str] | None = None,
                search: str | None = None,
                suggest: str | None = None,
                pick: str | None = None,
@@ -2737,13 +2753,17 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
     # poisoning author_ready and the reader's next decision.
     if act_on is None:
         act_on = "last" if len(urls) > 1 else "each"
-    if do and any("{env:" in a for a in do):
+    def _sub_env(items):
+        """(resolved items, error) — {env:KEY} in a do/gate_do chain resolves
+        engine-side so raw credentials never transit the transcript."""
+        if not (items and any("{env:" in a for a in items)):
+            return items, None
         env = _resolved_env(None, workspace)
-        refs = {r for a in do for r in re.findall(
+        refs = {r for a in items for r in re.findall(
             r"\{env:([A-Za-z_][A-Za-z0-9_]*)\}", a)}
         if missing := sorted(r for r in refs
                              if _is_placeholder(env.get(r.upper()))):
-            return {"pages": [], "errors": [{"url": url, "error":
+            return None, {"pages": [], "errors": [{"url": url, "error":
                     "unresolved {env:} in do actions — set in the workspace "
                     "env files first: " + ", ".join(missing)}]}
         # NOOD_0177 — validate the GRAMMAR on the unsubstituted form first.
@@ -2755,12 +2775,24 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
         # this function and mcp/server.py promise "raw credentials never transit
         # the transcript"; this is what makes that true.
         try:
-            _probe.parse_do(do)
+            _probe.parse_do(items)
         except ValueError as e:
-            return {"pages": [], "errors": [{"url": url, "error": str(e)}]}
-        do = [re.sub(r"\{env:([A-Za-z_][A-Za-z0-9_]*)\}",
-                     lambda m: env[m.group(1).upper()], a) for a in do]
+            return None, {"pages": [],
+                          "errors": [{"url": url, "error": str(e)}]}
+        return [re.sub(r"\{env:([A-Za-z_][A-Za-z0-9_]*)\}",
+                       lambda m: env[m.group(1).upper()], a)
+                for a in items], None
+
+    do, err = _sub_env(do)
+    if err:
+        return err
+    # NOOD_0233 — the goal's login prelude rides its own channel: same env
+    # resolution, same leak contract, rescue-only execution in the probe.
+    gate_do, err = _sub_env(gate_do)
+    if err:
+        return err
     result = _probe.probe(urls, timeout_ms=timeout_ms, clicks=click, do=do,
+                          gate_do=gate_do,
                           search=search, suggest=suggest, pick=pick,
                           mutate=mutate, follow=follow, expect=expect,
                           open_native_controls=open_native_controls,
