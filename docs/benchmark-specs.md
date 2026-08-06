@@ -100,7 +100,7 @@ reworded spec measures your rewording.
 
 ## The five specs
 
-<!-- spec: paragraph | expect: blocked -->
+<!-- spec: paragraph | expect: pass -->
 ### B1 — a paragraph
 
 Prose, hard-wrapped the way a paste out of a ticket or an email arrives.
@@ -130,7 +130,7 @@ against.
 6. Verify: Jaws
 ```
 
-<!-- spec: one_liner | expect: blocked -->
+<!-- spec: one_liner | expect: pass -->
 ### B3 — a single sentence
 
 The minimum anyone will ever send. One line, several actions joined by
@@ -140,7 +140,7 @@ The minimum anyone will ever send. One line, several actions joined by
 On http://127.0.0.1:3333/ log in as reel_ryan with password Popcorn1! then search movies for The Shining and verify The Shining is shown.
 ```
 
-<!-- spec: ambiguous | expect: blocked -->
+<!-- spec: ambiguous | expect: pass -->
 ### B4 — a short spec with ambiguous steps
 
 Short, and deliberately underspecified. Every fact needed is present, but
@@ -283,21 +283,55 @@ the compiler rejected, quoted verbatim, so the password inside a spec rode
 into `benchmark_results.json`, both verdict files and the served
 `verdict.html`. Every artifact is now masked at the write.
 
-**Still open in the headless run** — named defects now, not "not understood":
+**Round 4 (1.0.0a48) — the headless run reaches zero blocked.** Every defect
+the previous round named as still open was traced to a mechanism and fixed
+there, and each fix is measured, not inferred: **0 blocked, 4 passed, 1
+failed as intended**, for 2 corrections across the five (B1 a narrowed
+check, B3 a narrowed search term). The `expect:` markers for B1, B3 and B4
+move to `pass` on the strength of that run — marker lines only; the spec
+blocks are byte-for-byte what they were, because a reworded spec measures
+the rewording.
 
-- **The probe will not type a login.** `enter` values are never typed unless
-  `probe: {perform: true}` — deliberately, because performing writes state on
-  the app. A login is data entry that is also the only way to *see* the page,
-  so a `search` behind one has no evidence to resolve against. In a session
-  the agent opts in and it is a non-issue; headless, it is why B3 stops. This
-  is a policy boundary the framework drew on purpose, not a missing pattern.
-- **A hard-wrapped paragraph splits its credentials across lines** (B1), so
-  the login clause loses its password. Now a *coached* refusal.
-- **A subordinate clause blocks the verb match** — `Once the catalogue loads,
-  search it for Alien` (B1).
-- **Credentials in a header line** (`user: a / b`) are not a step, so a bare
-  `log in` has nothing to borrow (B4). Now coached with the exact rewrite.
-- **An anaphor two steps back** — `it should be there` (B4).
+That CORR column read **0** on the first measurement of this round, and it
+was wrong: an independent session review found the engine had weakened one
+assertion and rewritten one search term, both of which rode a free-text
+warning that `_corrections` could not see. Counting them is part of this
+round. A benchmark that under-reports its own repairs flatters the build
+in exactly the direction nobody would check.
+
+| gap | what it did | what closed it |
+|---|---|---|
+| a hard-wrapped paragraph split its credentials and its search term across lines (B1) | rejoining only ever handled INDENTED continuations, so flush-left prose was shredded at its wrap points | a flush-left line rejoins when the line above ran OUT of column and the line below opens no structure **and carries no verb** — the guard that keeps one-bare-step-per-line briefs intact |
+| a subordinate clause hid the verb behind it (B1) | `Once the catalogue loads, search it for Alien` — the verb table is `^`-anchored | the lead-in is stripped when a real step follows, read as narration when it stands alone; bounded by an appearance verb, so `After clicking sign in, …` still refuses rather than dropping a click |
+| credentials in a header line were not a step (B4) | `user: a / b` was harvested for URLs, then discarded — a bare `log in` had nothing to borrow | a login missing either half reads the brief's own labelled line, and names the LABEL as provenance (never the value: one of the two is a password) |
+| an anaphor two steps back (B4) | `it should be there` refused, though `add_to` had resolved that same back-reference since NOOD_0169 | `verify` wired to the same window, presence tail only — `it should cost $3.99` still names its own text |
+| the probe would not type a login | a `search` behind a gate had no evidence to resolve against | closed in a47 by NOOD_0233's gate walk; a48 lets the checks on the page it reaches be **proven** there — hit proves, **miss defers to the run and never blocks** |
+| `search <box> for <term>` kept the box name inside the term (B3) | `search movies for The Shining` searched for "movies for The Shining", found nothing, ran red | the probe has found the box and read its accessible name, so the cut is licensed by evidence rather than guessed — on a box named "Search", "gifts for mum" is untouched |
+
+Two adjacent defects fell out of it. A results page renders its rows as
+plain text the structured capture does not hold, so *"does this page show
+what I searched for?"* had no answer at all — the flow's own terms now ride
+the probe's `--expect` list. And a search that proved literally nothing (no
+summary, no item, every `--expect` verdict false) still authored, and died
+on its first run instead of at the door.
+
+**Still open, and the most important thing this benchmark currently does
+NOT prove.** BusterBlock's catalogue loads every title on login and filters
+server-side on each keystroke, so all 50 are in the DOM *before* any search
+runs. Four of the five specs assert a title's presence, which means **all
+four would stay green if the search step silently did nothing** — B2, the
+control, has had this property since Round 1, and B1/B3/B4 inherited it
+when they started passing. Only B5 discriminates, and it does so by proving
+an absence. The specs are not at fault and must not be reworded; what is
+missing is engine-side, and it is a general gap rather than a quirk of this
+app: any page that renders its whole dataset and then filters (a catalogue,
+an admin grid, a client-side table) produces exactly this non-discriminating
+assertion, and the engine cannot currently notice. It holds the post-login
+state from the gate walk, but `--expect` verdicts are only ever evaluated on
+the page the probe *ended* on, so there is no evidence of what was already
+visible before the search. Closing it means an expect pass on the pre-search
+state and a warning when a search-scoped check is true on both — a new
+evidence channel, tracked separately from this round.
 
 ## Where this sits next to `noodle benchmark --gate`
 

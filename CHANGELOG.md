@@ -4,6 +4,100 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a48] — 2026-08-06
+
+**NOOD_0234** — feature: the grammar takes requests the way people write
+them. `noodle benchmark` runs five shapes of the same request against the
+same gated app. On a47 the deterministic compiler — headless, nobody
+driving — refused two of them outright and delivered a third that ran red.
+A shape people actually send and the engine cannot take is an engine
+defect, so each refusal was traced to a mechanism and fixed there. Measured
+on this build: **0 blocked, 4 passed, 1 failed as intended**, at a cost of
+2 corrections across the five (one narrowed check, one narrowed search
+term) — see the counting fix below, which is why that number is no longer
+reported as zero.
+
+**A hard-wrapped paragraph is one paragraph.** Line rejoining only ever
+handled INDENTED continuations (NOOD_0212's numbered-step shape), so prose
+pasted out of a ticket was shredded at its wrap points: the credentials
+("reel_ryan with the password …") and the search term ("for Alien") arrived
+as verbless fragments that refused on their own, while the sentences they
+belonged to kept the verbs and lost the data. Flush-left lines now rejoin
+when the line above ran OUT of column — long, unpunctuated, not a label —
+and the line below opens no structure and carries no verb of its own. That
+last guard is what keeps a brief written one bare step per line from being
+glued into a single clause.
+
+**Credentials on a header line feed a bare `log in`.** `user: a / b` was
+harvested for URLs and then discarded with a note saying credentials belong
+in `--spec`. Now it is read: a login step missing either half takes it from
+the brief's own labelled line and says which label it came from — never the
+value, because an assumption is an emitted surface and one of those two
+values is a password. Guessing a credential is still refused; reading one
+the author wrote three rows up is not a guess.
+
+**An assertion with no subject binds to the search before it.** "it should
+be there" refused, though `add_to` has resolved that same back-reference
+since NOOD_0169. `verify` is now wired to it, on the presence tail only —
+a claim that says anything ABOUT the item ("it should cost $3.99") still
+names its own text. With nothing before it, it still refuses. And "search
+IT for X" drops the pronoun (pronouns only: "search gifts for mum" keeps
+its whole term).
+
+**A temporal lead-in never blocks the step it qualifies.** "Once the
+catalogue loads, search it for Alien" hid the verb from the ^-anchored verb
+table. The lead-in is stripped when a real step follows it and read as
+narration when it stands alone — bounded on both ends by an appearance verb,
+what the PAGE does, so "After clicking sign in, search for X" still refuses
+rather than silently dropping a click.
+
+**A walked login gate lets the search page prove its own checks.** After
+NOOD_0233's gate walk the probe is standing on the results page, but
+reach-deferral routed every check on it to the run (the gate's own `enter`
+sits at index 0), so a prose assertion could never be narrowed to what the
+probe had just read and compiled as an unrunnable literal. A text check
+scoped to that page now gets an evidence attempt first. The asymmetry is
+the design: a hit proves, **a miss defers to the run and never blocks** —
+absence behind a gate can be session state, and blocking on it would break
+the one spec whose assertion must reach the run and fail there. The flow's
+own search terms also ride the probe's `--expect` list now, because a
+results page renders its rows as plain text the structured capture does not
+hold; without that, "does this page show what I searched for?" had no
+answer at all.
+
+**The search box's own name licenses a term cut.** `search movies for The
+Shining` parses to the term "movies for The Shining" — NOOD_0232 tried to
+split that at parse time and correctly reverted, because parse time cannot
+tell a box name from half a term. The probe can: it has found the box and
+read its accessible name. On a box named "Search movies" the term narrows
+to "The Shining"; on a box named "Search", "gifts for mum" is untouched.
+The correction rides back onto the compiled feature, stated in the payload.
+
+**A search that proved nothing no longer authors quietly.** No results
+summary, no result item, and every `--expect` verdict false is a page that
+proved nothing at all, and the test died on its first run instead of at the
+door. All three signs are required — any one of them is life, and a page
+with no count element stays authorable exactly as before. Behind a walked
+gate it warns and defers rather than blocks, the same asymmetry made twice.
+
+**A narrowing is a correction, and is now counted as one.** An independent
+session review of this branch caught the engine reporting **CORR 0** on a
+run in which it had weakened one assertion and rewritten one search term.
+`docs/benchmark-specs.md` defines corrections as "every repair the engine
+made on your behalf: … a dropped or rewritten check", and both of those
+rode a free-text `warnings` string that no counter could see — the
+structured `rewritten_checks` / `rewritten_targets` keys were only ever
+populated on the auto-fix path. Narrowings now report through those same
+two keys, so the number the benchmark prints is the number of changes the
+engine actually made. The same review found the narrowing warning could
+read "the probe found 'Alien' inside 'Alien'" — an `--expect` verdict is an
+exact full-text hit, so the probed text can BE the narrowed text; that case
+now says what it means.
+
+The three closed shapes are promoted to `expect: pass` in
+`docs/benchmark-specs.md` (the marker lines only — the spec blocks are
+untouched, because a reworded spec measures the rewording).
+
 ## [1.0.0a47] — 2026-08-06
 
 **NOOD_0233** — feature: walk the login gate before looking behind it.

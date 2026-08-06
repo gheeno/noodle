@@ -164,10 +164,22 @@ def probe_args(goal: dict) -> dict:
     # FOUND/NOT-FOUND per string, no extra page load.
     # ponytail: capped at 8 — the strings ride the probe payload, and a goal
     # naming more than 8 literals is asking for a suite, not a scenario.
+    # NOOD_0234 — the flow's own search TERMS join the list. A results page
+    # routinely renders its rows as plain table text, which the structured
+    # capture (controls + headings) does not hold, so "does this page show
+    # what I searched for?" had no answer at all: every check on such a page
+    # was deferred to the run, and a prose assertion could then never be
+    # narrowed to the part the page actually renders (B1 of the benchmark —
+    # authored, and red). An expect verdict is a full-text search of the page
+    # the probe ended on: exact, and it costs no extra page load.
     expect = [t for c in (goal.get("checks") or []) if isinstance(c, dict)
               for t in ([c["see"]] if isinstance(c.get("see"), str)
                         else [x for x in (c.get("any_of") or [])
-                              if isinstance(x, str)])][:8]
+                              if isinstance(x, str)])]
+    expect += [a["term"] for a in actions
+               if a.get("do") in ("search", "suggest")
+               and isinstance(a.get("term"), str)]
+    expect = list(dict.fromkeys(expect))[:8]
     # NOOD_0233 — the goal's own login prelude as a RESCUE-ONLY chain: the
     # probe types it solely when its search/typeahead phase has already
     # failed AND the page visibly shows a password field (login_wall). It is
@@ -1325,7 +1337,7 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset(),
                 "bound_targets": {}, "resolved_controls": {},
                 "mutation_plans": {}, "navigation_health": [],
                 "revealed_headings": {}, "headings": [], "narrowed": [],
-                "warnings": []}
+                "term_narrowed": [], "warnings": []}
 
     pages = probe_result.get("pages") or []
     if not pages:
@@ -1375,7 +1387,13 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset(),
     # filter here, every consumer below — controls, scopes, _locate, the
     # reveal-trigger rules — behaves byte-identically to a probe that never
     # walked, except that pg["search"] now holds the real results page.
-    blocks = [t for t in _page_blocks(pg) if t[1] != "gate"]
+    all_blocks = _page_blocks(pg)
+    blocks = [t for t in all_blocks if t[1] != "gate"]
+    # NOOD_0234 — the walk SUCCEEDED, which is a different fact from the
+    # blocks it produced being excluded above. It is what licenses the
+    # evidence attempt on post-gate search-page checks below: the probe
+    # genuinely loaded the page those checks observe.
+    walked_gate = any(ph == "gate" for _, ph, _ in all_blocks)
     actions = goal.get("actions") or []
     # NOOD_0227 — `performed` is honest to the CHAIN, not to block presence.
     # Pre-gate reveal clicks now ride the do-chain (probe_args), so a
@@ -1456,6 +1474,8 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset(),
     proven_phase: dict = {}
     narrowed: list[dict] = []      # NOOD_0199 — see-checks cut to their
                                    # probe-proven substring, never silently
+    term_narrowed: list[dict] = []  # NOOD_0234 — search terms cut to what the
+                                    # box's own name licensed
     mplans: dict[str, dict] = {}
     # NOOD_0226 — the last action index the probe has page evidence for; read
     # once, used by every gate below so they cannot drift apart. NOOD_0227 —
@@ -1676,6 +1696,26 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset(),
                                 + _wall_clause(pg, actions, env_keys)
                                 + _rejection_clause(pg))
             elif pg.get("search"):
+                # NOOD_0234 — the probe narrowed the term to what the search
+                # box's own name licensed (probe.narrow_search_term). Carry
+                # the correction back onto the goal so the COMPILED feature
+                # searches the string the run will find, and say so: a change
+                # to which term is searched is never silent.
+                if (asked := pg["search"].get("term_narrowed_from")) \
+                        and _norm(asked) == _norm(a.get("term")):
+                    a["term"] = pg["search"]["term"]
+                    # structured as well as said: a term the engine rewrote
+                    # is a repair made on the caller's behalf, and something
+                    # that only ever rode a free-text warning is invisible to
+                    # every counter that measures how much was changed.
+                    term_narrowed.append(
+                        {"from": asked, "to": a["term"],
+                         "box": pg["search"].get("box_name", "")})
+                    warnings.append(
+                        f'search term narrowed: asked for {asked!r}, '
+                        f'searching {a["term"]!r} — '
+                        f'{pg["search"].get("box_name", "")!r} is the search '
+                        "control's own name, not part of what to search for")
                 proven["search"] = pg["search"]["term"]
             else:
                 blocking.append("search: the probe performed no search — "
@@ -1874,16 +1914,38 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset(),
     # results available" is missing evidence, and missing evidence never
     # becomes a guess (the NOOD_0156 session authored a full add-to-cart
     # flow on top of exactly this).
-    if rsum is not None and any(a.get("do") == "search" for a in actions):
-        obs = _observed_count(rsum)
-        if obs == 0:
-            term = next((a.get("term") for a in actions
-                         if a.get("do") == "search"), "")
+    if any(a.get("do") == "search" for a in actions):
+        term = next((a.get("term") for a in actions
+                     if a.get("do") == "search"), "")
+        if rsum is not None and _observed_count(rsum) == 0:
             blocking.append(
                 f'search "{term}": the probe observed 0 results '
                 f'({rsum.get("text")!r}) — authoring against zero search '
                 "evidence is blocked; change the term or fix the search flow "
                 "first")
+        # NOOD_0234 — the zero-results gate above only fires on a page that
+        # RENDERS a count. A page without one could prove literally nothing —
+        # no summary, no structured item, and every --expect verdict false —
+        # and still author, so the test died on its first run instead of at
+        # the door. All three signs are required: any one of them is life,
+        # and a page with no count element stays authorable exactly as before.
+        # Behind a walked gate it WARNS rather than blocks: what the probe
+        # reached there can be state-dependent, and the miss-defers asymmetry
+        # (see the check loop) is the same choice made twice.
+        elif (rsum is None and pg.get("search")
+                and not (pg["search"].get("result_items") or [])
+                and (pg.get("expect") or []) and not expect_found):
+            dead = (f'search "{term}": the probe proved nothing on the '
+                    "results page — no results summary, no result item, and "
+                    "none of the text the checks name")
+            if walked_gate:
+                warnings.append(
+                    dead + " — deferred to the run because the probe reached "
+                    "that page through the login gate, where what renders can "
+                    "depend on session state")
+            else:
+                blocking.append(
+                    dead + "; change the term or fix the search flow first")
     gate = _runtime_gate(actions)
     # NOOD_0208 — when the probe PERFORMED the flow, the pages past the gate
     # are snapshotted, so the checks on them get proven here rather than
@@ -1932,8 +1994,25 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset(),
             warnings.append(w)
         anchor_i = next((j for j, a in enumerate(actions)
                          if a.get("id") == after), -1) if after is not None else -1
-        if gate is not None and (anchor_i >= gate
-                                 or (after is None and beyond_reach)):
+        at_end = _check_scope(c, goal) == "search"
+        # NOOD_0234 — a text check on the SEARCH page of a goal whose login
+        # gate the probe walked. Reach-deferral routes it to the run because
+        # the gate's own `enter` steps sit at index 0, so every such check was
+        # runtime-asserted even though the probe was standing on exactly the
+        # page it observes — and an assertion that can only be proven by the
+        # run can never be narrowed to what the page actually renders, so a
+        # prose ask compiled as an unrunnable literal and went red (B1).
+        #
+        # The asymmetry is the design: a HIT is proof (the probe read that
+        # text off that page), a MISS still defers to the run and NEVER
+        # blocks. Absence behind a gate can be session state, and blocking on
+        # it would break the one spec whose assertion must reach the run and
+        # fail there (B5).
+        try_evidence = (walked_gate and at_end and bool(search_scope)
+                        and ("see" in c or "any_of" in c))
+        if gate is not None and not try_evidence \
+                and (anchor_i >= gate
+                     or (after is None and beyond_reach)):
             # Anchored after data the probe never entered — the probe cannot
             # honestly prove it; the run must. Preserved verbatim, never dropped.
             #
@@ -1961,7 +2040,6 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset(),
             # its landing URL. Blocking on them would be a false negative.
             runtime.append(_check_step(c)[0])
             continue
-        at_end = _check_scope(c, goal) == "search"
         scope = search_scope if at_end else initial_scope
         # An expect verdict answers only for the page the probe ended on —
         # the search landing page when the goal searches, else the initial
@@ -1982,6 +2060,35 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset(),
                 run, hit = nar
                 narrowed.append({"from": c["see"], "to": run, "probed": hit})
                 c["see"] = run
+            if hit is None and at_end:
+                # NOOD_0234 — the flow's OWN search term, when the check text
+                # contains it and the probed page renders it. `_shared_phrase`
+                # above needs a two-word run (NOOD_0195's floor against
+                # one-letter "proof"), so a one-word subject in a sentence of
+                # prose — "Confirm that the Alien listing is what you are left
+                # looking at", on a page whose result reads "Alien" — had no
+                # shorter form to fall back to and blocked. This is not string
+                # similarity: it is the same dataflow back-reference `add_to`
+                # binds, so the narrowing is licensed by the flow, and the
+                # page still has to render it. Same `narrowed` provenance.
+                subj = next((a.get("term") for a in actions
+                             if a.get("do") in ("search", "suggest")), None)
+                if subj and _norm(subj) in _norm(c["see"]):
+                    # the --expect verdict answers for the rendered TEXT of
+                    # the page the probe ended on, which is where a table-row
+                    # result lives; the structured scope answers for headings
+                    # and controls. Either is proof; neither is assumed.
+                    h = subj if _norm(subj) in expect \
+                        else _find_text(subj, scope)
+                    if h is not None:
+                        narrowed.append({"from": c["see"], "to": subj,
+                                         "probed": h})
+                        c["see"], hit = subj, h
+            if hit is None and try_evidence:
+                # The probe stood on the page and did not see it — which is
+                # not the same as the app not showing it (see try_evidence).
+                runtime.append(_check_step(c)[0])
+                continue
             if hit is None:
                 # NOOD_0200 — every blocking entry names a legal next input:
                 # a bare rejection reads as "your text is wrong" when the
@@ -2058,6 +2165,8 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset(),
                 proven[f"any_of[{i}]"] = sorted(texts)
                 proven_phase[f"any_of[{i}]"] = \
                     "search" if at_end else "initial"
+            elif try_evidence:
+                runtime.append(_check_step(c)[0])   # NOOD_0234 — miss defers
             else:
                 blocking.append(
                     "check any_of " + "/".join(c["any_of"])
@@ -2090,7 +2199,7 @@ def evidence(goal: dict, probe_result: dict, pinned=frozenset(),
             "bound_targets": bound, "resolved_controls": resolved,
             "mutation_plans": mplans, "navigation_health": nav_health,
             "revealed_headings": revealed_headings, "headings": headings,
-            "narrowed": narrowed,
+            "narrowed": narrowed, "term_narrowed": term_narrowed,
             # NOOD_0208 — risks that are real but unproven. A block would be a
             # heuristic refusing a working flow (NOOD_0207's lesson); silence
             # would be the diagnose-without-repair defect. This is the third
