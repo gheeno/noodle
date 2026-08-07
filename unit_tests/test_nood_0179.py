@@ -120,7 +120,11 @@ def test_the_pool_launches_once_per_engine_and_reuses(pool):
     first = pool.browser("chromium", None)
     second = pool.browser("chromium", None)
     assert first is second
-    assert pool._pw.launches == [("chromium", None)]
+    # NOOD_0237 — a bare chromium request now carries the default channel (the
+    # full build, not chromium_headless_shell). Reuse is what's under test here,
+    # so ask the helper rather than restating the value.
+    _chromium = ("chromium", browser_pool.default_channel("chromium"))
+    assert pool._pw.launches == [_chromium]
 
 
 def test_a_different_engine_launches_without_evicting_the_first(pool):
@@ -128,7 +132,8 @@ def test_a_different_engine_launches_without_evicting_the_first(pool):
     firefox = pool.browser("firefox", None)
     assert chromium is not firefox
     assert pool.browser("chromium", None) is chromium      # still cached
-    assert pool._pw.launches == [("chromium", None), ("firefox", None)]
+    assert pool._pw.launches == [
+        ("chromium", browser_pool.default_channel("chromium")), ("firefox", None)]
 
 
 def test_the_channel_is_part_of_the_key(pool):

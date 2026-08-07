@@ -53,6 +53,7 @@ No prior AI, automation, or Python experience assumed.
   - [Tester quickstart — smoke tests from your agent's terminal](#tester-quickstart--smoke-tests-from-your-agents-terminal)
   - [Try the bundled samples in your own workspace](#try-the-bundled-samples-in-your-own-workspace)
 - [Health check — `noodle doctor`](#health-check--noodle-doctor)
+- [Browsers & Playwright — engines, and keeping them current](#browsers--playwright--engines-and-keeping-them-current)
 - Everything deeper — full setup guide, writing/running tests, RCA, syntax,
   LLM augmentation, `noodle repl`, CI, quick reference, troubleshooting —
   now lives in **[docs/manual.md](docs/manual.md)**
@@ -905,6 +906,68 @@ failure with the reinstall cure. `--scope engine|workspace|install`
 forces a profile. Exit codes: `0` healthy, `1` findings (`WARN`/`FAIL`),
 `2` bad path/scope. Full contract — check IDs, JSON shape, remediation —
 in [docs/manual.md → Health check](docs/manual.md#health-check--noodle-doctor).
+
+## Browsers & Playwright — engines, and keeping them current
+
+Noodle drives Playwright, so two things have to line up: the **Playwright
+package** (a Python dependency, floor pinned in `pyproject.toml`) and the
+**browser binaries** it downloads separately. Updating one without the other is
+the single most common "it worked last week" failure.
+
+### The one rule
+
+> Install browser binaries with the **same Python that runs `noodle`** — never
+> whatever `playwright` happens to be on your PATH.
+
+`noodle` is usually a `uv tool` / `pipx` install with its own virtualenv, while
+`playwright` on PATH often belongs to pyenv or the system Python. Running the
+PATH one downloads browsers next to a *different* Playwright, so the engine
+still can't launch and the error tells you to run the command you just ran.
+(Seen in the wild: noodle's env wanted `webkit-2336`; the PATH CLI cheerfully
+fetched `webkit-2287` and changed nothing.)
+
+You don't have to work the path out yourself — **`noodle doctor` prints the
+exact command with the right interpreter already substituted**, and it now
+tells a real Chromium install apart from a headless-shell-only one (which used
+to report green, then stall on the first real page):
+
+```bash
+noodle doctor                                # macOS / Ubuntu
+noodle doctor | Select-String playwright     # Windows 11 (PowerShell)
+```
+
+Then update in two steps — the package, then the binaries:
+
+```bash
+uv tool upgrade noodle                       # re-resolves Playwright to the pyproject floor
+NOODLE_PY="$(head -1 "$(command -v noodle)" | sed 's/^#!//')"
+"$NOODLE_PY" -m playwright install chromium webkit    # add --with-deps on Ubuntu
+```
+
+Windows, editable-clone installs, the `sudo` system-libs step, and a
+copy-paste prompt that lets **your agent do all of it** are in
+[docs/manual.md → Keeping Playwright and its browsers current](docs/manual.md#keeping-playwright-and-its-browsers-current).
+
+### Picking an engine
+
+Chromium is the default. WebKit (the engine behind Safari — `@webkit` /
+`@safari` / `--browser webkit`), Firefox and real Edge are one tag or flag
+away; the full table is in
+[docs/manual.md](docs/manual.md#keeping-playwright-and-its-browsers-current).
+
+**WebKit is also the headless escape hatch.** Some sites detect headless
+Chromium and stall the document instead of refusing it, so the page never
+fires `domcontentloaded` and runs time out with no error to read. A channel
+does *not* fix it: measured on one retail site, headless
+`chromium_headless_shell`, headless full Chromium (`channel="chromium"`) and
+headless real Chrome all timed out at 30 s while the same URL loaded **headed
+in 2.2 s** — and **headless WebKit loaded it fine**. Reach for `@webkit`
+before `@headed` and you keep a headless, CI-friendly run:
+
+```gherkin
+@web @webkit
+Feature: Add a toy to the cart
+```
 
 ## Going deeper
 

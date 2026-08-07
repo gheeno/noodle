@@ -701,6 +701,106 @@ wins if both are passed):
 noodle run web/busterblock --headed
 ```
 
+**Run on a different engine** — Chromium is the default; WebKit (the engine
+behind Safari), Firefox and real Edge are all one flag or tag away:
+
+```bash
+noodle run web/busterblock --browser webkit     # or firefox | safari | edge
+```
+
+| Engine | Select with | Notes |
+|--------|-------------|-------|
+| `chromium` | default | What almost every test should use. |
+| `webkit` / `safari` | `@webkit` / `@safari`, `--browser webkit`, `NOODLE_BROWSER=webkit` | Playwright's WebKit. `safari` is an alias — there is no separate Safari driver. |
+| `firefox` | `@firefox`, `--browser firefox` | |
+| `edge` | `--browser edge` | Real Microsoft Edge; must be installed on the machine. |
+
+**A site that stalls headless? Try `@webkit` before `@headed` (NOOD_0237).**
+Some sites detect headless Chromium and stall the document instead of refusing
+it — the page never fires `domcontentloaded`, so the run dies on a bare
+`Page.goto` timeout with nothing useful to read. A browser **channel does not
+fix this**: measured on one live retail site, headless
+`chromium_headless_shell`, headless full Chromium (`channel="chromium"`) and
+headless **real Chrome** all timed out at 30 s, while the same URL loaded headed
+in 2.2 s — and headless **WebKit loaded it fine**. Tagging the feature `@webkit`
+keeps the run headless and CI-friendly instead of demanding a display or Xvfb:
+
+```gherkin
+@web @webkit
+Feature: Add a toy to the cart
+```
+
+That needs the WebKit binary installed **against the same Python that runs
+`noodle`** — `noodle doctor` prints the exact command, and README →
+[Browsers & Playwright](../README.md#browsers--playwright--engines-and-keeping-them-current)
+has the per-OS update path for macOS, Ubuntu and Windows.
+`NOODLE_CHROMIUM_CHANNEL` pins headless chromium to a real installed browser
+(`chrome`, `msedge`), or `off` restores the headless shell.
+
+### Keeping Playwright and its browsers current
+
+Two things have to stay in step: the **Playwright package** (a Python
+dependency, floor pinned in `pyproject.toml`) and the **browser binaries** it
+downloads separately. Updating one without the other is the most common
+"it worked last week" failure — a new Playwright expects a newer browser build
+than the one on disk, and every launch fails until you refresh it.
+
+> **The one rule:** install browsers with the **same Python that runs
+> `noodle`** — never whatever `playwright` is on your PATH.
+
+`noodle` is usually a `uv tool`/`pipx` install with its own virtualenv, while
+`playwright` on PATH often belongs to pyenv or the system Python. Install with
+the PATH one and the browsers land beside a *different* Playwright, so the
+engine still can't launch and the error repeats the command you just ran.
+`noodle doctor` prints the correct command with the interpreter already
+substituted, so you never have to work the path out by hand.
+
+**macOS / Ubuntu**
+
+```bash
+# 1. update Noodle; this re-resolves Playwright to the pyproject floor
+uv tool upgrade noodle                       # installed as a uv tool
+# editable clone instead?  cd ~/projects/noodle && uv pip install -e ".[all]" --upgrade
+
+# 2. refresh the browsers with NOODLE's own interpreter
+NOODLE_PY="$(head -1 "$(command -v noodle)" | sed 's/^#!//')"
+"$NOODLE_PY" -m playwright install chromium webkit
+
+# 3. confirm
+noodle doctor
+```
+
+Ubuntu also needs the browsers' system libraries once — the step CI images
+most often miss (needs `sudo`):
+
+```bash
+"$NOODLE_PY" -m playwright install --with-deps chromium webkit
+```
+
+**Windows 11 (PowerShell)**
+
+```powershell
+uv tool upgrade noodle
+
+$NoodlePy = Join-Path $env:LOCALAPPDATA 'uv\tools\noodle\Scripts\python.exe'
+& $NoodlePy -m playwright install chromium webkit
+
+noodle doctor
+```
+
+If that path doesn't exist on your machine, take the one `noodle doctor`
+prints rather than guessing.
+
+**Or hand it to your agent.** This prompt works identically on macOS, Ubuntu
+and Windows, because the agent reads the interpreter out of `noodle doctor`
+instead of assuming one:
+
+> Update Noodle's Playwright and browser binaries. Run `noodle doctor` first
+> and use the interpreter it names — do **not** use the `playwright` on PATH,
+> it's usually a different environment. Upgrade the noodle install, reinstall
+> the `chromium` and `webkit` browsers with that interpreter (add
+> `--with-deps` on Ubuntu), then re-run `noodle doctor` and show me the result.
+
 **Test lives in a different folder or repo, not inside this one?** Point
 `--workspace`/`-w` at it — every `noodle` command takes this flag, not just
 `run`. Where you run it from doesn't matter — `--workspace` is a path, not
@@ -1670,6 +1770,46 @@ record, never a silent skip.
 ```
 
 ## Troubleshooting
+
+**`playwright install <engine>` says it succeeded, but the engine still
+won't launch (NOOD_0237)**
+You installed the browsers next to a **different Playwright**. `noodle` is
+normally a `uv tool`/`pipx` install with its own virtualenv, while the
+`playwright` on your PATH belongs to pyenv or the system Python — so the
+download lands beside the wrong one and the engine is still missing. (Real
+example: noodle's env wanted `webkit-2336`; the PATH CLI fetched `webkit-2287`
+and nothing changed.) Always install with the Python that runs `noodle`:
+
+```bash
+# macOS / Ubuntu
+NOODLE_PY="$(head -1 "$(command -v noodle)" | sed 's/^#!//')"
+"$NOODLE_PY" -m playwright install chromium webkit     # add --with-deps on Ubuntu
+```
+
+```powershell
+# Windows 11
+& (Join-Path $env:LOCALAPPDATA 'uv\tools\noodle\Scripts\python.exe') -m playwright install chromium webkit
+```
+
+`noodle doctor` prints this command with the right interpreter already filled
+in — copy it from there rather than guessing the path. Doctor also flags a
+**headless-shell-only** install (`chromium_headless_shell` with no full
+Chromium), which used to report green and then stall on the first real page.
+Full per-OS update path: README →
+[Browsers & Playwright](../README.md#browsers--playwright--engines-and-keeping-them-current).
+
+**A run or probe dies on `Page.goto: Timeout … waiting until
+"domcontentloaded"`, but the site is fine in your own browser (NOOD_0237)**
+The site detects headless Chromium and **stalls** the document instead of
+refusing it, so the lifecycle event never fires and you get a timeout with no
+error page to read. Raising `--timeout` won't help — nothing is ever coming.
+Neither will a channel: headless `chromium_headless_shell`, headless full
+Chromium (`channel="chromium"`) and headless **real Chrome** were all measured
+timing out at 30 s on the same URL that loaded headed in 2.2 s. **Headless
+WebKit loaded it fine.** Tag the feature `@webkit` (or run
+`--browser webkit`) and you keep a headless CI run; `@headed` also works but
+needs a display or Xvfb. Confirm which it is by running the same URL headed
+once — if headed passes and headless times out at navigation, this is it.
 
 **Windows: `Activate.ps1 cannot be loaded because running scripts is
 disabled on this system`**

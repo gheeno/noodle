@@ -4,11 +4,22 @@ build-backend = "hatchling.build"
 
 [project]
 name = "noodle"
-version = "1.0.0a50"
+version = "1.0.0a51"
 requires-python = ">=3.11"
 dependencies = [
     "behave>=1.2.6",
-    "playwright>=1.40.0",
+    # NOOD_0237 — floor raised 1.40 -> 1.60. Two reasons, one hard and one
+    # practical. HARD: from 1.49 Playwright routes `headless=True` to the
+    # stripped `chromium_headless_shell` instead of the browser it runs headed,
+    # and the fix (`channel="chromium"`, see agents/web/browser_pool.py) is only
+    # a valid channel from that release — on an older build the launch raises.
+    # PRACTICAL: 1.40 was three years of releases behind whatever a clean
+    # install actually resolved, so `pip install noodle` and a dev checkout
+    # silently ran different browsers and only the newer one had the shell
+    # split. Pinning the floor at the tested version keeps install and update
+    # on the build this engine is verified against. 1.49 is the true minimum if
+    # you ever need to relax this.
+    "playwright>=1.60.0",
     "typer>=0.9.0",
     "python-dotenv>=1.0.0",
     "pillow>=10.0.0",

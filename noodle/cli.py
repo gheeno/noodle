@@ -132,6 +132,24 @@ def _normalize_headless(raw: str) -> str:
     return "true" if raw.strip().lower() in _TRUTHY else "false"
 
 
+def _resolve_browser(flag, cfg: dict) -> str:
+    """NOOD_0237 — --browser flag > inherited NOODLE_BROWSER > noodle.yaml.
+
+    The probe layer has always resolved NOODLE_BROWSER (config.resolve_engine),
+    but `run` resolved straight from noodle.yaml and then overwrote the
+    variable in the child env — so `NOODLE_BROWSER=webkit noodle author --run`
+    probed on webkit and ran the yaml browser. `author --run` has no --browser
+    flag; the env var is that run leg's only steering wheel. Nothing exported →
+    the workspace default (chromium), unchanged.
+
+    `flag` may be a typer OptionInfo on a direct (non-CLI) call — anything but
+    a non-empty string counts as unset, like the `is None` check it replaces.
+    """
+    if isinstance(flag, str) and flag:
+        return flag
+    return (os.getenv("NOODLE_BROWSER") or "").strip().lower() or cfg["browser"]
+
+
 def _find_behave_base(feature_path: Path) -> Path:
     """
     Walk up from the feature file's parent to find the behave root — the nearest
@@ -334,11 +352,11 @@ def run(
             typer.echo(f"  ✗ {_gate['error']}")
         raise typer.Exit(2)
     # No path given → run the workspace's tests dir. browser/headless fall
-    # back to the workspace config when the flags aren't set.
+    # back to the workspace config when the flags aren't set (browser via an
+    # inherited NOODLE_BROWSER first — NOOD_0237, see _resolve_browser).
     if path is None:
         path = cfg["tests_dir"]
-    if browser is None:
-        browser = cfg["browser"]
+    browser = _resolve_browser(browser, cfg)
     # Toggle: flag wins; otherwise fall back to the env var (lets CI/local flip
     # parallelism without changing the command). 0 or unset = single process.
     if parallel is None:
@@ -974,7 +992,7 @@ _NOODLE_YAML = """\
 tests_dir: noodle_tests
 env_file: .env
 reports_dir: artifacts/reports
-browser: chromium   # chromium | firefox | webkit | safari | edge (safari = Playwright WebKit; edge needs MS Edge installed)
+browser: chromium   # chromium | firefox | webkit | safari | edge (safari = Playwright WebKit; edge needs MS Edge installed); an exported NOODLE_BROWSER overrides this, --browser wins over both
 headless: true       # set false to see the browser by default; --headed overrides per-run
 """
 
@@ -2060,7 +2078,7 @@ def author(
     feature_path: str = typer.Option(None, "--feature-path", help="NOOD_0236 — name the .feature this authoring writes, instead of letting the engine derive one from the URL/scenario. The spec form has always carried `feature_path`; --prompt had no spelling for it, which made any caller that must NAME its output (the `benchmark --session` ledger keys on `spec_<id>.feature`) reachable only over MCP. Optional — omit it and derivation is unchanged."),
     workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
-    run: bool = typer.Option(False, "--run", help="NOOD_0137 — atomic author+run: after a ready author, run once (headless, retries=0), serve both reports, and fail when 0 scenarios passed. Blocked authoring launches no browser."),
+    run: bool = typer.Option(False, "--run", help="NOOD_0137 — atomic author+run: after a ready author, run once (headless, retries=0), serve both reports, and fail when 0 scenarios passed. Blocked authoring launches no browser. NOODLE_BROWSER=<engine> steers both the authoring probe and this run — the escape for a site that stalls headless chromium (NOOD_0237); the workspace default stays noodle.yaml's browser."),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing .feature at the target path. A blocked authoring attempt leaves its files behind (fix-in-place contract) — without this flag the retry refuses. Spec key `overwrite` works too; prompt mode has only this flag."),
     vocabulary: bool = typer.Option(False, "--vocabulary", help="NOOD_0197 — print the goal vocabulary, a minimal example, and the prompt grammar as JSON, then exit. The schema on demand instead of discoverability-by-rejection (no more scraping --help for it)."),
     section: str = typer.Option(None, "--section", help="NOOD_0227 — with --vocabulary: print ONE schema section (checks | actions | goal | probe | dismissals | prompt) instead of the whole blob, so one fact never costs a python3 pipe."),
