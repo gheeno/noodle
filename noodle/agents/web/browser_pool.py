@@ -23,6 +23,7 @@ Three traps this design exists to avoid, each of which broke a naive cache:
 import atexit
 import os
 import queue
+import sys
 import threading
 
 from noodle.config import resolve_engine
@@ -31,6 +32,8 @@ from noodle.config import resolve_engine
 # the pool is bounded by the alias table itself — add eviction if a caller ever
 # generates engine names.
 _CLOSE_TIMEOUT_S = 5.0
+# NOOD_0237 — NOODLE_CHROMIUM_CHANNEL values that mean "use the headless shell".
+_CHANNEL_OFF = {"off", "0", "false", "no", "none", "shell"}
 
 
 class EngineUnavailable(RuntimeError):
@@ -136,16 +139,69 @@ class _Pool:
             self._pw = None
 
 
+def install_command(engine: str = "") -> str:
+    """NOOD_0237 — name THIS interpreter's playwright, never the one on PATH.
+
+    `noodle` is normally a uv-tool / pipx install with its own venv, while the
+    `playwright` on PATH belongs to pyenv or the system python. Telling a user
+    to "run: playwright install webkit" then sends the download to a DIFFERENT
+    Playwright, so the engine still cannot launch and the advice reads as a lie.
+    Observed: noodle's env (playwright 1.62) wanted webkit-2336, while the PATH
+    CLI (1.60) happily fetched webkit-2287 and changed nothing.
+    """
+    return f"{sys.executable} -m playwright install {engine}".rstrip()
+
+
+def default_channel(engine: str) -> str | None:
+    """NOOD_0237 — the FULL Chromium build for headless, not the headless shell.
+
+    Playwright >= 1.49 stopped running `headless=True` on the browser it runs
+    headed: a bare chromium launch is routed to `chromium_headless_shell`, a
+    stripped binary with its own lifecycle and feature surface. `channel=
+    "chromium"` asks for the full build in new-headless mode, so headless and
+    headed drive the same browser instead of two different ones.
+
+    What this does NOT buy: escape from headless DETECTION. Measured against
+    canadiantire.ca, `domcontentloaded` never fires under headless chromium of
+    ANY build — shell, full `channel="chromium"`, and real `channel="chrome"`
+    each time out at 30 s, while headed loads the same URL in 2.2 s. Headless
+    WebKit loads it fine. So a site that stalls every headless chromium is a
+    `NOODLE_BROWSER=webkit` or `@headed` case, not a channel case; don't reach
+    for this knob expecting it to unblock one.
+
+    Set NOODLE_CHROMIUM_CHANNEL to another channel (`chrome`, `msedge`) to pin a
+    real installed browser, or to `off` to go back to the shell.
+    """
+    if engine != "chromium":
+        return None
+    override = os.getenv("NOODLE_CHROMIUM_CHANNEL", "").strip()
+    if override:
+        return None if override.lower() in _CHANNEL_OFF else override
+    return "chromium"
+
+
 def _launch(pw, engine: str, channel: str | None):
     """Launch, turning an install gap into a message that names the fix."""
+    # An explicit channel (edge -> msedge) always wins; `implicit` is ours to
+    # retract, and only ours — see the fallback below.
+    implicit = default_channel(engine) if not channel else None
     opts = {"headless": True}
-    if channel:
-        opts["channel"] = channel
+    if channel or implicit:
+        opts["channel"] = channel or implicit
     try:
         return getattr(pw, engine).launch(**opts)
     except Exception as e:
+        if implicit:
+            # NOOD_0237 — a `playwright install --only-shell` host has no full
+            # Chromium build. The shell still probes most sites, so degrade to
+            # it rather than turn every probe into a hard failure; the sites it
+            # can't load are exactly the ones this channel exists for.
+            try:
+                return getattr(pw, engine).launch(headless=True)
+            except Exception:
+                pass
         fix = (f"install Microsoft Edge (channel '{channel}')" if channel
-               else f"run: playwright install {engine}")
+               else f"run: {install_command(engine)}")
         raise EngineUnavailable(
             f"browser engine '{engine}' could not be launched — {fix}. "
             f"Original error: {e}") from e

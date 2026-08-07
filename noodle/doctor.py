@@ -197,6 +197,14 @@ def install_checks() -> list[Check]:
     return checks
 
 
+def _install_cmd() -> str:
+    """NOOD_0237 — one source of truth for "how do I install the browsers",
+    and it names THIS interpreter: a uv-tool `noodle` and the `playwright` on
+    PATH are routinely different environments (see browser_pool)."""
+    from noodle.agents.web.browser_pool import install_command
+    return install_command("chromium")
+
+
 def _browsers_check() -> Check:
     """NOOD_0197 — are Playwright's browser binaries actually installed?
     "MCP declared, workspace green, first run dies downloading Chromium" is a
@@ -218,16 +226,32 @@ def _browsers_check() -> Check:
         cand = [Path.home() / ".cache" / "ms-playwright"]
     for c in cand:
         try:
-            if any(d.name.startswith(("chromium", "firefox", "webkit"))
-                   for d in c.iterdir() if d.is_dir()):
-                return Check("install.browsers", "install", "pass",
-                             f"Playwright browsers present ({c})")
+            names = [d.name for d in c.iterdir() if d.is_dir()]
         except OSError:
             continue
+        # NOOD_0237 — `chromium_headless_shell-*` also startswith "chromium",
+        # so a shell-only install used to read as green here and then stall at
+        # `Page.goto` on script-heavy pages: the shell is the one build that
+        # can't be driven headed, and its lifecycle differs from the browser
+        # every headed run uses. Count the two separately.
+        full = [n for n in names if n.startswith("chromium-")]
+        shell = [n for n in names if n.startswith("chromium_headless_shell-")]
+        other = [n for n in names if n.startswith(("firefox", "webkit"))]
+        if not (full or shell or other):
+            continue
+        if shell and not full:
+            return Check("install.browsers", "install", "warn",
+                         f"only chromium_headless_shell is installed ({c}) — "
+                         "the full Chromium build is missing, so headless work "
+                         "falls back to the shell and stalls on pages that "
+                         "never fire domcontentloaded",
+                         remediation=_install_cmd())
+        return Check("install.browsers", "install", "pass",
+                     f"Playwright browsers present ({c})")
     return Check("install.browsers", "install", "warn",
                  "no Playwright browser binaries found — the first web run "
                  "will fail (or stall downloading) instead of testing",
-                 remediation="playwright install chromium")
+                 remediation=_install_cmd())
 
 
 def _login_shell_check() -> Check:

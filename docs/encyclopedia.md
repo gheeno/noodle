@@ -368,7 +368,7 @@ Add tags to a `Scenario` or `Feature` (feature-level applies to every scenario):
 |-----|--------|
 | `@web` | Chromium (default) |
 | `@headed` | Force browser visible for this scenario (default is headless; overrides `--headless`/`.env`) |
-| `@firefox` / `@webkit` | Switch engine |
+| `@firefox` / `@webkit` / `@safari` | Switch engine. `@safari` is an alias for WebKit — Playwright has no separate Safari driver. See the WebKit note below: it is also the headless escape hatch |
 | `@mobile @iphone` / `@mobile @android` | iPhone 13 / Pixel 5 emulation |
 | `@slow` | 500 ms delay between actions (debugging) |
 | `@record_video` | Record `.webm` to `artifacts/videos/` |
@@ -391,6 +391,28 @@ Playwright has no runtime setter for them. Geolocation and permissions also
 have runtime steps (`User sets geolocation to '…'`, `User grants permission '…'`).
 
 All tests run headless by default. **Priority (highest wins):** `@headed` > `--headed` > `--headless` > `.env`/workspace config
+
+**WebKit is the headless escape hatch (NOOD_0237).** Some sites detect headless
+Chromium and *stall the document* rather than refusing it: the page never fires
+`domcontentloaded`, so a probe or run dies on a bare `Page.goto` timeout with
+nothing to read. A browser **channel does not fix this** — measured on one live
+retail site, headless `chromium_headless_shell`, headless full Chromium
+(`channel="chromium"`) and headless **real Chrome** all timed out at 30 s, while
+the same URL loaded headed in 2.2 s. Headless **WebKit loaded it fine**.
+
+So when a site stalls at navigation, reach for `@webkit` before `@headed` — you
+keep a headless, CI-friendly run instead of needing a display or Xvfb:
+
+```gherkin
+@web @webkit
+Feature: Add a toy to the cart
+```
+
+Needs the WebKit binary: `noodle doctor` prints the install command with the
+right interpreter (it must be the Python that runs `noodle`, not the
+`playwright` on PATH — see README → Browsers & Playwright).
+`NOODLE_CHROMIUM_CHANNEL` pins headless chromium to a real installed browser
+(`chrome`, `msedge`) or `off` for the headless shell.
 
 **Remote browsers (Phase H):** set `NOODLE_REMOTE_URL=wss://…` and every
 scenario connects to that Playwright/grid endpoint (BrowserStack, Sauce Labs)

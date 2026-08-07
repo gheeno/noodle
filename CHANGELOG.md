@@ -4,6 +4,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a51] — 2026-08-07
+
+**NOOD_0237** — fix: the headless browser is a real browser, and the install
+line names the right python. Playwright ≥ 1.49 routes `headless=True` to
+`chromium_headless_shell`, a stripped binary that is not what a headed run
+drives; a bare chromium launch now asks for the full build in new-headless
+mode (`channel="chromium"`; `NOODLE_CHROMIUM_CHANNEL` pins another channel or
+restores the shell, and an only-shell host degrades instead of failing), so
+headless and headed drive the same browser. What that does not buy is escape
+from headless *detection*: measured against a live retail site,
+`domcontentloaded` never fires under headless chromium of any build — shell,
+full, or real Chrome — while headed loads the same URL in ~2 s and headless
+WebKit loads it fine. That is a `NOODLE_BROWSER=webkit` or `@headed` case,
+and `doctor` now tells the shell and the full build apart instead of passing
+a host that cannot run headed. Every "run: playwright install X" message now
+names this interpreter's playwright (`<python> -m playwright install`), never
+the one on PATH, which belongs to a different environment and fixes nothing.
+And the `NOODLE_BROWSER=webkit` escape now actually reaches the run: `run`
+resolved its browser straight from noodle.yaml and then overwrote
+`NOODLE_BROWSER` in the child env, so `NOODLE_BROWSER=webkit noodle author
+--run` probed on webkit and ran on chromium. Resolution is now `--browser`
+flag > inherited `NOODLE_BROWSER` > noodle.yaml — `author --run` has no
+`--browser` flag, so the env var is that run leg's only steering wheel — and
+the workspace default (chromium) is unchanged when nothing is exported.
+
 ## [1.0.0a50] — 2026-08-07
 
 **NOOD_0236** — fix: eleven findings from an adversarial prompt-shape audit.
