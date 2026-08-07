@@ -4,6 +4,74 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a53] — 2026-08-07
+
+**NOOD_0240** — fix: a test case in the Allure report shows every tag that
+applies to it.
+
+`.feature` files put the broad tags on the Feature and the specific ones on the
+Scenario:
+
+```gherkin
+@web @scroll @hover @capability
+Feature: Scroll and Hover
+  @smoke @scroll_down
+  Scenario: Scroll the catalog down
+```
+
+The Allure writer built its `tag` labels from `scenario.tags`, which in behave
+is the scenario's **own** tags only. So that test case reported two chips,
+`smoke` and `scroll_down`, and silently dropped `web`, `scroll`, `hover` and
+`capability`. Reading a report, you could not tell an `@api` case from a `@web`
+one unless the author happened to repeat the tag on every scenario. Every other
+tag consumer in the engine — hooks, runner, preconditions — already read the
+effective set; the report was the odd one out.
+
+A test case's chip row now carries every tag that applies to it, ordered broad
+→ specific (Feature, then Rule, then the scenario's own), each level in the
+order the tags are written in the file. A tag repeated at two levels renders as
+one chip. Scenario Outline rows need no special case — behave folds the
+outline's substituted tags and its Examples' tags into each generated row's own
+tags. Gated skips (NOOD_0187) get the same row, being written through the same
+result object.
+
+**The tags are collected by walking the Feature/Rule parent chain, not by
+reading `scenario.effective_tags`,** and that is the substance of this fix
+rather than an implementation detail. behave changed that property's return
+type between the versions `pyproject` accepts:
+
+| | `effective_tags` | `Scenario.parent` |
+|---|---|---|
+| behave 1.2.6 | ordered `list` | absent |
+| behave 1.3.x | unordered `set` | Feature, or Rule → Feature |
+
+Set iteration order for strings varies **per process** under hash
+randomization, so reading `effective_tags` reshuffles a test case's chips on
+every run — the same test case shows its tags in a different order each time,
+and report diffs turn to noise. Each node's own `.tags` is an ordered list in
+both versions, so the parent chain is the only stable source. behave's
+`effective_tags` is still consulted, but purely as a completeness backstop:
+any tag it knows that the walk did not reach is appended sorted, so a future
+inheritance source can never be dropped silently. Verified stable across three
+independent runs.
+
+This divergence is also why the repo's own environments disagreed: `pytest`
+runs behave 1.2.6 from the pyenv site-packages while the installed `noodle`
+launcher runs 1.3.3 from its uv tool venv. A fix written against
+`effective_tags` passes its unit tests on 1.2.6 and ships scrambled chips on
+1.3.3. `unit_tests/test_nood_0240.py` therefore emulates **both** shapes
+explicitly alongside its real-model tests, and passes under either
+interpreter. The container checks are type-based rather than truthiness-based
+for a related reason: `MagicMock` is truthy but iterates *empty*, so the
+obvious `list(getattr(sc, "effective_tags", None) or [])` reads every mocked
+scenario as untagged — a regression that only ever adds nothing and so trips
+no existing assertion.
+
+Worth noting for a future branch: `pyproject` asks for `behave>=1.2.6` with no
+upper bound, so which of these two behaviours an install gets is incidental.
+Nothing else in the engine depends on `effective_tags` ordering today, but the
+pin is loose enough that it could.
+
 ## [1.0.0a52] — 2026-08-07
 
 **NOOD_0239** — fix: the headless browser stops announcing itself, and the run

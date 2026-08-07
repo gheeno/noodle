@@ -19,6 +19,83 @@ def _redact(text) -> str:
         return "<redaction failed — message withheld>"
 
 
+def _ordered_tags(value) -> list[str] | None:
+    """`value` as tag strings when it is an ORDERED container, else None.
+
+    Rejecting `set` here is the whole point (NOOD_0240). behave 1.3 changed
+    `effective_tags`/`inherited_tags` to return sets, and set iteration order
+    for strings varies per PROCESS (hash randomization) — so a set allowed to
+    set the order would reshuffle a test case's chips on every run. Only
+    file-ordered sources may decide order. Rejecting non-containers also keeps
+    MagicMock out: it is truthy AND iterates empty, so `list(...)` on one
+    would read a scenario as untagged rather than raise."""
+    if isinstance(value, (list, tuple)):
+        return [str(t) for t in value]
+    return None
+
+
+def _any_tags(value) -> list[str]:
+    """Tag strings out of any container behave might use — order NOT trusted.
+    Used only as the completeness backstop below."""
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [str(t) for t in value]
+    return []
+
+
+def _inherited_tags(scenario) -> list[str]:
+    """Tags `scenario` inherits, outermost first, in the order they're written.
+
+    behave nests Scenario inside an optional Rule inside a Feature. Each node's
+    own `.tags` is an ordered list even in 1.3, where the derived
+    `inherited_tags`/`effective_tags` are sets — so walking the parent chain is
+    the only way to inherit tags AND keep a stable order.
+
+    A node only counts once it actually carries an ordered `.tags`: behave
+    1.2.6 has no `parent` link at all, and a chain that hit some unrelated
+    attribute would otherwise report "no inherited tags" and silently drop the
+    feature's. When the walk finds nothing, `feature.tags` is the answer — in
+    1.2.6 the Feature is the only inheritance source there is."""
+    levels, node, guard = [], getattr(scenario, "parent", None), 0
+    while node is not None and guard < 10:   # guard: a MagicMock chain is infinite
+        tags = _ordered_tags(getattr(node, "tags", None))
+        if tags is not None:
+            levels.append(tags)
+        node, guard = getattr(node, "parent", None), guard + 1
+    ordered = [t for level in reversed(levels) for t in level]  # Feature, then Rule
+    if not ordered:
+        feature = getattr(scenario, "feature", None)
+        ordered = _ordered_tags(getattr(feature, "tags", None)) or []
+    return ordered
+
+
+def effective_tags(scenario) -> list[str]:
+    """Every tag that applies to `scenario`, not just the ones written directly
+    above it (NOOD_0240).
+
+    behave splits these: `scenario.tags` is the scenario's OWN tags, while the
+    inherited ones live on its Feature (and Rule). The writer read `.tags`, so
+    a feature-level `@web @regression` never reached Allure and each test case
+    showed only its scenario-level chips. Every other tag consumer in the
+    engine — hooks, runner, preconditions — already reads the effective set;
+    the report was the odd one out.
+
+    Returned broad → specific (Feature, Rule, then the scenario's own), each in
+    the order written, deduped: a tag repeated at two levels is one tag, not
+    two chips. Scenario Outline rows need no special case — behave folds the
+    outline's substituted tags and its Examples' tags into the generated row's
+    own tags."""
+    ordered = _inherited_tags(scenario)
+    ordered += _ordered_tags(getattr(scenario, "tags", None)) or []
+    # Completeness backstop: behave's own effective_tags is the authority on
+    # WHICH tags apply (never on their order — see _ordered_tags). Anything it
+    # knows that the walk missed, e.g. an inheritance source a future behave
+    # adds, is appended sorted, so nothing is dropped and runs stay identical.
+    known = set(ordered)
+    extra = sorted({t for t in _any_tags(getattr(scenario, "effective_tags", None))
+                    if t not in known})
+    return list(dict.fromkeys(ordered + extra))
+
+
 def scenario_key(scenario) -> tuple[str, str]:
     """(historyId, fullName) — the identity ScenarioResult stamps on every
     result. NOOD_0229's retention purge names the prior results a re-run
@@ -39,7 +116,9 @@ class ScenarioResult:
             # suite/parentSuite give the Allure Suites tab a real hierarchy
             # (app folder → feature → scenario) instead of one node per test.
             {"name": "suite", "value": scenario.feature.name},
-            *[{"name": "tag", "value": t} for t in scenario.tags],
+            # NOOD_0240 — effective_tags, not .tags: feature-level tags are
+            # part of a scenario's identity and belong on its chip row.
+            *[{"name": "tag", "value": t} for t in effective_tags(scenario)],
         ]
         filename = getattr(scenario.feature, "filename", None)
         if isinstance(filename, str) and filename:
