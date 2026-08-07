@@ -479,7 +479,8 @@ def probe_page(url: str, click: list[str] | None = None,
                open_native_controls: bool = False,
                max_reveal_depth: int = 1, discover: bool = False,
                find: str | None = None,
-               workspace: str | None = None) -> dict:
+               workspace: str | None = None,
+               browser: str | None = None) -> dict:
     """Scout a page BEFORE authoring — fold ALL discovery into this one call;
     a second probe is a wasted browser launch. One headless load returns every
     actionable control (hidden trigger zones included): kind, name, selector,
@@ -515,12 +516,15 @@ def probe_page(url: str, click: list[str] | None = None,
     sends the step sentences once as `step_templates` + `step_names` (rows
     needing a POM entry keep their exact step).
     `find`: only matches, pre-cap — no spill greps. `url`: several URLs OK
-    (space/comma), one browser, acts on the LAST."""
+    (space/comma), one browser, acts on the LAST.
+    `browser`: engine — chromium default, retried on webkit if it proves
+    nothing; then `browser.tag` is the feature's tag."""
     result = core.probe_page(url, click=click, do=do, search=search,
                              suggest=suggest, follow=follow, expect=expect,
                              open_native_controls=open_native_controls,
                              max_reveal_depth=max_reveal_depth,
-                             discover=discover, workspace=_ws(workspace))
+                             discover=discover, workspace=_ws(workspace),
+                             browser=browser)
     if find:
         # NOOD_0169 — pre-cap substring filter: the one control the compact
         # cap hid, whole, instead of a payload-spill grep round trip.

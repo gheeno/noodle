@@ -14,6 +14,7 @@ from playwright.sync_api import sync_playwright
 
 from noodle import config as config_module
 from noodle import healing, log
+from noodle.agents.web import browser_pool as _browser_pool
 from noodle.agents.web import locator as locator_module
 from noodle.agents.web import pom as pom_module
 from noodle.log import logger
@@ -768,7 +769,21 @@ def _launch(engine, launch_opts, remote_url):
     else:
         if launch_opts.get("args"):
             logger.info(f"\n  🚩 Extra browser args: {launch_opts['args']}")
-        browser = browser_type.launch(**launch_opts)
+        try:
+            browser = browser_type.launch(**launch_opts)
+        except Exception:
+            # NOOD_0239 — a `playwright install --only-shell` host (common in
+            # CI) has no full Chromium build, so the channel we added above
+            # cannot launch. Degrade to the shell rather than fail the whole
+            # suite: the shell runs almost every site, and the ones it can't
+            # are the ones that channel exists for. Only ever retracts the
+            # channel WE chose — an explicit @edge is the caller's and re-raises.
+            if launch_opts.get("channel") != _browser_pool.default_channel(engine):
+                raise
+            degraded = {k: v for k, v in launch_opts.items() if k != "channel"}
+            logger.info("\n  ⚠️  full Chromium build not installed — using the "
+                        f"headless shell ({_browser_pool.install_command('chromium')})")
+            browser = browser_type.launch(**degraded)
     return pw, browser
 
 
@@ -1001,6 +1016,14 @@ def before_scenario(context, scenario):
     timeout = int(os.getenv("NOODLE_TIMEOUT", "10000"))
 
     engine, channel = _ENGINE_ALIASES.get(browser_name, (browser_name, None))
+    # NOOD_0239 — the RUN gets the full Chromium build too. NOOD_0237 taught
+    # browser_pool to ask for `channel="chromium"` instead of the stripped
+    # headless shell, but only the PROBE goes through that pool: a headless run
+    # still launched the shell, so the probe and the run drove two different
+    # browsers and a site that needs the full build was probeable but not
+    # runnable. Headless only — a headed launch already IS the full build.
+    if headless and not channel:
+        channel = _browser_pool.default_channel(engine)
     # Phase H (F4) — NOODLE_REMOTE_URL points at a remote Playwright/CDP
     # endpoint (BrowserStack, Sauce Labs, a Playwright grid): connect instead
     # of launching locally. The rest of the lifecycle is identical.
@@ -1025,6 +1048,12 @@ def before_scenario(context, scenario):
         os.makedirs(videos_dir, exist_ok=True)
         ctx_opts['record_video_dir'] = str(videos_dir)
     ctx_opts.update(_emulation_opts(tags))  # Phase N/O — geo/perms/locale/tz/scheme/offline
+    # NOOD_0239 — mask the headless UA, exactly as the probe does, so evidence
+    # proven at authoring time reproduces at run time. Must sit above the
+    # _named_ctx_opts copy: a second user ('buyer'/'seller') that kept the stock
+    # UA would stall on precisely the sites this exists for. A @device preset
+    # brings its own real UA and is left untouched.
+    ctx_opts = _browser_pool.context_options(context._browser, ctx_opts)
     # NOOD_0187 — options a NAMED context ('buyer'/'seller') must inherit:
     # cert policy + emulation. Deliberately NOT storage_state — a second user
     # being a different session is the point of a named context.

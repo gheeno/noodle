@@ -715,15 +715,25 @@ noodle run web/busterblock --browser webkit     # or firefox | safari | edge
 | `firefox` | `@firefox`, `--browser firefox` | |
 | `edge` | `--browser edge` | Real Microsoft Edge; must be installed on the machine. |
 
-**A site that stalls headless? Try `@webkit` before `@headed` (NOOD_0237).**
-Some sites detect headless Chromium and stall the document instead of refusing
-it — the page never fires `domcontentloaded`, so the run dies on a bare
-`Page.goto` timeout with nothing useful to read. A browser **channel does not
-fix this**: measured on one live retail site, headless
-`chromium_headless_shell`, headless full Chromium (`channel="chromium"`) and
-headless **real Chrome** all timed out at 30 s, while the same URL loaded headed
-in 2.2 s — and headless **WebKit loaded it fine**. Tagging the feature `@webkit`
-keeps the run headless and CI-friendly instead of demanding a display or Xvfb:
+**A site that stalls headless? Since NOOD_0239 it shouldn't — and you have a
+switch to prove it.** Some CDN edges (Akamai-class) stall the document instead
+of refusing it when the client looks automated, so the page never fires
+`domcontentloaded` and the run dies on a bare `Page.goto` timeout with nothing
+useful to read. The tell was in the User-Agent all along: Playwright's headless
+Chromium spells itself `HeadlessChrome/148.0.0.0`. Noodle now launches the full
+Chromium build and presents that same UA with the token spelled `Chrome` — the
+browser's own version and platform, nothing invented — for the probe and the
+run alike. Measured on one live retail site, same machine, same flags:
+
+| User-Agent | `goto` | Full scenario |
+|---|---|---|
+| stock `HeadlessChrome…` | times out at 15 s | fails after 245 s |
+| masked `Chrome…` | HTTP 200 in 2.1 s | passes in 4 s |
+
+`NOODLE_HEADLESS_UA=off` restores the stock UA — set it when you are testing
+your **own** bot detection and being recognised as headless is the point. If a
+site still stalls with masking on, `@webkit` remains the next thing to try
+(NOOD_0237/NOOD_0238), and `@headed` after that:
 
 ```gherkin
 @web @webkit
@@ -1799,17 +1809,42 @@ Full per-OS update path: README →
 [Browsers & Playwright](../README.md#browsers--playwright--engines-and-keeping-them-current).
 
 **A run or probe dies on `Page.goto: Timeout … waiting until
-"domcontentloaded"`, but the site is fine in your own browser (NOOD_0237)**
+"domcontentloaded"`, but the site is fine in your own browser
+(NOOD_0237 → NOOD_0239)**
 The site detects headless Chromium and **stalls** the document instead of
 refusing it, so the lifecycle event never fires and you get a timeout with no
 error page to read. Raising `--timeout` won't help — nothing is ever coming.
-Neither will a channel: headless `chromium_headless_shell`, headless full
-Chromium (`channel="chromium"`) and headless **real Chrome** were all measured
-timing out at 30 s on the same URL that loaded headed in 2.2 s. **Headless
-WebKit loaded it fine.** Tag the feature `@webkit` (or run
-`--browser webkit`) and you keep a headless CI run; `@headed` also works but
-needs a display or Xvfb. Confirm which it is by running the same URL headed
-once — if headed passes and headless times out at navigation, this is it.
+
+**NOOD_0239 fixed the cause, so first make sure you are on a build that has
+it** (`noodle --version`, then `noodle update`). The cause was the User-Agent:
+Playwright's headless Chromium announces `HeadlessChrome/…` in the one header
+every CDN edge already parses. Noodle now launches the full Chromium build and
+masks that token to `Chrome` — its own real version and platform — for the
+probe and the run alike. On the retail site that produced this entry: stock UA
+timed out at 15 s and failed the scenario after 245 s; masked UA returned HTTP
+200 in 2.1 s and passed in 4 s. Same binary, same flags, one string.
+
+NOOD_0237 originally read this symptom as an engine limitation and concluded
+that no headless Chromium could ever load such a site. That was wrong — it
+varied the browser channel while holding the UA fixed — and the `@webkit`
+advice it produced is now a fallback, not the fix.
+
+If it still stalls with masking on, the escalation is unchanged: tag the
+feature `@webkit` (or run `--browser webkit`) to keep a headless CI run, then
+`@headed`, which needs a display or Xvfb. Confirm which it is by running the
+same URL headed once — if headed passes and headless times out at navigation,
+this is it. `NOODLE_HEADLESS_UA=off` turns masking off, which is both the
+escape hatch for testing your own bot detection and the quickest way to
+reproduce the old failure on purpose.
+
+Since NOOD_0238 the **probe** also rescues itself: `noodle probe <url>` and
+`probe_page` default to chromium and retry once on webkit when chromium
+proves nothing, so a stalling site stays probeable instead of being a dead
+end you have to hand-author around. The payload then carries
+`browser.fell_back_from` and `browser.tag` — **tag the feature with what
+`tag` names**, or the run drives a different engine than the probe did.
+`noodle probe <url> --browser webkit` pins it explicitly; an engine you name
+is used exactly and never swapped.
 
 **Windows: `Activate.ps1 cannot be loaded because running scripts is
 disabled on this system`**

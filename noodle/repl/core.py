@@ -2782,7 +2782,8 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
                max_reveal_depth: int = 1,
                discover: bool = False, perform: bool = False,
                act_on: str | None = None,
-               brief: bool = False, workspace: str = ".") -> dict:
+               brief: bool = False, workspace: str = ".",
+               browser: str | None = None) -> dict:
     """NOOD_0113 — proactive DOM probe: open the page(s) headless and return
     actionable controls + POM suggestions + vocabulary-shaped steps, so an
     agent writes the feature right on the first pass instead of discovering
@@ -2812,7 +2813,13 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
     "switch to <new|last|previous|original|first|main> tab" is the fourth
     `do` verb for coming back. `brief` (NOOD_0179) returns the COMPACT payload
     with the step sentences sent once as `step_templates` + per-kind
-    `step_names` instead of one full sentence per control row."""
+    `step_names` instead of one full sentence per control row.
+    `browser` (NOOD_0238) picks the engine: chromium | firefox | webkit |
+    safari | edge. Default None = chromium, and ONLY that default retries on
+    webkit when chromium proves nothing — the case where a site stalls every
+    headless chromium build (NOOD_0237). A named browser is honoured exactly,
+    never swapped. Every payload carries `browser.used`, plus `browser.tag`
+    (`@webkit`) when the run needs a tag to reproduce the probe's engine."""
     from noodle.agents.web import probe as _probe
     urls = [normalize_url(u) for u in re.split(r"[,\s]+", url.strip()) if u]
     # NOOD_0177 — probe_page is MCP-exposed and returns a ±30-char window around
@@ -2875,13 +2882,40 @@ def probe_page(url: str, *, timeout_ms: int = 15000,
     gate_do, err = _sub_env(gate_do)
     if err:
         return err
-    result = _probe.probe(urls, timeout_ms=timeout_ms, clicks=click, do=do,
-                          gate_do=gate_do,
-                          search=search, suggest=suggest, pick=pick,
-                          mutate=mutate, follow=follow, expect=expect,
-                          open_native_controls=open_native_controls,
-                          max_reveal_depth=max_reveal_depth, discover=discover,
-                          perform=perform, act_on=act_on)
+    def _run_probe(engine: str | None) -> dict:
+        return _probe.probe(urls, timeout_ms=timeout_ms, clicks=click, do=do,
+                            gate_do=gate_do,
+                            search=search, suggest=suggest, pick=pick,
+                            mutate=mutate, follow=follow, expect=expect,
+                            open_native_controls=open_native_controls,
+                            max_reveal_depth=max_reveal_depth,
+                            discover=discover,
+                            perform=perform, act_on=act_on,
+                            browser_name=engine)
+
+    result = _run_probe(browser)
+    # NOOD_0238 — chromium is the default and stays the default, but a site that
+    # stalls every headless chromium build (NOOD_0237 measured three) used to
+    # make the probe simply unusable: no --browser flag existed, so the agent
+    # hand-authored blind against a page it had never read. One retry on webkit
+    # turns that dead end into evidence. Only when the caller named no browser
+    # — an explicit choice is honoured, never swapped (browser_pool, NOOD_0122)
+    # — and the retry announces itself in `browser.fell_back_from`.
+    if _probe.should_fall_back(result, browser, os.getenv("NOODLE_BROWSER")):
+        retried = _run_probe(_probe.FALLBACK_BROWSER)
+        if retried.get("pages"):
+            first = (result.get("errors") or [{}])[0].get("error", "")
+            retried["browser"] = _probe.browser_note(
+                _probe.FALLBACK_BROWSER, fell_back_from="chromium")
+            # Keep chromium's failure: it is why the tag is needed, and a
+            # payload that hid it would read as "webkit was simply the default".
+            retried["errors"] = [
+                *(result.get("errors") or []),
+                {"url": ", ".join(urls),
+                 "error": f"retried on {_probe.FALLBACK_BROWSER} after "
+                          f"chromium proved nothing ({first[:120]})"},
+            ]
+            result = retried
     # NOOD_0179 — brief is a payload shape, so it implies compact: a raw result
     # has no step_templates to carry.
     return _probe.compact_payload(result, brief=True) if brief else result

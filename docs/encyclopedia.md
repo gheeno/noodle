@@ -414,6 +414,14 @@ right interpreter (it must be the Python that runs `noodle`, not the
 `NOODLE_CHROMIUM_CHANNEL` pins headless chromium to a real installed browser
 (`chrome`, `msedge`) or `off` for the headless shell.
 
+Since NOOD_0239 `@webkit` is rarely what a stalling site needs. Headless
+Chromium used to announce itself as `HeadlessChrome/…` in the User-Agent, which
+Akamai-class edges stall on; Noodle now runs the full Chromium build and masks
+that token to `Chrome` (its own real version, nothing invented) for probe and
+run alike — measured on one live site, 245 s failure → 4 s pass.
+`NOODLE_HEADLESS_UA=off` restores the stock UA for testing your own bot
+detection.
+
 **Remote browsers (Phase H):** set `NOODLE_REMOTE_URL=wss://…` and every
 scenario connects to that Playwright/grid endpoint (BrowserStack, Sauce Labs)
 instead of launching locally — no code or feature changes. Vendors that need
