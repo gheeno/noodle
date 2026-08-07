@@ -99,10 +99,10 @@ tests or start test apps unless also asked.
    pre-bounded: read as returned, no grep/jq/sed/head. No noodle command
    for what you need? Say so and stop — that's an engine gap to report,
    not a shell command to improvise. Table: [AGENTS.md](../AGENTS.md).
-10. **"run the benchmark"** → `noodle benchmark --gate`. ONE call:
-   generates the three test cases, runs, serves, prints the table. Never
-   hand-build `results.json` or read host telemetry. Run it before any
-   engine-branch PR; exit 0 required.
+10. **"run the benchmark"** → `noodle benchmark --session`, author each
+   spec as `spec_<id>.feature` (`--feature-path`), then `--table`.
+   `--gate` (5 flows) is the pre-PR check; exit 0 required. Never
+   hand-build `results.json` or invent a number.
 
 ## Edge cases (playbook §8 has the full list)
 

@@ -6,7 +6,7 @@ decides the flag:
 | | `noodle benchmark --gate` | `noodle benchmark` |
 |---|---|---|
 | Question | can the engine still generate a good test | can it still take a request phrased the way people phrase them |
-| Varies | the **flow** — 5 fixed flows, one fixed phrasing | the **shape** — 5 phrasings, one fixed app |
+| Varies | the **flow** — 5 fixed flows, one fixed phrasing | the **shape** — 6 phrasings, one fixed app |
 | Target | Wikipedia + a static fixture | BusterBlock, behind its login gate |
 | Role | **required** before any engine-code PR | on demand, and before a release |
 | Cost | ~90s | ~2-3 min |
@@ -16,6 +16,63 @@ The gate holds the phrasing still so generation itself can be measured; the
 default holds the app still so the phrasing can be. A build can pass one and
 fail the other, and which one it fails tells you something different each
 time. **The rest of this page is the gate.**
+
+## Every flag, and when you want it
+
+`noodle benchmark` with no flag runs the SPEC-SHAPE benchmark headless — the
+deterministic compiler alone, no agent, no model. Everything else is a
+variation on that or on the gate.
+
+| Flag | Mode | What it does |
+|---|---|---|
+| *(none)* | shape | Headless run of all six specs. Reproducible and free, so it is the right instrument for comparing two builds. A spec the compiler cannot take is a real finding about the grammar. |
+| `--session` | shape | Opens an **agent-driven** run: starts BusterBlock, scaffolds the workspace with the real `noodle init`, arms the ledger and prints the runbook for THIS LLM session to follow. The agent is the interpreter, so no spec is blocked by phrasing — what is measured is how much work the loop took. |
+| `--table` | shape | Prints the table for the open `--session` run **from the ledger the engine wrote**, never from what the agent remembers doing, then stops the app. This ends the session. |
+| `--json` | both | One bounded JSON payload instead of the table. |
+| `--specs <file>` | shape | Read the specs from this markdown file instead of `docs/benchmark-specs.md` — for trying a spec set without editing the source of truth. |
+| `--gate` | gate | The **PR gate**: the same 5 canonical flows every time, ~90s. Required before any PR that changes engine code. |
+| `--gate --init` | gate | Only scaffold the fresh workspace under `regression_runs/<stamp>_<build>_<sha>/` and stop. |
+| `--gate --score <results.json>` | gate | Re-score an existing run instead of running it again; writes `verdict.json`/`verdict.html` next to it. |
+
+Exit **0 = PASS, 1 = REGRESSED**, in both modes.
+
+### The two shape modes are not interchangeable
+
+```bash
+noodle update                # the install must match this checkout, or it refuses
+noodle benchmark             # headless: the engine's FLOOR, no agent in the loop
+noodle benchmark --session   # agent-driven: the workflow the product ships as
+```
+
+Headless answers *"what can the compiler take on its own?"* — a blocked spec
+there is a grammar gap worth filing. `--session` answers *"what does a user
+actually experience?"* — there is always an agent in front of the engine, so
+nothing is blocked by phrasing and the honest measurement is the **cost of the
+loop**. Reporting one as the other is the mistake both modes exist to prevent.
+
+`--session` spans many turns: it opens, your session authors the specs one at
+a time, then `--table` closes it. Do not tally anything by hand in between —
+`author_test` appends a line per attempt to `.noodle/benchmark_ledger.jsonl`,
+and the table is built from that.
+
+### Both doors count
+
+The runbook prints the spec for **either** door, and the ledger records which
+one was used:
+
+```bash
+# MCP
+author_test(prompt=<the spec, verbatim>, feature_path="spec_<id>.feature",
+            workspace="<ws>", run_after_author=True, overwrite=True)
+
+# CLI (NOOD_0236)
+noodle author --prompt <the spec, verbatim> \
+    --feature-path spec_<id>.feature -w <ws> --run --overwrite
+```
+
+`--feature-path` is not cosmetic. The ledger keys on the filename, so a spec
+authored under any other name is scored **"not attempted"** — which is how a
+session that ran every spec green can still print `REGRESSED`.
 
 Not a unit test. An end-to-end "is the core product still good" check:
 fixed test cases → authored `.feature` files → green verified runs —
@@ -237,16 +294,17 @@ whatever it does with a paragraph, a one-liner, or a half-specified ticket.
 `noodle benchmark` is that axis. It holds the **app** constant — the repo's
 own bundled **BusterBlock** site (`test-apps/busterblock`), behind its login
 gate — and varies only how the request is phrased: a paragraph, a numbered
-list, a single sentence, a short ambiguous spec, and **one spec whose
-assertion is deliberately wrong**. Because the app is fixed, any difference
-between rows is attributable to the phrasing and nothing else.
+list, a single sentence, a short ambiguous spec, **one spec whose assertion is
+deliberately wrong**, and (NOOD_0236) **one whose step needs a helper the
+grammar has no verb for**. Because the app is fixed, any difference between
+rows is attributable to the phrasing and nothing else.
 
 It is not a PR gate. Run it when touching the prompt compiler, the agent
 doors or payload sizes, and before a release.
 
 | | `noodle benchmark --gate` | `noodle benchmark` |
 |---|---|---|
-| Varies | the flow (5 flows, one shape) | the shape (5 shapes, one app) |
+| Varies | the flow (5 flows, one shape) | the shape (6 shapes, one app) |
 | Target | Wikipedia + a static fixture | BusterBlock, behind its login gate |
 | Role | **required** before any engine-code PR | on demand, before a release |
 | Cost | ~90s | ~2-3 min |

@@ -686,6 +686,43 @@ def classify(entry: dict) -> dict:
                    "workspace's features to the tag form in one pass)",
         }
 
+    # NOOD_0236 — a MISSING TEST ASSET: the helper file, script or function the
+    # step names was never written. Checked here, above every page/network
+    # verdict, because those read the run's request log and will happily blame
+    # whatever mutation happened to precede the step. Observed: a feature
+    # calling `resources/functions/helpers.py:make_nickname` with no such file
+    # was reported as "app-regression … the state-changing request 'POST
+    # /api/auth/login' completed without a network error", sending the tester
+    # to debug the application's login endpoint. The runtime had already said
+    # exactly what was wrong ("Function file not found: …"); the verdict threw
+    # that away for a guess. `app-regression` is also the class that BLOCKS
+    # auto-fix, so the misfiling stopped the one lap that could have helped.
+    m = re.search(r"(Function file not found|Script not found): (\S+)", text)
+    if m:
+        return {
+            "category": "test-script",
+            "confidence": "high",
+            "reason": f"The test asks for {m.group(2)!r}, which does not exist "
+                      "— the path is resolved against the workspace root at run "
+                      "time. Nothing about the application is implicated: the "
+                      "step never ran.",
+            "fix": f"Write {m.group(2)} (a helper is a plain .py file exporting "
+                   "the named function), or correct the path in the step. "
+                   "Re-authoring now blocks on this before a browser launches.",
+        }
+    if re.search(r"Function '?\"?[\w.]+'?\"? not found in|"
+                 r"Function spec must be", text):
+        return {
+            "category": "test-script",
+            "confidence": "high",
+            "reason": "The helper file was found but does not export the "
+                      "function the step names (or the spec is malformed — it "
+                      "must read 'module:function' or 'file.py:function').",
+            "fix": "Add the missing function to that file, or fix the spelling "
+                   "of the spec in the step. This is test-side; the app was "
+                   "never asked to do anything.",
+        }
+
     # NOOD_0135 — wrong page beats every locator verdict: when navigation
     # landed off the requested path, the "missing" element cannot exist and
     # any POM/inspect work is wasted. The engine stamps this verdict at

@@ -2041,24 +2041,11 @@ def ship(
     if as_json:
         _json_out(result)
         raise typer.Exit(0 if result["ok"] else 1)
-    for a in (result.get("prompt_expansion") or {}).get("assumptions", []):
-        typer.echo(f"  ~ {a}")
-    a = result.get("author") if isinstance(result.get("author"), dict) else result
-    r = result.get("run") or {}
-    typer.echo(f"  {'✓' if a.get('ready') else '✗'} authored {a.get('feature')}")
-    for b in a.get("blocking", []):
-        typer.echo(f"    {b}")
-    if a.get("next"):
-        typer.echo(f"  → {a['next']}")
-    if r.get("skipped"):
-        typer.echo(f"  ✗ run skipped: {r['skipped']}")
-    elif r:
-        typer.echo(f"  {'✓' if r.get('ok') else '✗'} run: "
-                   f"{r.get('passed', 0)} passed, {r.get('failed', 0)} failed")
-        for u in (r.get("served") or {}).get("urls", []):
-            typer.echo(f"    {u}")
-    _echo_auto_fix(result.get("auto_fix"))
-    raise typer.Exit(0 if result.get("ok") else 1)
+    # NOOD_0236 — the shared renderer, not a second copy. See
+    # _echo_author_result: ship's own version understood only the atomic
+    # {author, run} shape and printed `✗ authored None` for every prompt the
+    # compiler refused, hiding the unresolved clauses that name the fix.
+    _echo_author_result(result)
 
 
 @app.command()
@@ -2070,6 +2057,7 @@ def author(
     evidence_step: list[int] = typer.Option(None, "--evidence-step", help="NOOD_0228 — capture an evidence screenshot on this 1-based step position (repeatable). The explicit form for a caller that already knows which step the picture proves."),
     evidence_skip: list[int] = typer.Option(None, "--evidence-skip", help="NOOD_0228 — decline an evidence screenshot on this 1-based step position (repeatable)."),
     prompt: str = typer.Option(None, "--prompt", help="NOOD_0169 — numbered plain-English steps ('1. go to <url> 2. search for X 3. add to cart 4. verify cart has X'), inline OR (NOOD_0198) a file path / '-' for stdin, so a generator upstream can hand off a written file without `\"$(cat ...)\"` mangling its backticks; the engine expands them deterministically into a goal (ambiguous steps borrow their subject from neighbouring steps, every inference echoed under prompt_expansion.assumptions) and derives app_name/base_url/feature_path from the URL. No spec file needed; combine with --run for prompt → authored → run → reports in ONE call."),
+    feature_path: str = typer.Option(None, "--feature-path", help="NOOD_0236 — name the .feature this authoring writes, instead of letting the engine derive one from the URL/scenario. The spec form has always carried `feature_path`; --prompt had no spelling for it, which made any caller that must NAME its output (the `benchmark --session` ledger keys on `spec_<id>.feature`) reachable only over MCP. Optional — omit it and derivation is unchanged."),
     workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
     run: bool = typer.Option(False, "--run", help="NOOD_0137 — atomic author+run: after a ready author, run once (headless, retries=0), serve both reports, and fail when 0 scenarios passed. Blocked authoring launches no browser."),
@@ -2189,8 +2177,11 @@ def author(
         # NOOD_0169 — prompt mode: expansion + derivation happen engine-side
         # NOOD_0198 — ...and the steps may arrive as a file path or on stdin
         prompt, _ = _arg_text(prompt)
+        # NOOD_0236 — forward an explicitly named target. Passing None keeps the
+        # engine's own derivation, so the default path is byte-identical.
         result = core.author_test(prompt=prompt, run_after_author=run,
                                   auto_fix=auto_fix, run_scope=run_scope,
+                                  feature_path=feature_path,
                                   overwrite=overwrite, workspace=workspace)
     else:
         # NOOD_0197 — --spec accepts the document inline: an argument
@@ -2227,7 +2218,8 @@ def author(
                                      param_hint="'--spec'")
         result = core.author_test(
             app_name=data.get("app_name"), base_url=data.get("base_url"),
-            feature_path=data.get("feature_path"),
+            # NOOD_0236 — the explicit flag wins over the spec's own key.
+            feature_path=feature_path or data.get("feature_path"),
             feature_content=data.get("feature_content"),
             pom_content=data.get("pom_content"),
             environment_values=data.get("environment_values"),
@@ -2247,6 +2239,26 @@ def author(
     if as_json:
         _json_out(result)
         raise typer.Exit(0 if result["ok"] else 1)
+    _echo_author_result(result)
+
+
+def _echo_author_result(result: dict) -> None:
+    """NOOD_0236 — the ONE human renderer for an authoring result, shared by
+    `author` and `ship`.
+
+    It used to be two. `ship` documents itself as a thin alias for
+    `author --prompt … --run --overwrite`, but it carried its own copy that
+    understood only the atomic {author, run} shape — so on a prompt the
+    compiler could not take, where the payload is a top-level
+    `needs_interpretation` envelope with no `author` key at all, every branch
+    missed: it printed `✗ authored None` and swallowed the error, all three
+    unresolved clauses and their suggested rewrites. The caller then had to
+    re-run the SAME prompt through `author` (a second probe, a second wall
+    clock, a second bill) just to be told why. Diagnostics belong to the
+    result, not to the command that happened to produce it.
+
+    Raises typer.Exit — the exit code is part of the rendering contract.
+    """
     # NOOD_0169 — say what was predicted, right where the result is read
     exp = result.get("prompt_expansion")
     if exp and exp.get("translation_mode"):
@@ -2262,6 +2274,16 @@ def author(
         typer.echo(f"  {'✓' if a.get('ready') else '✗'} authored {a.get('feature')}")
         for b in a.get("blocking", []):
             typer.echo(f"    {b}")
+        # NOOD_0236 — warnings on the ATOMIC path too. They were printed only
+        # on the non-atomic branch, so the one message that corrects an
+        # assumption never reached the reader of an `author --run` / `ship`:
+        # the banner announced "asserting the literal text 'Alien listing is
+        # what you are left looking at'" while the compiled step asserted
+        # "Alien", and the "check narrowed: asked for … asserting …" warning
+        # that says so was dropped. The engine had rewritten the caller's
+        # assertion and the caller could not see it.
+        for w in a.get("warnings", []):
+            typer.echo(f"  ⚠ {w}")
         if a.get("next"):      # NOOD_0214 — blocking is evidence, say so here
             typer.echo(f"  → {a['next']}")
         if r.get("skipped"):
@@ -2276,16 +2298,19 @@ def author(
         # caller's behalf. Printed whether the laps helped or not: a silent
         # self-heal is the same trust problem as a silent hand edit.
         _echo_auto_fix(result.get("auto_fix"))
-        raise typer.Exit(0 if result["ok"] else 1)
-    if not result["ok"]:
-        typer.echo(f"  ✗ {result['error']}")
+        raise typer.Exit(0 if result.get("ok") else 1)
+    # NOOD_0236 — .get() throughout: this renderer now also receives the
+    # pre-authoring envelopes (needs_interpretation / CONTRACT_BLOCKED) that
+    # carry no `feature` or `missing_secret_keys` key at all.
+    if not result.get("ok"):
+        typer.echo(f"  ✗ {result.get('error')}")
         raise typer.Exit(1)
-    typer.echo(f"  ✓ authored {result['feature']}")
+    typer.echo(f"  ✓ authored {result.get('feature')}")
     for label, key in (("POM", "pom"), ("environments", "environments"),
                        ("secrets", "secrets")):
         if result.get(key):
             typer.echo(f"    {label}: {result[key]}")
-    if result["missing_secret_keys"]:
+    if result.get("missing_secret_keys"):
         typer.echo("  ⚠ populate these secret keys locally before running: "
                    + ", ".join(result["missing_secret_keys"]))
     for w in result.get("warnings", []):
@@ -2715,14 +2740,15 @@ def benchmark(
     """Benchmark this build. Two axes, one command.
 
     Default — the SPEC-SHAPE benchmark (NOOD_0232): can the engine still take
-    a request phrased the way people phrase them? Five specs — a paragraph, a
-    numbered list, one sentence, a short ambiguous spec, and one whose
-    assertion is deliberately WRONG — all against the bundled BusterBlock site
+    a request phrased the way people phrase them? Six specs — a paragraph, a
+    numbered list, one sentence, a short ambiguous spec, one whose assertion is
+    deliberately WRONG, and one whose step needs a helper the grammar has no
+    verb for — all against the bundled BusterBlock site
     behind its login gate. The specs are parsed from docs/benchmark-specs.md,
     so the block a human pastes into a session (or an MCP client sends as
     `prompt`) is byte-for-byte the one measured here. One `noodle init`
-    workspace stamped with the build holds all five as one app package: five
-    feature files, five runs, ONE served Allure report. Prints development
+    workspace stamped with the build holds them all as one app package: six
+    feature files, six runs, ONE served Allure report. Prints development
     time, run time, corrections, token cost and the final result per spec.
     ~2-3 min; run it on demand and before a release.
 

@@ -10,6 +10,7 @@ Also home to the POM auto-scope lint (NOOD_0022) — the other class of
 "looks fine, silently never applies" mistake `noodle validate` can catch
 without a browser.
 """
+import ast
 import re
 from pathlib import Path
 
@@ -137,6 +138,86 @@ def env_refs(content: str) -> list[str]:
         if key and key not in seen:
             seen.add(key)
             out.append(key)
+    return out
+
+
+# NOOD_0236 — `calls the function 'path/to/file.py:fn'`. Deliberately the same
+# alphabet as generate._FUNCTION_REF_RE (NOOD_0177 closed an arbitrary-code
+# write through a negated character class here; do not widen it).
+_FUNC_REF_RE = re.compile(r"""calls the function ['"]([\w./:-]+)['"]""")
+
+
+def function_file_refs(content: str) -> list[str]:
+    """Every FILE the feature calls a helper out of — the 'x.py:fn' specs only.
+
+    NOOD_0236. `script_runner.call_function` treats a target ending in '.py' as
+    a path resolved against the run's cwd and everything else as an importable
+    module ('os.path:basename'), so only the former is a file whose existence
+    can be checked before a run. Returned as the path half, without ':fn'.
+
+    Authoring validated every {env:KEY} and no function reference at all, so a
+    feature naming a helper that was never written reported `ready: true` and
+    the gap only surfaced after a browser launch and a login — the one class of
+    error the readiness gate exists to catch before it costs a run.
+    """
+    seen, out = set(), []
+    for spec in _FUNC_REF_RE.findall(content or ""):
+        target, sep, _name = spec.rpartition(":")
+        if sep and target.endswith(".py") and target not in seen:
+            seen.add(target)
+            out.append(target)
+    return out
+
+
+def function_specs(content: str) -> list[tuple[str, str]]:
+    """(path, function) for every 'file.py:fn' helper the feature calls."""
+    seen, out = set(), []
+    for spec in _FUNC_REF_RE.findall(content or ""):
+        target, sep, func = spec.rpartition(":")
+        if sep and target.endswith(".py") and (target, func) not in seen:
+            seen.add((target, func))
+            out.append((target, func))
+    return out
+
+
+def _is_stub(fn: ast.FunctionDef) -> bool:
+    """A body of nothing but (optional docstring +) `raise NotImplementedError`
+    — i.e. the scaffold as written, with no implementation added yet."""
+    body = [n for n in fn.body
+            if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
+                    and isinstance(n.value.value, str))]
+    if len(body) != 1 or not isinstance(body[0], ast.Raise):
+        return False
+    exc = body[0].exc
+    name = getattr(exc, "id", None) or getattr(getattr(exc, "func", None), "id", None)
+    return name == "NotImplementedError"
+
+
+def unimplemented_function_refs(content: str, root) -> list[str]:
+    """NOOD_0236 — '<path>:<fn>' for every helper this feature calls that is
+    missing, absent from its file, or still an untouched scaffold.
+
+    The engine now CREATES the helper file (dependency injection: a step needing
+    a SQL/JDBC lookup gets a real, reusable module in the app package). Creating
+    it is not the same as satisfying it, and stopping at "the file exists" would
+    reintroduce exactly the defect the file check was added for: authoring
+    reports ready, then the run dies on NotImplementedError after a browser
+    launch and a login. Readiness means the helper actually does something.
+    """
+    out = []
+    for target, func in function_specs(content):
+        path = Path(root) / target
+        if not path.exists():
+            out.append(f"{target}:{func}")
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue          # unreadable/invalid is the run's problem to report
+        fn = next((n for n in tree.body
+                   if isinstance(n, ast.FunctionDef) and n.name == func), None)
+        if fn is None or _is_stub(fn):
+            out.append(f"{target}:{func}")
     return out
 
 

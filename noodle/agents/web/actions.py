@@ -146,6 +146,36 @@ def set_page(name: str):
     pom.set_active_page(name)
 
 
+def _check_navigation_target(url: str) -> None:
+    """NOOD_0236 — refuse a navigation that reads local state instead of a site.
+
+    NOOD_0177 closed this at the probe (`probe_page(url="file:///…/credentials",
+    expect=["AKIA"])` was a read oracle) and the prompt door never accepted a
+    `file:` URL at all — but the RUN door did. A hand-authored
+    `Given User is on "file:///…/secrets.env"` opened the file, asserted its
+    contents and went GREEN, and because reports are served over HTTP and
+    screenshots ride into Allure, the contents left the machine with them. An
+    agent authoring from an untrusted prompt is exactly the caller that reaches
+    this door, so the asymmetry was the whole hole.
+
+    Local fixture PAGES stay first-class (NOOD_0115): a file:// URL ending in
+    .html/.htm is the documented way to test a static page offline, and the
+    bare-relative-path branch above only ever produces those. Anything else
+    needs the same explicit opt-in the probe uses.
+    """
+    if not (url or "").lower().startswith("file:"):
+        return
+    if os.getenv("NOODLE_ALLOW_LOCAL_URLS", "").strip().lower() in (
+            "1", "true", "yes", "on"):
+        return
+    if Path(urlsplit(url).path).suffix.lower() in (".html", ".htm"):
+        return
+    raise AssertionError(
+        f"refusing to navigate to {url!r}: a file:// target that is not an "
+        ".html/.htm fixture page reads local state, not the site under test. "
+        "Set NOODLE_ALLOW_LOCAL_URLS=1 if this really is a fixture.")
+
+
 def navigate(page: Page, url: str):
     # Portable local fixtures: a bare relative .html path → a file:// URL, so a
     # feature can say `is on "tests/terminal/resources/app.html"` on any machine.
@@ -157,6 +187,7 @@ def navigate(page: Page, url: str):
         elif url.startswith("www."):
             # NOOD_0062 — testers write "www.stone.com"; Playwright requires a scheme.
             url = "https://" + url
+    _check_navigation_target(url)
     # NOOD_0092 — one goto(), full NOODLE_FIND_TIMEOUT budget, no retry. A slow
     # server keeps streaming its single response; re-issuing goto() is a page
     # refresh that restarts the load and makes a loaded server slower. goto()

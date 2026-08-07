@@ -10,9 +10,10 @@ whatever it does with a paragraph, a one-liner or a half-specified ticket.
 
 This benchmark holds the APP constant — the repo's own bundled BusterBlock
 site, behind its login gate — and varies only how the request is phrased:
-a paragraph, a numbered list, one sentence, a short ambiguous spec, and one
-spec whose assertion is deliberately wrong. Because the app is fixed, any
-difference between rows is attributable to the phrasing and nothing else.
+a paragraph, a numbered list, one sentence, a short ambiguous spec, one spec
+whose assertion is deliberately wrong, and (NOOD_0236) one whose step needs a
+helper the grammar has no verb for. Because the app is fixed, any difference
+between rows is attributable to the phrasing and nothing else.
 
 Five design rules, each of which is the reason a column reads the way it does:
 
@@ -23,9 +24,9 @@ pastes stops being the one the engine measures. One file, both audiences: a
 human copies a fenced block into their session, an MCP client sends the same
 block as `prompt`, and this module reads it byte-for-byte.
 
-**One workspace, five features, one report.** Every spec authors into the
-same `noodle init` workspace under its OWN feature file, so the served Allure
-report holds all five as one suite — which is what a suite is. Results
+**One workspace, one feature per spec, one report.** Every spec authors into
+the same `noodle init` workspace under its OWN feature file, so the served
+Allure report holds them all as one suite — which is what a suite is. Results
 accumulate (NOOD_0229), so each spec is run once and only once: no second
 authoring pass, and the report is of exactly the runs that were measured.
 
@@ -380,13 +381,21 @@ def runbook(workspace: str, specs: list) -> str:
         "The app is running and the workspace is scaffolded. Do the rest in "
         "THIS session, in order:", "",
         f"  workspace: {workspace}",
-        "", "For each of the 5 specs below:", "",
+        "", f"For each of the {len(specs)} specs below:", "",
         "  1. Send the spec to the engine EXACTLY as written — do not reword "
         "it first. That first attempt is what measures the engine on its own.",
-        "     author_test(prompt=<the spec, verbatim>,",
-        "                 feature_path=\"spec_<id>.feature\",",
-        f"                 workspace=\"{workspace}\",",
-        "                 run_after_author=True, overwrite=True)",
+        "     Use EITHER door — the product ships on both, and the ledger "
+        "records which one you used (NOOD_0236):",
+        "       MCP:  author_test(prompt=<the spec, verbatim>,",
+        "                         feature_path=\"spec_<id>.feature\",",
+        f"                         workspace=\"{workspace}\",",
+        "                         run_after_author=True, overwrite=True)",
+        "       CLI:  noodle author --prompt <the spec, verbatim> \\",
+        "                 --feature-path spec_<id>.feature \\",
+        f"                 -w {workspace} \\",
+        "                 --run --overwrite",
+        "     The filename is not cosmetic: the ledger keys on it, and a spec "
+        "authored under any other name reads as 'not attempted'.",
         "  2. If it comes back blocked, YOU translate it — that is your job in "
         "this loop, and the ledger is counting how much of it you had to do. "
         "Re-author with the same feature_path. Repeat until it authors.",
@@ -399,10 +408,16 @@ def runbook(workspace: str, specs: list) -> str:
         "snapshotting the login page.",
         "  3. Move to the next spec. Do not batch them — one spec at a time, "
         "so the ledger's per-spec timings mean something.", "",
+        "Stay inside noodle the whole way (NOOD_0236). OFF-ENG in the table is "
+        "wall clock this session spent NOT inside an engine call — reading app "
+        "source, curl/grep/jq, guessing a selector. The engine cannot see your "
+        "shell, so that gap is the only honest measure of whether the guard "
+        "rails held; a probe you needed counts as engine time, a detour does "
+        "not.", "",
         "Then print the table:  noodle benchmark --table", "",
         "The engine records every attempt itself. Do not tally anything by "
         "hand and do not report a number you did not read off that table.",
-        "", "── the 5 specs " + "─" * 50]
+        "", f"── the {len(specs)} specs " + "─" * 50]
     for s in specs:
         lines += ["", f"[{s['ref']}] spec_{s['id']}.feature — {s['label']}",
                   "", *(f"    {ln}" for ln in s["spec"].splitlines())]
@@ -461,6 +476,15 @@ def session_table(workspace: str) -> dict:
             "expect": spec["expect"], "outcome": outcome,
             "feature": last.get("feature"), "attempts": len(mine),
             "development_s": dev, "engine_s": engine_s,
+            # NOOD_0236 — Purpose D's guard rail, made falsifiable. Wall clock
+            # this spec spent OUTSIDE any engine call: reading app source,
+            # curl/grep/jq, guessing a selector, or simply thinking. The engine
+            # cannot observe the driving session's shell, so it does not
+            # pretend to — but it can subtract what it DID spend from the wall
+            # clock it timestamped both ends of, and the remainder is the only
+            # honest measure of whether the loop stayed on the rails. A probe
+            # the flow needed is engine time; a detour is not.
+            "off_engine_s": round(max(0.0, dev - engine_s), 1),
             "run_s": last.get("run_s"), "elapsed_s": dev,
             "payload_tokens": last.get("tokens"),
             "corrections": heals, "correction_detail":
@@ -947,7 +971,8 @@ def score(results: dict) -> dict:
         "app_under_test": results.get("app_under_test"),
         "llm_mode": results.get("llm_mode"),
         "cases": cases, "report": report, "tally": tally, "llm": llm,
-        "average": {k: _avg(k) for k in ("development_s", "engine_s", "run_s",
+        "average": {k: _avg(k) for k in ("development_s", "engine_s",
+                                         "off_engine_s", "run_s",
                                          "corrections", "lines",
                                          "payload_tokens")},
         "regressions": regressions,
@@ -1013,28 +1038,32 @@ def render_table(verdict: dict) -> str:
             f"   specs:          {v.get('spec_doc') or SPEC_DOC}",
             f"   interpretation: {v.get('llm_mode') or 'unknown'}",
             f"   workspace:      {v.get('workspace') or '—'}", "",
-            f"   {'SPEC':<15}{'SHAPE':<26}{'DEV':>7}"
-            + (f"{'ENGINE':>8}" if eng else "")
+            f"   {'SPEC':<16}{'SHAPE':<26}{'DEV':>7}"
+            + (f"{'ENGINE':>8}{'OFF-ENG':>9}" if eng else "")
             + f"{'RUN':>7}{'CORR':>6}{'TOKENS':>8}  RESULT"]
     for c in v["cases"]:
         rows.append(
-            f"   {c['id']:<15}"
+            f"   {c['id']:<16}"
             # NOOD_0235 — an ellipsis, so a clipped label reads as
             # clipped rather than as the spec's actual name.
             f"{(c['label'][:24] + '…' if len(c['label']) > 25 else c['label']):<26}"
             f"{_s(c.get('development_s')):>7}"
-            + (f"{_s(c.get('engine_s')):>8}" if eng else "")
+            + (f"{_s(c.get('engine_s')):>8}{_s(c.get('off_engine_s')):>9}"
+               if eng else "")
             + f"{_s(c.get('run_s')):>7}"
             f"{_n(c.get('corrections')):>6}{_n(c.get('payload_tokens')):>8}"
             f"  {_outcome_text(c)}")
     a, t = v["average"], v["tally"]
-    rows += ["   " + "─" * (76 + (8 if eng else 0)),
-             f"   {'average (delivered specs)':<41}{_s(a['development_s']):>7}"
-             + (f"{_s(a['engine_s']):>8}" if eng else "")
+    rows += ["   " + "─" * (77 + (17 if eng else 0)),
+             f"   {'average (delivered specs)':<42}{_s(a['development_s']):>7}"
+             + (f"{_s(a['engine_s']):>8}{_s(a.get('off_engine_s')):>9}"
+                if eng else "")
              + f"{_s(a['run_s']):>7}{_n(a['corrections']):>6}"
              f"{_n(a['payload_tokens']):>8}",
              "   (averages cover specs that produced a test — a refusal "
              "returns fast and small)",
+             "   (OFF-ENG = wall clock outside any engine call — the guard-rail "
+             "proxy; the engine cannot see the session's shell)",
              f"   budget: ≤{v['budget']['max_development_s']:.0f}s to develop "
              f"a test case · ≤{v['budget']['max_corrections']:.0f} corrections "
              f"· ≤{v['budget']['max_payload_tokens']:.0f} tokens back to the "

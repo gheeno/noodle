@@ -1621,6 +1621,21 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
         return {"ok": False, "error": f"unsupported run_scope {run_scope!r}; "
                 "valid: feature (this feature only), app (its whole package)"}
     cfg = config.load(workspace)
+    # NOOD_0236 — authoring into a directory that is not a workspace. Without
+    # noodle.yaml there is no engine glue (behave's steps/ and environment.py
+    # live in it), so the package is written, `✓ authored` is printed, and the
+    # run that follows finds nothing to execute and reports "0 passed, 0
+    # failed" — no error, no scenario, no clue. Observed for real when a shell
+    # left its cwd inside an app folder. A warning, not a refusal: `author` is
+    # also how a fresh package gets bootstrapped, and refusing here would
+    # break the scaffold path (including the benchmark's own).
+    workspace_warning = None
+    if not (Path(workspace) / "noodle.yaml").exists():
+        workspace_warning = (
+            f"{Path(workspace).resolve()} has no noodle.yaml — it is not a "
+            "Noodle workspace, so a run here executes nothing (0 scenarios). "
+            "Run `noodle init` here, or re-send with the workspace you meant "
+            "(-w / workspace=).")
     # Reuse an existing package for this URL, else a fresh web/<app> package —
     # same layout generate.py produces (docs/feature-packages.md).
     existing = generate._app_from_existing_url(base_url, cfg, workspace)
@@ -1824,6 +1839,31 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     content = feature_content if feature_content.endswith("\n") else feature_content + "\n"
     if llm_required:
         content = validate.annotate_llm_image_steps(content)
+    # NOOD_0236 — the app-relative short form the vocabulary teaches
+    # ('resources/functions/x.py:fn', NOOD_0019) is rewritten to the real path
+    # before anything is written. `generate` has done this since NOOD_0019;
+    # `author` — the door the product actually ships on — never did, so the
+    # documented spelling resolved against the WORKSPACE root at run time and a
+    # helper sitting correctly in the app's resources/ folder was reported
+    # missing. Same transform, same call, so the two doors agree.
+    # NOOD_0236 — dependency injection: a step naming a helper the grammar has
+    # no verb for (a SQL/JDBC lookup, a token mint) gets its file CREATED here,
+    # in the app package, before anything else looks at it. Runs against the
+    # app-relative short form, so it must precede the rewrite below.
+    from noodle.repl.generate import (
+        _rewrite_function_paths,
+        scaffold_function_refs,
+    )
+    scaffolded = [p for p in scaffold_function_refs(app_dir, content)]
+    # app_dir is .resolve()d above, so it must be made workspace-relative first
+    # — the rewrite prefixes the spec with whatever it is handed, and an
+    # absolute one would bake this machine's home directory into a committed
+    # .feature (and break the moment the workspace moved or CI checked it out).
+    try:
+        _fn_base = app_dir.relative_to(Path(workspace).resolve())
+    except ValueError:
+        _fn_base = app_dir
+    content = _rewrite_function_paths(content, _fn_base)
 
     res_dir = app_dir / "resources"
     env_path = res_dir / f"{app}_environments.yaml"
@@ -2021,6 +2061,20 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
             f"{{env:{app.upper()}}}); set any other key in the app's "
             "environments.yaml, secrets.env, or environment_values: "
             + ", ".join(unresolved))
+    # NOOD_0236 — a helper the feature calls but nobody wrote. Readiness checked
+    # every {env:KEY} and no function reference at all, so this authored
+    # `ready: true` and failed only after a browser launch and a login. Resolved
+    # exactly as script_runner does it (cwd = workspace); the app-relative form
+    # was already rewritten to a real path above, so both spellings are covered.
+    if todo_fns := validate.unimplemented_function_refs(content, workspace):
+        made = ", ".join(str(Path(p).relative_to(Path(workspace).resolve()))
+                         if Path(p).is_absolute() else str(p)
+                         for p in scaffolded)
+        blocking.append(
+            f"{len(todo_fns)} custom function(s) still raise NotImplementedError"
+            + (f" — the engine created {made}" if scaffolded else "")
+            + ". Implement the body, then re-author with overwrite=true: "
+            + ", ".join(todo_fns))
     # NOOD_0135 — URL fidelity: readiness must verify the URL a run will
     # actually resolve, not just that the key exists. A process env var or
     # environment_values override silently redirecting the run is a blocker.
@@ -2078,6 +2132,10 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
     # features CAN legitimately share a flow.
     warnings += _overlap_warnings(content, feat_dest, app_dir)
     warnings += _orphan_pom_warnings(app_dir)
+    # NOOD_0236 — first, because a package written outside a workspace makes
+    # every warning below it moot.
+    if workspace_warning:
+        warnings.insert(0, workspace_warning)
     # NOOD_0199 — a check the engine cut down to its probe-proven substring is
     # a weaker assertion than the one asked for, so it is stated, never silent.
     for nar in ((goal_ev or {}).get("narrowed") or []):

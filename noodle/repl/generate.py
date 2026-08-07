@@ -238,24 +238,25 @@ def _rewrite_function_paths(feature: str, app_dir: Path) -> str:
     return _FUNCTION_REF_RE.sub(_fix, feature)
 
 
-def _scaffold_referenced_resources(app_dir: Path, feature: str) -> list[Path]:
-    """Detection-based scaffolding (NOOD_0019): a generated test only gets the
-    extra resource kinds (functions/, payloads/, preconditions.yaml) it
-    actually references, mirroring busterblock's full package shape without
-    dumping empty folders on every plain login/search test. Existing files
-    are extended (a missing function/precondition block appended), never
-    clobbered."""
+def scaffold_function_refs(app_dir: Path, feature: str) -> list[Path]:
+    """Write a stub for every `calls the function 'file.py:fn'` the feature
+    names but the package does not have yet. Returns the paths written.
+
+    NOOD_0236 — factored out of _scaffold_referenced_resources so the AUTHOR
+    door can call it without also minting payload/precondition scaffolding.
+    This is the dependency-injection contract: a step that needs a helper the
+    grammar has no verb for (a SQL/JDBC lookup, a token mint, a checksum) gets
+    a real file in the app package, encapsulated with the test that asked for
+    it and importable by any sibling .feature. The engine creates the file and
+    names it; whoever drives the session writes the body.
+
+    `feature` must carry the APP-RELATIVE short form ('resources/functions/…'),
+    i.e. this runs BEFORE _rewrite_function_paths — the rewrite prefixes the
+    spec with app_dir, and joining that onto app_dir again would either double
+    the path (relative app_dir) or silently depend on the absolute-path
+    override (absolute app_dir).
+    """
     written: list[Path] = []
-    res_dir = app_dir / "resources"
-
-    for m in _PAYLOAD_REF_RE.finditer(feature):
-        rel = m.group(1) or m.group(2)
-        path = res_dir / rel
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text('{\n  "TODO": "replace with real payload data"\n}\n', encoding="utf-8")
-            written.append(path)
-
     for m in _FUNCTION_REF_RE.finditer(feature):
         target, sep, func = m.group(1).rpartition(":")
         if not sep or not target.endswith(".py"):
@@ -282,6 +283,28 @@ def _scaffold_referenced_resources(app_dir: Path, feature: str) -> list[Path]:
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(stub)
             written.append(path)
+    return written
+
+
+def _scaffold_referenced_resources(app_dir: Path, feature: str) -> list[Path]:
+    """Detection-based scaffolding (NOOD_0019): a generated test only gets the
+    extra resource kinds (functions/, payloads/, preconditions.yaml) it
+    actually references, mirroring busterblock's full package shape without
+    dumping empty folders on every plain login/search test. Existing files
+    are extended (a missing function/precondition block appended), never
+    clobbered."""
+    written: list[Path] = []
+    res_dir = app_dir / "resources"
+
+    for m in _PAYLOAD_REF_RE.finditer(feature):
+        rel = m.group(1) or m.group(2)
+        path = res_dir / rel
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{\n  "TODO": "replace with real payload data"\n}\n', encoding="utf-8")
+            written.append(path)
+
+    written += scaffold_function_refs(app_dir, feature)
 
     precond_names = sorted(set(_PRECONDITION_REF_RE.findall(feature)))
     if precond_names:

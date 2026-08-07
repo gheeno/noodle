@@ -84,12 +84,16 @@ def test_specs_are_parsed_from_the_document_not_hard_coded():
 
 def test_every_shape_the_ticket_asked_for_is_present():
     """B1-B5: a paragraph, step by step, one sentence, a short ambiguous spec,
-    and a spec that must fail."""
+    and a spec that must fail. B6 (NOOD_0236): a step needing a helper the
+    grammar has no verb for — the dependency-injection path."""
     specs = {s["id"]: s for s in bench.load_specs()}
     assert set(specs) == {"paragraph", "steps", "one_liner", "ambiguous",
-                          "expected_fail"}
+                          "expected_fail", "helper_function"}
     assert specs["expected_fail"]["expect"] == "fail"
     assert specs["steps"]["expect"] == "pass"
+    # the helper spec must actually name a file:function, else it is not
+    # exercising the injection path at all
+    assert "resources/functions/" in specs["helper_function"]["spec"]
 
 
 def test_every_spec_declares_a_known_expect_and_a_non_empty_block():
