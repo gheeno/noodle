@@ -302,16 +302,39 @@ def _arm_click_probe(page: Page) -> dict | None:
 # toast class conventions; nothing app-specific. The announcement element
 # itself is often zero-sized with visible children, so entries are kept by
 # non-empty innerText, never by their own bounding box.
+# NOOD_0235 — a bare live region is NOT automatically an announcement.
+# Marking a results container `aria-live="polite"` is the correct
+# accessibility pattern for a list that updates, and what it holds is DATA.
+# Read as an announcement, a catalogue's rows became "the application
+# announced: <50 table rows>" — and the RCA verdict downstream
+# (app-rejected-action) then reported a SUCCESSFUL login as a refusal and
+# told the reader to satisfy a precondition that does not exist. Measured on
+# the benchmark's own app, whose results tbody carries aria-live.
+#
+# The split is by ROLE, not by wording: an alert/alertdialog/status role and
+# the two toast conventions are announcement surfaces by declaration and keep
+# today's behaviour exactly. A bare live region has to LOOK like a status
+# message — short, and carrying none of the repeated structure that means
+# "this is a list of things" — or it is the page's own content.
 _ANNOUNCE_JS = """
 () => {
-  const SEL = '[role="alert"], [role="alertdialog"], [role="status"],' +
-              ' [aria-live="polite"], [aria-live="assertive"],' +
-              ' [class*="toast" i], [class*="snackbar" i]';
+  const STATUS = '[role="alert"], [role="alertdialog"], [role="status"],' +
+                 ' [class*="toast" i], [class*="snackbar" i]';
+  const LIVE = '[aria-live="polite"], [aria-live="assertive"]';
+  const MAX_STATUS_CHARS = 160;
+  const dataish = (el) =>
+    el.querySelector('tr, table') !== null ||
+    el.querySelectorAll('li, [role="row"], [role="listitem"]').length >= 3;
   const out = [];
   const walk = (root) => {
-    for (const el of root.querySelectorAll(SEL)) {
-      const t = (el.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 200);
-      if (t && !out.includes(t)) out.push(t);
+    for (const el of root.querySelectorAll(STATUS + ', ' + LIVE)) {
+      const declared = el.matches(STATUS);
+      const raw = (el.innerText || '').trim().replace(/\\s+/g, ' ');
+      if (!raw) continue;
+      // length is judged on the WHOLE text, before the payload clip
+      if (!declared && (raw.length > MAX_STATUS_CHARS || dataish(el))) continue;
+      const t = raw.slice(0, 200);
+      if (!out.includes(t)) out.push(t);
     }
     for (const host of root.querySelectorAll('*'))
       if (host.shadowRoot) walk(host.shadowRoot);

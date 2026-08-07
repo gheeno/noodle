@@ -103,6 +103,26 @@ _VALID_BROWSERS = config.VALID_BROWSERS   # NOOD_0179 — one table, in noodle.c
 # PATH that has no venv bin dir, and `python -m behave` always resolves.
 _BEHAVE_CMD = [sys.executable, "-m", "behave"]
 
+# NOOD_0235 — behave's own summary, which a DRY RUN has no business printing.
+# "2 features passed, 3 scenarios passed" alongside "0 steps passed … 42
+# untested" is a false green, and `noodle list` is the command AGENTS.md
+# mandates instead of `ls` — so it lands in a payload an agent is told to
+# prefer over its own eyes. Only the counts are rewritten; every listed
+# feature, scenario and step is passed through untouched.
+_BEHAVE_TALLY = re.compile(
+    r"^(?P<n>\d+) (?P<what>features?|scenarios?|steps?) passed, .*$", re.M)
+
+
+def _listing_tally(out: str) -> str:
+    """behave's dry-run summary, restated as what a listing actually knows."""
+    def _say(m):
+        n, what = int(m.group("n")), m.group("what").rstrip("s")
+        total = re.search(r"(\d+) untested", m.group(0))
+        found = n + (int(total.group(1)) if total else 0)
+        return (f"{found} {what}{'' if found == 1 else 's'} found "
+                "(listing only — nothing was run)")
+    return _BEHAVE_TALLY.sub(_say, out)
+
 # Truthy values accepted from environment (beyond the canonical "true").
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -2935,10 +2955,20 @@ def list_scenarios(
         return
     if path is None:
         path = config.load(workspace)["tests_dir"]
-    subprocess.run([
+    # NOOD_0235 — behave's dry-run tally is rewritten before it is printed.
+    # It ends "2 features passed, 3 scenarios passed, 0 steps passed,
+    # 42 untested" — nothing ran, and this command is the one AGENTS.md
+    # mandates in place of `ls`, so a false green sits in the payload an
+    # agent is told to trust. What a listing can honestly report is how much
+    # it found.
+    proc = subprocess.run([
         *_BEHAVE_CMD, path, "--dry-run", "--no-capture",
         "--format", "pretty", "--no-skipped",
-    ], cwd=workspace)
+    ], cwd=workspace, capture_output=True, text=True)
+    typer.echo(_listing_tally(proc.stdout).rstrip())
+    if proc.stderr.strip():
+        typer.echo(proc.stderr.rstrip(), err=True)
+    raise typer.Exit(proc.returncode)
 
 
 @app.command()

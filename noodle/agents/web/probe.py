@@ -2810,6 +2810,26 @@ def _transaction_incomplete(pg: dict) -> bool:
     return any(not e.get("found") for e in pg.get("expect", []))
 
 
+def _incomplete_reason(pg: dict) -> str:
+    """NOOD_0235 — WHICH of the two it was, in the caller's own terms.
+
+    Both blockers said "transaction did not reach the requested state",
+    which names a transaction failure. On a probe whose `do` chain completed
+    3 of 3 and whose only unmet item was one `--expect` term, that sentence
+    is false: nothing about the transaction failed, one string was not on
+    the page. A reader chasing a chain failure that never happened is the
+    diagnose-the-wrong-thing defect this repo keeps closing elsewhere."""
+    if pg.get("do_warnings"):
+        return ("the requested transaction did not complete (see "
+                "do_warnings/do_failed)")
+    missing = [str(e.get("text")) for e in pg.get("expect", [])
+               if not e.get("found")]
+    return ("expected text not found on the page the probe ended on: "
+            + ", ".join(repr(t) for t in missing[:3])
+            + (f" (+{len(missing) - 3} more)" if len(missing) > 3 else "")
+            + " — the transaction itself completed")
+
+
 def _author_ready(pg: dict) -> bool:
     """True only when nothing blocks pasting this page's suggestions: DOM
     coverage (not visual_only), the requested transaction/expectations
@@ -2855,8 +2875,7 @@ def _author_blockers(pg: dict, cap: int | None) -> list[str]:
         return ["coverage is visual_only — no accessible controls; do NOT "
                 "author selectors from this page"]
     if _transaction_incomplete(pg):
-        return ["transaction did not reach the requested state (see "
-                "do_warnings/do_failed/expect) — do NOT author from this probe"]
+        return [_incomplete_reason(pg) + " — do NOT author from this probe"]
     out = []
     for blk in [*_blocks(pg), *pg.get("frames", [])]:
         shown, _ = _cap(_compact_controls(blk["controls"]), cap)
@@ -3779,9 +3798,8 @@ def render(result: dict, compact: bool = False, section: str = "all",
             # housekeeping, and the reviewed session authored three red runs
             # off evidence from the wrong state.
             if _transaction_incomplete(pg):
-                out.append("  author_ready: false — transaction did not reach "
-                           "requested state (see the do/expect lines below); "
-                           "do NOT author from this probe")
+                out.append("  author_ready: false — " + _incomplete_reason(pg)
+                           + "; do NOT author from this probe")
             else:
                 out.append("  author_ready: false — fix the ⚠ items before "
                            "pasting POM/steps")
@@ -3986,6 +4004,13 @@ def _render_section(result: dict, section: str,
     """One narrow slice — a cheap model asks one narrow question."""
     out = []
     for pg in result.get("pages", []):
+        # NOOD_0235 — an --expect verdict is the answer to a question the
+        # caller asked outright, not one of the page's sections, so a
+        # --section slice must never swallow it. It did: `--expect X
+        # --section headings` returned headings and nothing else, silently
+        # dropping the FOUND/NOT-FOUND line that `--help` promises "at the
+        # TOP" — the flag was invoked and its answer thrown away.
+        out += [ln.strip() for ln in _expect_lines(pg, indent="")]
         if section == "pom":
             for blk in _blocks(pg):
                 if blk["pom_yaml"]:

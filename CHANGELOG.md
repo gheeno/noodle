@@ -4,6 +4,69 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a49] — 2026-08-07
+
+**NOOD_0235** — feature: the engine tells the truth on the way back. An
+independent session was pointed at NOOD_0234's branch and told to drive it
+the way a user would. The grammar held — all five benchmark shapes authored
+on the first verbatim attempt, zero re-author laps. What it found instead
+was a set of payloads that said something untrue on the way back, and a
+payload an agent is instructed to trust is the one place an untruth is most
+expensive.
+
+**A live region is not automatically an announcement.** NOOD_0167 reads ARIA
+alert/status roles, toast classes *and* bare `aria-live` regions as the
+app's response to a click. But marking a results container
+`aria-live="polite"` is the CORRECT accessibility pattern for a list that
+updates, and what it holds is data — so a catalogue's rows were captured as
+"the application announced: …", and the RCA verdict downstream
+(`app-rejected-action`) reported a **successful** login as a refusal, told
+the reader to satisfy a precondition that does not exist, and added that
+locator work was wasted until they did. Declared surfaces
+(alert/alertdialog/status/toast) keep their behaviour exactly; a bare live
+region now has to look like a status message — short, and carrying none of
+the repeated structure that means "this is a list of things". Measured on
+the benchmark's own app, whose results `tbody` carries `aria-live`.
+
+**`noodle list` reported passes for a run that never happened.** behave's
+dry-run summary ends "2 features passed, 3 scenarios passed" beside
+"0 steps passed … 42 untested". This is the command AGENTS.md mandates in
+place of `ls`, so a false green sat in the payload an agent is told to
+prefer over its own eyes. It now reports what a listing can honestly know:
+how much it found. The listed features, scenarios and steps pass through
+untouched.
+
+**`probe --expect` verdicts were dropped by `--section`.** `--help` promises
+the FOUND/NOT-FOUND lines "at the TOP"; `--section headings` returned
+headings and nothing else. An expect verdict is the answer to a question the
+caller asked outright, not one of the page's sections, so it now survives
+every slice.
+
+**`author_ready: false` named a transaction failure that did not happen.**
+One unmet `--expect` on a probe whose `do` chain completed 3 of 3 reported
+"transaction did not reach the requested state" — a sentence that sends the
+reader hunting a chain failure there is no evidence for. The verdict is
+unchanged (an unproven expectation still blocks); the sentence now names
+which of the two causes it was.
+
+**`--table` implied a teardown it did not do.** `_host_detached` records no
+pid when the app was already running ("not ours to kill"), so
+`session_stop`'s no-pid branch returned `None` and said nothing — defeating
+the promise in its own docstring, in exactly the case that docstring was
+written for. It now says the app was left running, and why. Plus two
+smaller ones from the same review: the session-only `ENGINE` column is
+documented in `docs/benchmark-specs.md`, and a clipped shape label carries
+an ellipsis so it reads as clipped rather than as the spec's real name.
+
+**Still open, recorded not fixed** (`docs/benchmark-specs.md § Still open`,
+added under NOOD_0234): four of the five benchmark specs assert a title the
+app renders *before* the search runs, so they would stay green if the search
+step did nothing. It is general rather than a quirk of that app — any page
+that renders its dataset then filters does the same — and the engine cannot
+notice, because `--expect` verdicts are only ever evaluated on the page the
+probe ENDED on. Closing it needs an expect pass on the pre-search state plus
+a warning when a search-scoped check is true on both.
+
 ## [1.0.0a48] — 2026-08-06
 
 **NOOD_0234** — feature: the grammar takes requests the way people write
