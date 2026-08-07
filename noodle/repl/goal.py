@@ -170,7 +170,16 @@ _ACTION_KEYS = {"search": {"do", "id", "term"},
                 # feature_content for.
                 "api": {"do", "id", "method", "url", "body",
                         "rows", "repeat", "expect_status",
-                        "headers", "auth", "store", "timeout", "wait_until"}}
+                        "headers", "auth", "store", "timeout", "wait_until"},
+                # NOOD_0236 — dependency injection. Some steps need a value the
+                # grammar has no verb for and never should: a SQL/JDBC lookup, a
+                # signed token, a checksum. The runtime has had
+                # `calls the function` since NOOD_0009, but no goal could reach
+                # it, so every such test dropped to hand-written feature_content
+                # — never intent-verified. The helper file is created by the
+                # authoring transaction and blocks until its body is written, so
+                # the value is injected, not invented.
+                "call_function": {"do", "id", "spec", "var", "args"}}
 _ACTION_REQUIRED = {"search": {"term"}, "suggest": {"term", "option"},
                     "pick": set(), "click": {"target"},
                     # NOOD_0207 — `item_from` left the required set: it is one
@@ -181,7 +190,8 @@ _ACTION_REQUIRED = {"search": {"term"}, "suggest": {"term", "option"},
                     "check": {"target"}, "uncheck": {"target"},
                     "hover": {"target"}, "upload": {"target", "file"},
                     "press_key": {"key"}, "pick_date": {"target", "date"},
-                    "go_back": set(), "api": {"url"}}
+                    "go_back": set(), "api": {"url"},
+                    "call_function": {"spec"}}
 _PICK_STRATEGIES = {"first_actionable"}
 # NOOD_0201 — a {var:NAME} the engine will write: same shape the runner
 # uppercases into its captured store.
@@ -287,7 +297,12 @@ def vocabulary() -> dict:
     keeps only what has no structured home."""
     return {
         "goal_keys": sorted(_GOAL_KEYS),
-        "actions": {do: {"keys": sorted(keys),
+        # NOOD_0236 — `do` and `id` are legal on EVERY action, so listing them
+        # under all fifteen cost ~360 B of the 8 KB contract to say the same
+        # two words fifteen times. Stated once here and omitted from the
+        # per-action key sets below; `keys` therefore means "besides these".
+        "action_common_keys": ["do", "id"],
+        "actions": {do: {"keys": sorted(keys - {"do", "id"}),
                          "required": sorted(_ACTION_REQUIRED.get(do) or ())}
                     for do, keys in sorted(_ACTION_KEYS.items())},
         "check_keys": sorted(_CHECK_KEYS),
@@ -936,7 +951,10 @@ def needs_browser(goal: dict) -> bool:
     checks = [c for c in (goal.get("checks") or []) if isinstance(c, dict)]
     return (not actions
             or bool(goal.get("navigation"))
-            or any(a.get("do") != "api" for a in actions)
+            # NOOD_0236 — call_function is browserless too (it imports and
+            # calls Python); the check clause below still forces a browser the
+            # moment anything on a PAGE is asserted.
+            or any(a.get("do") not in ("api", "call_function") for a in actions)
             or any(not ({"status", "response_contains", "json", "schema"} & set(c))
                    for c in checks))
 
@@ -2018,6 +2036,16 @@ def compile_goal(goal: dict, ev: dict, base_url_key: str,
     for ai, a in enumerate(actions[pre:], start=pre):
         if a["do"] == "api":
             _append_api(a)
+            _anchored(a.get("id"))
+            continue
+        if a["do"] == "call_function":
+            # NOOD_0236 — the NOOD_0009 runtime step, reached from a goal at
+            # last. Browserless and legal in any scenario, like the api verbs.
+            args = f" with args '{a['args']}'" if a.get("args") else ""
+            tail = (f" and saves the result as {{var:{a['var']}}}"
+                    if a.get("var") else "")
+            steps.append(("When", f"User calls the function '{a['spec']}'"
+                                  f"{args}{tail}"))
             _anchored(a.get("id"))
             continue
         if a["do"] == "add_to":

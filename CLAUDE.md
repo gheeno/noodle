@@ -172,6 +172,15 @@ change engine code (`noodle/`, `pyproject.toml`); docs-only and
 workspace-only branches are exempt. Details:
 [docs/benchmark.md](docs/benchmark.md).
 
+**`--gate` is not the only benchmark, and the other one is not headless.**
+Asked to "run the benchmark" (no flag named), that means the AGENT-DRIVEN
+spec-shape run — `noodle benchmark --session`, author the specs it prints one
+at a time, then `noodle benchmark --table` — because that is the workflow the
+product ships as. The bare `noodle benchmark` is the headless floor (no agent,
+no model): useful for comparing two builds, but it is not what a user
+experiences. Every flag, both modes, in one table:
+[docs/benchmark.md → Every flag](docs/benchmark.md#every-flag-and-when-you-want-it).
+
 ## General workflow rules
 
 - Do not push to remote unless the user explicitly asks.

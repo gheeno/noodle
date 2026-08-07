@@ -477,6 +477,32 @@ _SECTION_HEADER = re.compile(
 # way people paste a list of what the page must show.
 _TABLE_ROW = re.compile(r"^\|(.+)\|$")
 _TABLE_RULE = re.compile(r"^[\s|:-]+$")
+
+
+def _datatable_cells(text: str) -> list[str] | None:
+    """NOOD_0236 — the cells of a MULTI-COLUMN table row, or None.
+
+    One cell is the NOOD_0199 shape this file already supports: a single-column
+    list of expected values ("| Product A |"), one check each. Two or more is a
+    Gherkin DataTable, which the prompt grammar has no construct for — and
+    flattening one per-cell is silent corruption rather than a near miss. Fed
+
+        | movie | quantity |
+        | Alien | 2        |
+
+    the per-cell rule compiled the HEADER row into assertions (`sees "movie"`,
+    `sees "quantity"`) and stripped every value of the column that gave it
+    meaning, so `| Alien | 2 |` became `sees "Alien"` AND `sees "2"` — a bare
+    digit satisfied by any "2" anywhere on the page. The pairing the tester
+    wrote down (Alien HAS quantity 2) cannot survive the flattening at all, so
+    the row is kept whole and refused by name instead of quietly mis-compiled.
+    """
+    s = (text or "").strip()
+    m = _TABLE_ROW.match(s)
+    if not m or _TABLE_RULE.match(s):
+        return None
+    cells = [c.strip() for c in m.group(1).split("|") if c.strip()]
+    return cells if len(cells) > 1 else None
 # NOOD_0199 — scene-setting between two real steps ("then a suggestion bar
 # appears below the search bar"). Deliberately narrow — a NAMED subject
 # ("the cart badge shows 1") is still an unknown clause the author must fix,
@@ -522,7 +548,13 @@ _SENTENCE = re.compile(
 
 VERBS_HELP = ("go to / open url / then url <url>; "
               # NOOD_0192 — the api wok reads the same as the web one.
-              "GET|POST|PUT|PATCH|DELETE <url> | call the api at <url> | "
+              # NOOD_0236 — the body form is spelled out. The parser has taken
+              # `POST <url> with body '<json>'` since NOOD_0201, but the grammar
+              # advertised only `<method> <url>`, so the single most common api
+              # test — anything authenticated or mutating — read as impossible
+              # from the prompt door and callers fell back to hand-authoring.
+              "GET|POST|PUT|PATCH|DELETE <url> [with body '<json>'] | "
+              "call the api at <url> | "
               "go to <url> via rest; verify the response status is <code>; "
               "verify the response body contains <text>; "
               "search for <term>; "
@@ -534,16 +566,33 @@ VERBS_HELP = ("go to / open url / then url <url>; "
               "check/uncheck <name> checkbox; hover over <name>; "
               "upload <file> to <field>; press Enter; go back; "
               "select <date> from the <name> calendar; "
-              "verify[:] <destination> has <item> | verify <text> | "
-              "verify <A> or <B> | verify at least <N> results with title "
-              "<A> or <B> | "
-              "verify <text> is not visible | verify the url contains <part>; "
+              # NOOD_0236 — the `verify` alternatives are factored behind one
+              # keyword rather than repeating it six times. Same grammar, and
+              # the bytes it frees pay for the api body form above: the
+              # contract is bound at 8 KB (NOOD_0164) with ~nothing spare, so
+              # anything added here has to be earned somewhere.
+              "verify[:] <destination> has <item> | <text> | <A> or <B> | "
+              "at least <N> results with title <A> or <B> | "
+              "<text> is not visible | the url contains <part>; "
               "close popups / location prompt; capture evidence")
 
 # (kind, compiled regex) — first match wins, order matters: nav-url before
 # nav (an "open url X" clause must never become a click on "url X"),
 # dismiss before click, verify before click.
 _VERBS = [
+    # NOOD_0236 — the helper call, BEFORE the api verbs: "calls the function
+    # 'x.py:fn'" would otherwise be tried as `calls <url>` and only fall through
+    # on the URL-shape test. This is the dependency-injection door — a step
+    # needing a value the grammar has no verb for (a SQL/JDBC lookup, a token,
+    # a checksum) — and it is the one prompt clause that names a FILE, so the
+    # spec alphabet is the same narrow one generate/validate use (NOOD_0177).
+    ("call_fn", re.compile(
+        r"^(?:the\s+)?(?:user\s+)?calls?\s+(?:the\s+)?(?:python\s+|helper\s+)?"
+        r"function\s+['\"](?P<spec>[\w./:-]+)['\"]"
+        r"(?:\s+with\s+(?:args?|arguments?)\s+['\"](?P<args>[^'\"]*)['\"])?"
+        r"(?:\s*(?:,|and)?\s*(?:saves?|stores?)\s+(?:the\s+)?(?:result|value|"
+        r"output)?\s*(?:as|in)\s+\{var:(?P<var>[A-Za-z_][A-Za-z0-9_]*)\})?"
+        r"\s*$", re.I)),
     # NOOD_0192 — the api verbs come FIRST: every one of them names a URL, and
     # `nav`/`click` would otherwise swallow "go to <url> via rest" as a browser
     # navigation. Each carries named groups (method/url) because three shapes
@@ -1253,10 +1302,15 @@ def _clauses(text: str) -> list[dict]:
             continue                         # header / title — not a step
         if row := _TABLE_ROW.match(bare):
             if not _TABLE_RULE.match(bare):    # the |---| rule is not a value
-                # every cell is one expected value → one check each
-                frags.extend((line_no, f"verify {cell.strip()}")
-                             for cell in row.group(1).split("|")
-                             if cell.strip())
+                # NOOD_0236 — a DataTable row is kept WHOLE so it refuses by
+                # name downstream; only the single-column list keeps the
+                # NOOD_0199 rule of one expected value per cell.
+                if _datatable_cells(bare):
+                    frags.append((line_no, bare))
+                else:
+                    frags.extend((line_no, f"verify {cell.strip()}")
+                                 for cell in row.group(1).split("|")
+                                 if cell.strip())
             continue
         ln = _depreamble(_strip_run_mode(ln))
         if not ln:
@@ -1478,6 +1532,15 @@ def _parse_clause(c: dict) -> dict:
             if not _api_tail(node, m.groupdict().get("tail") or ""):
                 node["kind"] = "unknown"
                 continue
+        elif kind == "call_fn":
+            # NOOD_0236 — named groups are not auto-copied onto the node; each
+            # kind lifts its own, so the helper spec has to be lifted here too.
+            gd = m.groupdict()
+            node["spec"] = _clean(gd.get("spec") or "")
+            if gd.get("args"):
+                node["args"] = gd["args"]
+            if gd.get("var"):
+                node["var"] = gd["var"]
         elif kind == "api_status":
             node["status"] = int(m.group("code"))
         elif kind == "nav_url":
@@ -2019,7 +2082,7 @@ def expand(text: str, base_url: str | None = None) -> dict:
     mid_flow_checks: list[tuple[dict, int]] = []
     api_calls: list[dict] = []          # NOOD_0192 — in prompt order
     meta_urls: list[str] = []           # NOOD_0209 — URLs on metadata lines
-    counters = {"search": 0, "pick": 0, "add": 0, "api": 0}
+    counters = {"search": 0, "pick": 0, "add": 0, "api": 0, "fn": 0}
     pending_evidence = False
     pending_evidence_off = False     # NOOD_0225 — the same seam, negated
     # NOOD_0211 — scanned off the RAW brief, not off a clause. The clause
@@ -2090,6 +2153,27 @@ def expand(text: str, base_url: str | None = None) -> dict:
 
     for i, n in enumerate(nodes):
         no = _step_no(n)
+        # NOOD_0236 — a data-driven request is caught BEFORE kind dispatch. It
+        # has to be: "check the search works for each of these movies: Alien"
+        # parses happily as a `verify`, so the whole sentence became the
+        # asserted literal (`see: "search works for each of these movies:
+        # Alien"`) — an assertion no page can satisfy, minted from a request
+        # the compiler had actually understood the shape of. The ENGINE runs
+        # Scenario Outlines (behave/validate/LSP all handle them, and a
+        # hand-authored one over three titles reports as three scenarios); it
+        # is only this prompt→goal compiler that cannot mint one, because a
+        # goal compiles to exactly one Scenario. So: refuse with the route
+        # forward, never a literal nobody wrote.
+        if re.search(r"scenario\s+(?:outline|template)|examples?\s+table|"
+                     r"\bdata[\s-]driven\b|for\s+each\s+of\s+(?:these|the)\b",
+                     n["raw"], re.I):
+            _refuse(n, "a prompt compiles to ONE scenario, so the "
+                       "deterministic compiler cannot mint an outline — but "
+                       "the engine runs them: author the feature directly "
+                       "with `Scenario Outline:` + an `Examples:` table "
+                       "(author --spec, feature_content), or send one prompt "
+                       "per value.")
+            continue
         if n["kind"] == "unknown":
             # NOOD_0212 — a brief's trailing directive paragraph WRAPS across
             # lines ("…finish with the Allure + RCA report links and" /
@@ -2114,6 +2198,33 @@ def expand(text: str, base_url: str | None = None) -> dict:
                     f"step {no} '{n['raw']}': names when the next step runs, "
                     "not an instruction of its own — ignored here")
                 _cover(n, "metadata")
+                continue
+            # NOOD_0236 — a DataTable refuses by name. Left to the generic
+            # "outside the supported grammar" the tester learns only that
+            # SOMETHING failed, and the obvious next move (retype the table) is
+            # the one thing that cannot work.
+            # NOOD_0236 — an api call whose payload was written as prose
+            # ("POST /login with username X and password Y"). The parser only
+            # takes `with body '<json>'`, and the generic refusal left the
+            # caller guessing at which half was wrong.
+            if re.match(r"^(?:\w+\s+)?(?:GET|POST|PUT|PATCH|DELETE)\b",
+                        n["raw"].strip(), re.I) and \
+                    re.search(r"\bwith\b", n["raw"], re.I) and \
+                    not re.search(r"\bwith\s+(?:body|this\s+body)\b",
+                                  n["raw"], re.I):
+                _refuse(n, "an api call carries its payload as JSON, not as "
+                           "prose — write it as: "
+                           "POST <full-url> with body '{\"key\": \"value\"}'. "
+                           "A relative path needs the base URL first "
+                           "(Given sets {var:REST_BASE_URL} to '<url>').")
+                continue
+            if cells := _datatable_cells(n["raw"]):
+                _refuse(n, "a data table is outside the prompt grammar — the "
+                           "columns cannot be paired up again once flattened. "
+                           "Write one step per row naming both values "
+                           f"(e.g. 'add {cells[0]} to the cart' / "
+                           f"'verify the cart shows {cells[0]}'), or author "
+                           "with a goal, whose actions/checks are explicit.")
                 continue
             _refuse(n, "")
             continue
@@ -2204,6 +2315,32 @@ def expand(text: str, base_url: str | None = None) -> dict:
         if n["kind"] == "nav":
             urls.append(n["url"])
             _cover(n, "navigation")
+            continue
+        # NOOD_0236 — dependency injection: the helper call is an action, and
+        # the file it names is created by the authoring transaction (which then
+        # blocks until the body is written). Nothing is inferred — the caller
+        # names the module and function, exactly as the runtime step does.
+        if n["kind"] == "call_fn":
+            spec = n.get("spec") or ""
+            target, sep, func = spec.rpartition(":")
+            if not sep or not func:
+                _refuse(n, "a helper call names 'file.py:function' or "
+                           "'package.module:function' — write it as: call the "
+                           "function 'resources/functions/db.py:lookup' and "
+                           "save the result as {var:VALUE}")
+                continue
+            act = {"do": "call_function", "id": _mint("fn"), "spec": spec}
+            if n.get("args"):
+                act["args"] = n["args"]
+            if n.get("var"):
+                act["var"] = n["var"]
+            actions.append(act)
+            assumptions.append(
+                f"step {no} '{n['raw']}': calls {func!r} out of {target!r}"
+                + (f", saved as {{var:{n['var']}}}" if n.get("var") else "")
+                + " — the engine creates that file if it is missing and blocks "
+                  "until its body is written")
+            _cover(n, "action", [act["id"]])
             continue
         # NOOD_0192 — the api wok, straight through: the call is an action,
         # the status claim is its check. No probe, no page, no inference.

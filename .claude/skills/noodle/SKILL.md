@@ -96,8 +96,8 @@ Every `do:` — inventing one is rejected (`target` = a control name,
   extra RCA/report/serve calls repeat it. Never claim green past
   `report_scope.features_run` — the report accumulates, the run doesn't.
 - "run the benchmark" → `noodle benchmark --session`, author each
-  spec, then `benchmark --table`. `--gate` is the pre-PR check:
-  ONE call, 5 cases. Never hand-build `results.json` or report a
+  spec as `spec_<id>.feature` (`--feature-path`), then `--table`.
+  `--gate` is the pre-PR check: ONE call, 5 cases. Never report a
   number you did not read off the table.
 - Fastest path first: only standard-visible-control pages skip the
   probe; hidden/config/custom/SPA probe first (`--discover`,

@@ -227,6 +227,9 @@ def probe(base_url: str, suite: bool = False) -> dict:
         out = {"ok": True, "base_url": base or None, "spec_url": label,
                "title": str((doc.get("info") or {}).get("title") or ""),
                "endpoints": eps[:_CAP * 4], "endpoints_total": len(eps),
+               # NOOD_0236 — same provenance as the live path below: this came
+               # off a document someone handed over, not off the wire.
+               "endpoint_source": "openapi",
                "suggested_steps": _suggested_steps(base, doc) if base else [],
                "questions": []}
         if not base:
@@ -256,6 +259,16 @@ def probe(base_url: str, suite: bool = False) -> dict:
         out.update(spec_url=spec_url, endpoints=eps[:_CAP * 4],
                    endpoints_total=len(eps),
                    title=str((doc.get("info") or {}).get("title") or ""),
+                   # NOOD_0236 — name the SOURCE. Every endpoint above was read
+                   # out of the served document, not observed on the wire, so
+                   # this list is what the app CLAIMS it serves. A drifted spec
+                   # is the api wok's most common real-world condition — the
+                   # bundled BusterBlock documents 8 of the ~20 routes it
+                   # actually serves — and reporting a spec-derived list with
+                   # no provenance reads as "these are the endpoints", which
+                   # sends a caller hunting for a cart API that is right there
+                   # and simply undocumented.
+                   endpoint_source="openapi",
                    suggested_steps=_suggested_steps(base, doc))
         if suite:
             content, omitted, qs = suite_from_doc(doc, base)

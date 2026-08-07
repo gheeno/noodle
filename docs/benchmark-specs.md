@@ -38,7 +38,7 @@ by phrasing — what is worth measuring is **how much work the loop took.**
 noodle update                # 1. the install must match this checkout
 noodle benchmark --session   # 2. starts BusterBlock, scaffolds the workspace,
                              #    seeds secrets.env, prints the runbook
-#  ... the session then authors and runs all 5, one at a time ...
+#  ... the session then authors and runs all 6, one at a time ...
 noodle benchmark --table     # 3. the table, and the app is stopped
 ```
 
@@ -46,6 +46,23 @@ noodle benchmark --table     # 3. the table, and the app is stopped
 first (that first attempt is what measures the engine on its own), and when
 the engine refuses, translate it and re-author against the same
 `feature_path`. Every attempt is what the ledger counts.
+
+**Either door — and name the file.** The runbook prints both, and the ledger
+records which was used:
+
+```bash
+# MCP
+author_test(prompt=<the spec, verbatim>, feature_path="spec_<id>.feature",
+            workspace="<ws>", run_after_author=True, overwrite=True)
+
+# CLI (NOOD_0236)
+noodle author --prompt <the spec, verbatim> \
+    --feature-path spec_<id>.feature -w <ws> --run --overwrite
+```
+
+`--feature-path` is load-bearing: the ledger keys on the filename, so a spec
+authored under any other name scores **"not attempted"**. That is how a session
+which ran every spec green can still print `REGRESSED`.
 
 **The numbers are the engine's, not the agent's.** `author_test` appends one
 line per attempt to `.noodle/benchmark_ledger.jsonl` while a session is open,
@@ -67,11 +84,15 @@ inside the same transaction that would otherwise be writing them.
 noodle benchmark             # no agent, no model: the deterministic compiler alone
 ```
 
-Same five specs, same app, same one report — but nothing translates for the
+Same six specs, same app, same one report — but nothing translates for the
 engine. Reproducible and free, which makes it the right instrument for
 comparing two builds; and a spec it cannot take is a real finding about the
 grammar, not about the product a user experiences. `--json` gives the same
 verdict as one bounded payload. Exit 0 = PASS, 1 = REGRESSED.
+
+`--specs <file>` reads the spec set from another markdown file instead of this
+one — for trying a set out without editing the source of truth. Every flag,
+both modes, in one table: [benchmark.md → Every flag](benchmark.md#every-flag-and-when-you-want-it).
 
 BusterBlock's `node_modules/` is gitignored. If it is missing, the benchmark
 **stops and says so** rather than quietly measuring a different app:
@@ -98,7 +119,7 @@ reworded spec measures your rewording.
 
 ---
 
-## The five specs
+## The six specs
 
 <!-- spec: paragraph | expect: pass -->
 ### B1 — a paragraph
@@ -178,21 +199,52 @@ and every other green in the table would be worth less for it.
 6. Verify: Casablanca
 ```
 
+<!-- spec: helper_function | expect: pass -->
+### B6 — a step that needs a helper the grammar has no verb for
+
+**Dependency injection.** Real suites reach outside the browser: a JDBC or
+DB-API query for the row the UI should be showing, a signed token, a checksum.
+No test grammar should grow a verb for each of those, and none of them can be
+guessed — so the engine takes the module and function *by name*, creates the
+file inside the app package if it does not exist, and **blocks until its body
+is written**. The value is injected, never invented.
+
+This spec is the only one that deliberately costs a correction. The first
+attempt authors the feature, writes
+`resources/functions/catalogue.py` as a `NotImplementedError` stub and refuses
+to run — no browser launched. The session writes the body, re-authors, and it
+goes green. `CORR 1` here is the loop working, not the loop failing; a `CORR 0`
+would mean the engine ran a test whose helper does nothing.
+
+The helper lands in the package's own `resources/functions/`, so a sibling
+`.feature` can call it without re-writing it — encapsulated with the test that
+needed it, reusable by the ones that come after.
+
+```text
+1. Go to the URL http://127.0.0.1:3333/
+2. log in as "reel_ryan" with password "Popcorn1!"
+3. call the function 'resources/functions/catalogue.py:expected_title' and save the result as {var:TITLE}
+4. Enter "Alien" in the "search movies" field
+5. Verify: Alien
+```
+
 ---
 
 ## Reading the table
 
 ```
-   SPEC            SHAPE                DEV     RUN   CORR   TOKENS  RESULT
-   steps           step by step        2.2s     11s      0      976  ✅ passed
-   expected_fail   must fail           2.6s     29s      0     1.2k  ✅ failed as intended
-   paragraph       paragraph           0.0s       —      —      413  ⛔ blocked
+   SPEC            SHAPE                  DEV  ENGINE  OFF-ENG    RUN  CORR  TOKENS  RESULT
+   steps           step by step          2.2s    2.2s       0s    11s     0     976  ✅ passed
+   expected_fail   must fail             2.6s    2.6s       0s    29s     0    1.2k  ✅ failed as intended
+   helper_function needs a helper       27.2s    3.5s    23.7s    11s     1    1188  ✅ passed
+   paragraph       paragraph             0.0s       —        —      —     —     413  ⛔ blocked
 ```
 
 | column | what it is | why it is that and not something else |
 |---|---|---|
 | `DEV` | **development time** — prompt in, `.feature` written: wall clock minus the generated test's own run time | the number the "under a minute" expectation belongs on. Total wall clock is dominated by the *site*, which is not Noodle |
 | `ENGINE` | **session runs only** — what the ENGINE spent, where `DEV` is wall clock and includes the agent's own turnaround between attempts | in a session most of `DEV` is the agent thinking, so reporting that number alone made a spec whose agent paused for two minutes look identical to one the engine was slow at. Absent from the headless run, where there is no agent and the two are the same number |
+| `OFF-ENG` | **session runs only** (NOOD_0236) — `DEV` minus `ENGINE`: wall clock spent **outside any engine call**. Reading app source, `curl`/`grep`/`jq`, guessing a selector, or simply thinking | the guard rail, made falsifiable. The engine cannot see the driving session's shell, so it does not pretend to detect `curl` — but it timestamped both ends of the wall clock and knows what it spent, and the remainder is the only honest measure of whether the loop stayed inside noodle. A probe the flow needed is engine time; a detour is not. In a **scripted** run it reads ~`0s` because there is no agent turnaround, so it is only comparable between agent-driven runs |
 | `RUN` | the generated test executing | the app's speed, reported separately so it cannot flatter or damn the engine |
 | `CORR` | **corrections** — every repair the engine made on your behalf: a reworded control name, an inserted prerequisite click, a dropped or rewritten check, a self-healed locator, a retried-then-green scenario | a spec that only works after five corrections is not the same product as one that works first time, and both end green |
 | `TOKENS` | the payload the engine hands back to the driving agent, ÷ 4 | the part of an agent's bill the engine controls. The host's preamble and the model's own reasoning are not in it and cannot be — see [benchmark.md § No cost column](benchmark.md#no-cost-column) |
@@ -319,11 +371,14 @@ on its first run instead of at the door.
 **Still open, and the most important thing this benchmark currently does
 NOT prove.** BusterBlock's catalogue loads every title on login and filters
 server-side on each keystroke, so all 50 are in the DOM *before* any search
-runs. Four of the five specs assert a title's presence, which means **all
-four would stay green if the search step silently did nothing** — B2, the
-control, has had this property since Round 1, and B1/B3/B4 inherited it
-when they started passing. Only B5 discriminates, and it does so by proving
-an absence. The specs are not at fault and must not be reworded; what is
+runs. Five of the six specs assert a title's presence, which means **all
+five would stay green if the search step silently did nothing** — B2, the
+control, has had this property since Round 1; B1/B3/B4 inherited it when they
+started passing; and B6 (NOOD_0236) inherited it too, since its flow also ends
+in a search and a present-title assertion. Adding a spec therefore made this
+gap *wider*, not narrower — worth stating plainly, because a sixth green row
+reads like more coverage than it is. Only B5 discriminates, and it does so by
+proving an absence. The specs are not at fault and must not be reworded; what is
 missing is engine-side, and it is a general gap rather than a quirk of this
 app: any page that renders its whole dataset and then filters (a catalogue,
 an admin grid, a client-side table) produces exactly this non-discriminating

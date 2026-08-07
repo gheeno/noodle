@@ -4,6 +4,109 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a50] — 2026-08-07
+
+**NOOD_0236** — fix: eleven findings from an adversarial prompt-shape audit.
+A session drove the web and api woks against the bundled BusterBlock app with
+deliberately awkward requests — prose tables, outline requests, misspelled
+keywords, a helper nobody had written, a `file://` URL. The api wok came
+through clean: a chained flow (login → extract token → `Bearer` header → POST
+cart → POST orders 201 → `items[0].movie.title`) passed `verified: true` with
+no healing. Everything below is what the web side gave up.
+
+**A blocked `ship` said nothing at all.** `ship` documents itself as a thin
+alias for `author --prompt … --run --overwrite`, but it carried its own
+renderer that understood only the atomic `{author, run}` payload. A prompt the
+compiler could not take returns a top-level `needs_interpretation` envelope
+with no `author` key, so every branch missed and the whole result printed as
+`✗ authored None` — swallowing the error, three unresolved clauses and their
+suggested rewrites. The caller had to re-run the same prompt through `author`,
+paying a second probe and a second bill, to be told why. There is now one
+renderer and both commands use it.
+
+**The benchmark could not be run from the CLI.** `benchmark --session` keys
+its ledger on the feature filename (`spec_<id>.feature`), and `--prompt` mode
+had no spelling for `feature_path` — so the release benchmark was reachable
+only over MCP, and a session that ran all five specs green still printed
+`REGRESSED · 5 × not attempted`. `author --feature-path` closes it; the same
+five specs now score `PASS · 4 passed · 1 failed as intended`.
+
+**A data table compiled to assertions nobody wrote.** A markdown table in a
+prompt was flattened one-check-per-cell, so the HEADER row became assertions
+(`sees "movie"`, `sees "quantity"`) and `| Alien | 2 |` became `sees "Alien"`
+AND `sees "2"` — a bare digit satisfied by any "2" on the page, with the
+pairing the tester wrote down destroyed. Single-column value lists (NOOD_0199)
+are unchanged; a real table now refuses by name. The same guard catches
+"for each of these …", which used to mint the entire sentence as the asserted
+literal.
+
+**Scenario Outlines run; only the compiler could not mint one.** behave,
+`validate` and the LSP all handle outlines — a hand-authored one over three
+titles reports as three scenarios. A goal compiles to exactly one `Scenario`,
+so the prompt door now refuses an outline request by naming the route that
+works instead of "outside the supported grammar".
+
+**A helper nobody wrote authored `ready: true`.** Readiness validated every
+`{env:KEY}` and no function reference at all, so a feature calling
+`resources/functions/helpers.py:make_nickname` with no such file passed
+authoring and failed only after a browser launch and a login. It now blocks
+before the browser. `author` also applies the app-relative path rewrite
+`generate` has done since NOOD_0019, so the documented short form finally
+resolves to the app's own `resources/` folder.
+
+**…and the RCA then blamed the app for it.** That failure was filed as
+`app-regression — the state-changing request 'POST /api/auth/login' completed
+without a network error`, sending the reader to debug a login endpoint that
+had worked. The runtime had already said `Function file not found: …`; the
+verdict discarded it for a guess, and `app-regression` is also the class that
+blocks auto-fix. Missing test assets are now `test-script`, ranked above every
+page/network heuristic.
+
+**A feature could read local files.** NOOD_0177 closed `file://` at the probe
+and the prompt door never accepted one, but the RUN door did:
+`Given User is on "file:///…/secrets.env"` opened it, asserted its contents
+and went green, and reports are served over HTTP with screenshots attached.
+`.html`/`.htm` fixture pages (NOOD_0115) keep working; anything else needs the
+same `NOODLE_ALLOW_LOCAL_URLS` opt-in the probe uses.
+
+**Dependency injection, and a benchmark that measures it.** Some steps need a
+value no test grammar should grow a verb for — a JDBC/DB-API lookup, a signed
+token, a checksum. The runtime has had `calls the function` since NOOD_0009,
+but no goal could reach it, so every such test dropped to hand-written
+`feature_content` (never intent-verified) and the author door neither created
+the helper nor noticed it was missing. Now: `call_function` is a goal action
+with a prompt clause (`call the function 'resources/functions/db.py:lookup'
+and save the result as {var:TITLE}`), the authoring transaction **creates the
+file** inside the app package, and readiness blocks until its body is written
+— `unimplemented_function_refs` parses the module, so a `NotImplementedError`
+scaffold is not mistaken for an implementation. Create → block → implement →
+green, with no browser launched until the helper actually does something. The
+helper lives in the package's own `resources/functions/`, reusable by any
+sibling `.feature`.
+
+`noodle benchmark` grows a sixth spec (B6) for exactly that path, and it is
+the only spec that deliberately costs a correction: `CORR 1` there is the loop
+working. Its runbook now prints **both doors** — MCP `author_test` and
+`noodle author --prompt --feature-path` — since NOOD_0236 made the CLI one
+reachable. And a new **OFF-ENG** column reports wall clock spent outside any
+engine call: the engine cannot see the driving session's shell, so it does not
+pretend to, but it can subtract what it did spend from the wall clock it
+timestamped both ends of. In the verification run every spec read `0s` except
+B6, which read `23.7s` — the session writing the helper body, which is the one
+place agent work was legitimately required.
+
+Also: `check narrowed:` / `search term narrowed:` warnings now print on the
+atomic path, where they were dropped — so the banner that says "asserting the
+literal text 'Alien listing is what you are left looking at'" is corrected by
+the engine's own "asserting 'Alien'" instead of standing uncontradicted; the
+prompt grammar documents `with body '<json>'` (the parser has taken it since
+NOOD_0201, paid for by factoring the repeated `verify` keyword — the contract
+is bound at 8 KB with almost nothing spare); an api payload written as prose
+refuses with the JSON form; `api-scan` reports `endpoint_source`, because a
+spec-derived list is what a service *claims* it serves (BusterBlock documents
+8 of ~20 routes); and authoring into a directory with no `noodle.yaml` warns
+instead of writing a package whose run silently executes nothing.
+
 ## [1.0.0a49] — 2026-08-07
 
 **NOOD_0235** — feature: the engine tells the truth on the way back. An
