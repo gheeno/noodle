@@ -150,8 +150,12 @@ def test_failed_do_blocks_author_ready_in_both_verdicts():
     assert probe._compact_author_ready(pg, cap=25) is False
     pg["author_ready"] = False
     rendered = probe.render({"pages": [pg], "errors": []})
-    assert ("author_ready: false — transaction did not reach requested state"
+    # NOOD_0235 — the verdict is unchanged; the sentence now names WHICH of
+    # the two causes it was. This case really is a failed chain, and says so;
+    # an unmet --expect on a completed chain no longer borrows this wording.
+    assert ("author_ready: false — the requested transaction did not complete"
             in rendered)
+    assert "do NOT author from this probe" in rendered
 
 
 def test_explicit_expect_miss_blocks_author_ready():

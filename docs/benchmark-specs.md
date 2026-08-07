@@ -192,6 +192,7 @@ and every other green in the table would be worth less for it.
 | column | what it is | why it is that and not something else |
 |---|---|---|
 | `DEV` | **development time** — prompt in, `.feature` written: wall clock minus the generated test's own run time | the number the "under a minute" expectation belongs on. Total wall clock is dominated by the *site*, which is not Noodle |
+| `ENGINE` | **session runs only** — what the ENGINE spent, where `DEV` is wall clock and includes the agent's own turnaround between attempts | in a session most of `DEV` is the agent thinking, so reporting that number alone made a spec whose agent paused for two minutes look identical to one the engine was slow at. Absent from the headless run, where there is no agent and the two are the same number |
 | `RUN` | the generated test executing | the app's speed, reported separately so it cannot flatter or damn the engine |
 | `CORR` | **corrections** — every repair the engine made on your behalf: a reworded control name, an inserted prerequisite click, a dropped or rewritten check, a self-healed locator, a retried-then-green scenario | a spec that only works after five corrections is not the same product as one that works first time, and both end green |
 | `TOKENS` | the payload the engine hands back to the driving agent, ÷ 4 | the part of an agent's bill the engine controls. The host's preamble and the model's own reasoning are not in it and cannot be — see [benchmark.md § No cost column](benchmark.md#no-cost-column) |

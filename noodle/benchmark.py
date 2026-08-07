@@ -512,7 +512,16 @@ def session_stop(workspace: str) -> str | None:
     teardown that did not happen."""
     sess = active(workspace) or {}
     note = None
-    if pid := sess.get("pid"):
+    if not sess.get("pid"):
+        # NOOD_0235 — the case this docstring was WRITTEN for, and the one it
+        # said nothing about. `_host_detached` returns pid=None when the app
+        # was already up ("not ours to kill"), so the branch below never ran
+        # and `--table` printed no teardown line at all — while its own help
+        # text says it stops the app. Silence reads as "stopped".
+        note = (f"BusterBlock was already running at {sess.get('base_url')} "
+                "when this session opened, so it was not started by the "
+                "benchmark and has been left running")
+    elif pid := sess.get("pid"):
         if owns_pid(pid):
             try:
                 os.kill(int(pid), 15)
@@ -1009,7 +1018,10 @@ def render_table(verdict: dict) -> str:
             + f"{'RUN':>7}{'CORR':>6}{'TOKENS':>8}  RESULT"]
     for c in v["cases"]:
         rows.append(
-            f"   {c['id']:<15}{c['label'][:25]:<26}"
+            f"   {c['id']:<15}"
+            # NOOD_0235 — an ellipsis, so a clipped label reads as
+            # clipped rather than as the spec's actual name.
+            f"{(c['label'][:24] + '…' if len(c['label']) > 25 else c['label']):<26}"
             f"{_s(c.get('development_s')):>7}"
             + (f"{_s(c.get('engine_s')):>8}" if eng else "")
             + f"{_s(c.get('run_s')):>7}"
