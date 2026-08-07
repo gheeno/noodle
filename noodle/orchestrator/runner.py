@@ -472,7 +472,14 @@ def _new_named_context(context, name: str):
     # bare new_context() gave the second user no console/network capture, so
     # its failures debugged blind and traffic assertions silently saw nothing.
     opts = ctx_get(context, "_named_ctx_opts") or {}
-    bctx = browser.new_context(**opts)
+    # NOOD_0239 — the inherited opts already carry the masked UA (hooks.py masks
+    # ctx_opts before copying them here), so this re-application is a no-op
+    # today. It stays because the inheritance is an ORDERING in another file: if
+    # that copy ever moves above the mask, the second user would silently go
+    # back to the stock HeadlessChrome UA and stall on the exact sites this
+    # exists for. context_options never overwrites a UA that is already set.
+    from noodle.agents.web import browser_pool as _browser_pool
+    bctx = browser.new_context(**_browser_pool.context_options(browser, opts))
     page = bctx.new_page()
     page.set_default_timeout(int(os.getenv("NOODLE_TIMEOUT", "10000")))
     try:

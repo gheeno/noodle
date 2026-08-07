@@ -3073,6 +3073,72 @@ def _origin_error(url: str, exc: Exception) -> str:
     return text
 
 
+# NOOD_0238 — the engine a default probe retries on when chromium proved
+# nothing. WebKit because it is the one NOOD_0237 measured actually loading the
+# sites that stall every headless chromium build (shell, full `channel=
+# "chromium"`, and real Chrome all timed out at 30 s on canadiantire.ca; webkit
+# loaded it). Before this, `noodle probe` had no browser selector at all, so
+# such a site was simply unprobeable and the agent had to hand-author blind.
+FALLBACK_BROWSER = "webkit"
+
+# A dead origin is dead in every engine: DNS, a refused connect and a missing
+# network are properties of the host, not of the browser driving it. Retrying
+# those buys a second launch and the identical error, so the fallback skips
+# them and the reader keeps the fast, legible _ORIGIN_ERRORS verdict.
+_ENGINE_BLIND_ERRORS = ("ERR_CONNECTION_REFUSED", "ERR_NAME_NOT_RESOLVED",
+                        "ERR_INTERNET_DISCONNECTED")
+
+
+def should_fall_back(result: dict, requested: str | None = None,
+                     env_browser: str | None = None) -> bool:
+    """NOOD_0238 — may this probe be retried on FALLBACK_BROWSER?
+
+    Only when the caller expressed NO preference and chromium proved nothing.
+    An explicit `--browser`/`browser=`/`NOODLE_BROWSER` is a decision, and
+    browser_pool's house rule (NOOD_0122) is that the engine is decided, never
+    silently swapped — a probe that answered a webkit request with chromium
+    results, or vice versa, would be lying about what it proved. The retry is
+    also never silent: `browser.fell_back_from` in the payload says it happened.
+
+    Pure — unit-testable without a browser.
+    """
+    if requested or (env_browser or "").strip():
+        return False                    # the caller chose; honour the choice
+    if result.get("pages"):
+        return False                    # something loaded — nothing to rescue
+    errors = result.get("errors") or []
+    if not errors:
+        return False
+    # Retry unless EVERY error is one no engine can fix.
+    return not all(
+        any(marker in (e.get("error") or "") for marker in _ENGINE_BLIND_ERRORS)
+        for e in errors)
+
+
+def browser_note(used: str, fell_back_from: str | None = None) -> dict:
+    """NOOD_0238 — which engine actually produced this payload, and what the
+    author must do about it.
+
+    The probe and the run are separate browser launches, so a payload proven on
+    webkit is only reproducible if the FEATURE says webkit — hence `tag`, which
+    hooks.py reads straight off the scenario (`@webkit`). Chromium is the
+    default engine and needs no tag, so it doesn't get one.
+    """
+    note: dict = {"used": used}
+    if fell_back_from:
+        note["fell_back_from"] = fell_back_from
+        note["why"] = (
+            f"{fell_back_from} could not load the page (it stalls or refuses "
+            f"headless {fell_back_from}); {used} did. NOOD_0237.")
+    if used != "chromium":
+        note["tag"] = f"@{used}"
+        note["tag_note"] = (
+            f"this evidence was proven on {used} — tag the feature "
+            f"@{used} (or run --browser {used}), or the run drives a "
+            f"different browser than the probe did")
+    return note
+
+
 @outside_asyncio
 def probe(urls: list[str], timeout_ms: int = 15000,
           clicks: list[str] | None = None,
@@ -3130,7 +3196,10 @@ def probe(urls: list[str], timeout_ms: int = 15000,
     # the pool's worker thread, because Playwright sync objects are thread-affine.
     # A fresh CONTEXT per call keeps the isolation the old launch-per-call gave.
     def _body(browser):
-        context = browser.new_context()
+        # NOOD_0239 — masks the `HeadlessChrome` UA token, the single string an
+        # Akamai-class edge stalls `goto` on. No-op on an engine that doesn't
+        # advertise headless, and never overrides a caller's own user_agent.
+        context = browser.new_context(**browser_pool.context_options(browser))
         try:
             page = context.new_page()
             try:                       # NOOD_0137 — permission-API shim
@@ -3330,7 +3399,12 @@ def probe(urls: list[str], timeout_ms: int = 15000,
             errors.append({"url": ", ".join(urls), "error": engine_warning})
     except Exception as e:
         errors.append({"url": ", ".join(urls), "error": str(e)})
-    return {"pages": pages, "errors": errors}
+    # NOOD_0238 — name the engine that produced this payload. The probe and the
+    # run launch separately, so evidence proven on a non-default engine is only
+    # reproducible if the reader knows to tag the feature for it.
+    from noodle.config import resolve_engine
+    engine, _channel, _warn = resolve_engine(browser_name)
+    return {"pages": pages, "errors": errors, "browser": browser_note(engine)}
 
 
 def _cap(items: list, max_controls: int | None) -> tuple[list, int]:
@@ -3778,6 +3852,19 @@ def render(result: dict, compact: bool = False, section: str = "all",
     if section != "all":
         return _render_section(result, section, cap)
     out = []
+    # NOOD_0238 — engine header, above every page and in the same honesty
+    # spirit as the visual-only/not-author-ready flags below: evidence proven on
+    # a non-default browser needs a feature tag, and a fallback the reader never
+    # sees is a fallback they never tag for. Chromium is the default and says
+    # nothing — a line on every probe would be noise.
+    if (bn := result.get("browser")) and bn.get("used") != "chromium":
+        line = f"Engine: {bn['used']}"
+        if bn.get("fell_back_from"):
+            line += (f" (fell back from {bn['fell_back_from']} — it loaded "
+                     f"nothing)")
+        if bn.get("tag"):
+            line += f" — tag the feature {bn['tag']}"
+        out.append(line)
     for pg in result.get("pages", []):
         out.append(f"Probe: {pg['url']} — {pg.get('title') or '(no title)'}")
         # NOOD_0136 — honesty header: never bury a visual-only verdict or a
@@ -4222,6 +4309,13 @@ def compact_payload(result: dict, max_controls: int = 40,
         out = {"pages": [_compact_page(pg, cap, brief)
                          for pg in result.get("pages", [])],
                "errors": result.get("errors", [])}
+        # NOOD_0238 — compact is the agent's door, so the engine that proved
+        # this evidence (and the @tag a non-default one needs) must survive the
+        # trim. It is a handful of bytes and it is author-critical: dropping it
+        # is how a webkit-proven probe becomes an untagged feature that reruns
+        # on chromium and fails.
+        if browser := result.get("browser"):
+            out["browser"] = browser
         if brief:   # NOOD_0179 — the three sentences, once per payload
             out["step_templates"] = dict(STEP_TEMPLATES)
         return out

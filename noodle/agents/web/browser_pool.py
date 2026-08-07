@@ -34,6 +34,9 @@ from noodle.config import resolve_engine
 _CLOSE_TIMEOUT_S = 5.0
 # NOOD_0237 — NOODLE_CHROMIUM_CHANNEL values that mean "use the headless shell".
 _CHANNEL_OFF = {"off", "0", "false", "no", "none", "shell"}
+# NOOD_0239 — the one token that makes a headless chromium advertise itself.
+_HEADLESS_TOKEN = "HeadlessChrome"
+_OFF = {"off", "0", "false", "no", "none"}
 
 
 class EngineUnavailable(RuntimeError):
@@ -161,13 +164,18 @@ def default_channel(engine: str) -> str | None:
     "chromium"` asks for the full build in new-headless mode, so headless and
     headed drive the same browser instead of two different ones.
 
-    What this does NOT buy: escape from headless DETECTION. Measured against
-    canadiantire.ca, `domcontentloaded` never fires under headless chromium of
-    ANY build — shell, full `channel="chromium"`, and real `channel="chrome"`
-    each time out at 30 s, while headed loads the same URL in 2.2 s. Headless
-    WebKit loads it fine. So a site that stalls every headless chromium is a
-    `NOODLE_BROWSER=webkit` or `@headed` case, not a channel case; don't reach
-    for this knob expecting it to unblock one.
+    NOOD_0239 CORRECTS NOOD_0237's reading of this. NOOD_0237 concluded from the
+    same site that "domcontentloaded never fires under headless chromium of ANY
+    build", and sent such sites to webkit forever. That conclusion was wrong: it
+    varied the channel while holding the USER AGENT fixed, and the user agent was
+    the whole cause. Re-measured against the same origin, `channel="chromium"`
+    plus a UA with the `HeadlessChrome` token replaced loads in 2.1 s (HTTP 200,
+    real title) where the identical launch on the stock UA still times out.
+
+    So BOTH halves are load-bearing, and neither works alone — see
+    `mask_headless_ua`. This channel is the half that matters here because the
+    stripped shell stays blocked even on a masked UA: the full build is what can
+    present as an ordinary browser at all.
 
     Set NOODLE_CHROMIUM_CHANNEL to another channel (`chrome`, `msedge`) to pin a
     real installed browser, or to `off` to go back to the shell.
@@ -178,6 +186,98 @@ def default_channel(engine: str) -> str | None:
     if override:
         return None if override.lower() in _CHANNEL_OFF else override
     return "chromium"
+
+
+def mask_headless_ua(ua: str | None) -> str | None:
+    """NOOD_0239 — the same UA with `HeadlessChrome` spelled `Chrome`, or None
+    when there is nothing to mask.
+
+    Playwright's headless chromium advertises itself in the one header every
+    CDN edge already parses:
+
+        …(KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36
+                             ^^^^^^^^
+
+    That token is the entire difference between a probe that works and a probe
+    that hangs. Measured against a live Akamai-fronted retail site: the stock UA
+    times out at `domcontentloaded` (15 s, every time), the masked UA loads in
+    2.1 s — same binary, same launch flags, same machine, one string changed.
+    The edge stalls the request rather than refusing it, which is why this
+    surfaced as `Page.goto: Timeout` and got misread for a full release as a
+    browser-engine problem (NOOD_0237 → webkit) instead of a header problem.
+
+    This is not evasion of an access control. Nothing is bypassed: the site
+    serves the identical page to the identical browser when a human drives it
+    headed (2.2 s, measured), and Noodle drives it headed on `@headed` today.
+    All this does is stop the headless run being a WORSE client than the headed
+    one for no reason a tester can act on. The masked version number and
+    platform are the browser's own — read off the running binary, never
+    invented — so the site still gets an accurate answer to "what are you".
+
+    Pure, so the substitution is unit-testable without a browser.
+    """
+    if not ua or _HEADLESS_TOKEN not in ua:
+        return None
+    return ua.replace(_HEADLESS_TOKEN, "Chrome")
+
+
+def ua_masking_enabled() -> bool:
+    """NOODLE_HEADLESS_UA=off restores the stock `HeadlessChrome` UA.
+
+    The escape hatch exists for the one legitimate reason to want the token
+    back: testing your OWN bot detection, where a run that cannot be recognised
+    as headless is the bug rather than the fix.
+    """
+    return os.getenv("NOODLE_HEADLESS_UA", "").strip().lower() not in _OFF
+
+
+def browser_ua(browser) -> str | None:
+    """The launched browser's own default user agent, or None if unreadable.
+
+    CDP answers this in ~4 ms without a context; the fallback costs a throwaway
+    context + page (~180 ms) and covers non-chromium engines, where CDP does not
+    exist. Never raises — a UA we cannot read just means no masking, which is
+    exactly the pre-NOOD_0239 behaviour.
+    """
+    try:                                        # chromium: no context needed
+        session = browser.new_browser_cdp_session()
+        try:
+            return (session.send("Browser.getVersion") or {}).get("userAgent")
+        finally:
+            try:
+                session.detach()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        ctx = browser.new_context()
+        try:
+            return ctx.new_page().evaluate("navigator.userAgent")
+        finally:
+            ctx.close()
+    except Exception:
+        return None
+
+
+def context_options(browser, opts: dict | None = None) -> dict:
+    """NOOD_0239 — `opts` plus the masked UA, when one is wanted and missing.
+
+    Every `new_context()` in the engine goes through here so the probe and the
+    run present identically; a probe proven on a masked UA that then ran on the
+    stock one would fail at navigation for a reason no report could explain.
+
+    An explicit `user_agent` always wins and is never rewritten — device
+    emulation (`@device`) sets a real mobile UA that carries no headless token,
+    and second-guessing a caller who named a UA is exactly the silent swap
+    NOOD_0122 forbids.
+    """
+    opts = dict(opts or {})
+    if opts.get("user_agent") or not ua_masking_enabled():
+        return opts
+    if masked := mask_headless_ua(browser_ua(browser)):
+        opts["user_agent"] = masked
+    return opts
 
 
 def _launch(pw, engine: str, channel: str | None):

@@ -489,6 +489,7 @@ noodle probe URL [OPTIONS]
 | `--json` | off | Emit the probe payload as JSON instead of the readable summary — the **compact** author-evidence payload (`author_ready`, `headings`, `pom_yaml`, `suggested_steps`, `search`, `revealed`, `skeleton`), the same one MCP `probe_page` returns, bounded to 24 KB | Piping into scripts, or an agent that wants the structured `pages[]` payload. NOOD_0161: it is compact by default — never post-process it with `jq` to slice out author evidence, it is already only that. |
 | `--full` | off | With `--json`, emit the RAW uncapped payload instead — every selector, next-pages, hundreds of KB | NOOD_0161: only when a capped list hid something you need (the compact payload's `truncated` note says when). Not an agent's default door. |
 | `--timeout` | `15000` | Per-page load timeout in ms | Slow-loading apps. |
+| `--browser` | `chromium` | Engine: `chromium` \| `firefox` \| `webkit` \| `safari` \| `edge`. The DEFAULT retries once on `webkit` when chromium proves nothing; a name you pass is used exactly | NOOD_0238: a site can stall **every** headless chromium build while webkit loads it in seconds (NOOD_0237). Probe had no engine selector at all, so such a site was unprobeable and the only move left was hand-authoring blind against a page nobody had read. See "When the probe falls back to webkit" below. |
 | `--click` | none | Click a control before taking a fresh snapshot — pass a control name (matched against the initial probe's own control names) or a raw selector; repeatable, executed in order | NOOD_0116: any control gated behind a click — a dev panel, a tab, a modal — is invisible to a single-load probe. Runs for real: name reveal controls, never state-mutating buttons. |
 | `--do` | none | Execute a stateful transaction after any `--click` reveals: `"enter <value> in <field>"`, `"select <option> from <dropdown>"`, `"click <name>"`, `"click <name> in the row containing <text>"` (NOOD_0222: card grids, resolved by the runtime's own row-climb); repeatable, executed in order, each action followed by a settle + delta snapshot under `revealed` | NOOD_0144: multi-stage flows — fill → select → save → "login appears" is discovered in ONE probe instead of one guessed locator per red run. Actions run for real (a save/submit is the point); `{env:KEY}` in a value resolves from the workspace env files, so secrets never transit the transcript. |
 | `--search` | none | Perform the site search with this term (editable-first box detection; icon-opened boxes clicked open) and summarize the RESULTS page too | NOOD_0117: search tests — surfaces the results page's new controls, its "NN results" summary element (with a ready POM entry), and the summary-count assertion to prefer over counting rendered cards. |
@@ -560,6 +561,65 @@ resolves the same way the grammar spells it. Either rewrite is reported in
 Space/comma-separate several URLs to probe them in one browser session
 (`noodle probe "https://a.example/login https://a.example/home"`). MCP
 equivalent: `probe_page(url, click=[...], do=[...])`.
+
+### When the probe falls back to webkit
+
+> **NOOD_0239 changed when this fires.** The stall below was never an engine
+> limitation — it was the User-Agent. Playwright's headless Chromium announces
+> `HeadlessChrome/…`, and Akamai-class edges stall the document on it. Noodle
+> now launches the full Chromium build and masks that token to `Chrome` (the
+> browser's own version and platform, nothing invented) for the probe and the
+> run alike, so these sites load on the default engine: measured on the same
+> retail site, stock UA timed out at 15 s while the masked UA returned HTTP 200
+> in 2.1 s. The webkit rescue below still exists and still works — it is now a
+> second line of defence that rarely fires, not the expected path.
+> `NOODLE_HEADLESS_UA=off` restores the stock UA.
+
+NOOD_0237 measured a retail site that appeared to **stall every headless
+chromium build** — the headless shell, full `channel="chromium"`, and real
+Chrome each timed out at 30 s on a URL headed Chrome loaded in 2.2 s. Headless
+webkit loaded it fine. Raising `--timeout` does nothing: nothing is ever
+coming. (Every one of those trials held the UA fixed, which is why the cause
+was missed for a release — see the note above.)
+
+That fix reached the *run* (`@webkit`, `--browser webkit`, `NOODLE_BROWSER`)
+and not the *probe*, which had no engine selector at all. So the one command
+you are told to run before authoring was unusable on exactly those sites, and
+the documented next move — hand-author Gherkin against a page nobody has read
+— also costs the goal path its `intent_verified`. NOOD_0238 closes it:
+
+- **Default (no `--browser`)** — chromium, then **one** retry on webkit if
+  chromium proved nothing. Nothing else changes: a probe that works today
+  pays no second launch, because the retry only fires when `pages` is empty.
+- **`--browser <name>`** — used exactly, never swapped. This is
+  `browser_pool`'s house rule (NOOD_0122): a probe that answered a webkit
+  request with chromium evidence would be lying about what it proved.
+  `NOODLE_BROWSER` in the environment counts as the same explicit choice.
+- **A dead origin is never retried.** `ERR_CONNECTION_REFUSED`,
+  `ERR_NAME_NOT_RESOLVED` and `ERR_INTERNET_DISCONNECTED` are properties of
+  the host, not the browser — retrying buys a second launch and the identical
+  error, and buries the fast `_ORIGIN_ERRORS` verdict under a slower one.
+
+Every payload names the engine that produced it:
+
+```json
+"browser": {
+  "used": "webkit",
+  "fell_back_from": "chromium",
+  "why": "chromium could not load the page ...; webkit did. NOOD_0237.",
+  "tag": "@webkit",
+  "tag_note": "this evidence was proven on webkit — tag the feature @webkit ..."
+}
+```
+
+**Act on `tag`.** The probe and the run are separate browser launches, so
+evidence proven on webkit is only reproducible if the *feature* says so —
+`hooks.py` reads `@webkit` straight off the scenario. An untagged feature
+built from a webkit-proven probe reruns on chromium and fails at navigation,
+which is the confusing failure this whole mechanism exists to prevent.
+Chromium is the default engine and carries no `tag`: its absence means it.
+The human `noodle probe` output prints the same thing as an `Engine:` header,
+above the pages, and only when the engine is not chromium.
 
 ## noodle inspect
 

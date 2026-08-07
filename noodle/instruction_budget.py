@@ -184,6 +184,21 @@ Ceiling accounting (moved verbatim from the retired test asserts):
   read the page telling it how. The `--do` comma-chain clause rides inside
   the existing probe bullet, and `noodle probe --help` paid for its own
   chaining note by compressing two phrases (6335 B, unchanged cap).
+- NOOD_0238: `noodle probe --help` 6400 → 6656 (+256; 6590 B used at the
+  bump, 66 headroom). ONE flag joined probe — `--browser`, the engine
+  selector probe never had. Straight NOOD_0179/NOOD_0187 rule: a flag's
+  existence is routing, and 190 of the 256 bytes are rich's option row at 80
+  columns, not prose — the help itself is a single line naming the engines
+  and the retry. The rationale (why webkit, when the fallback fires, why an
+  explicit choice is never swapped) moved to docs/cli-reference.md, and the
+  per-payload guidance costs zero surface bytes because it rides in the
+  result: `browser.tag`/`browser.why` appear only on the probes that fell
+  back. hot-tool-docstrings absorbed probe_page's `browser` clause INSIDE
+  its cap (6603 → 6639, 17 headroom) — the first draft spent 430 B there
+  explaining the fallback and was cut to 36 for exactly the §7 reason: an
+  agent that never reads the clause still gets rescued by the default and
+  still reads the tag off the payload, so the surface only has to name the
+  parameter.
 """
 from __future__ import annotations
 
@@ -200,7 +215,7 @@ CEILINGS: dict[str, int] = {
     "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 8960,
     "copilot-digest (.github/copilot-instructions.md)": 7424,
     "hot-tool-docstrings (probe/author/run_and_report/run)": 6656,
-    "cli-help (noodle probe --help)": 6400,
+    "cli-help (noodle probe --help)": 6656,
     "cli-help (noodle run --help)": 5504,
 }
 

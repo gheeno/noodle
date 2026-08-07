@@ -4,6 +4,124 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a52] — 2026-08-07
+
+**NOOD_0239** — fix: the headless browser stops announcing itself, and the run
+gets the same browser the probe gets.
+
+A user reported a regression against a live Akamai-fronted retail site: an
+older build probed it headless, a newer one could not — `Page.goto: Timeout` on
+every attempt, in both probing and authoring. NOOD_0237 had investigated the
+same symptom one release earlier, varied the browser **channel** (headless
+shell, full `channel="chromium"`, real Chrome), watched all three time out, and
+concluded that *no* headless chromium can load such a site. That conclusion
+shipped as `@webkit`/`--browser webkit`, and NOOD_0238 built an automatic
+webkit rescue on top of it.
+
+**The conclusion was wrong.** Every one of those trials changed the channel
+while holding the **User-Agent** fixed, and the User-Agent was the entire
+cause: Playwright's headless Chromium spells itself
+`HeadlessChrome/148.0.0.0` in the one header every CDN edge already parses.
+The edge stalls the document rather than refusing it, which is why this
+surfaced as a navigation timeout and read like an engine limitation. Measured
+on one machine, one binary, one set of flags, one string changed:
+
+| | `page.goto` | full scenario |
+|---|---|---|
+| stock `HeadlessChrome…` | times out at 15 s | **fails** after 245 s |
+| masked `Chrome…` | HTTP 200 in **2.1 s** | **passes** in 4 s |
+
+The fix has two halves and neither works alone — the stripped headless shell
+stays blocked even on a masked UA, and the full build stays blocked on the
+stock one:
+
+- **`mask_headless_ua`** rewrites that one token on the browser's OWN
+  user agent, read off the running binary over CDP in ~4 ms. The version and
+  platform are never invented, so the site still gets an accurate answer to
+  "what are you" — this closes a gap between headless and headed, it does not
+  bypass anything. The same origin serves the same page to the same browser
+  headed today, which is what `@headed` was being recommended for.
+- **The full Chromium build now reaches the RUN.** NOOD_0237 taught
+  `browser_pool` to ask for `channel="chromium"` instead of the shell, but only
+  the *probe* goes through that pool — a headless run still launched the shell,
+  so a site could be probeable and not runnable. An `--only-shell` host (common
+  in CI) degrades to the shell with a note instead of failing the suite.
+
+`NOODLE_HEADLESS_UA=off` restores the stock UA, for the one legitimate reason
+to want it: testing your own bot detection, where being recognised as headless
+is the requirement rather than the bug. Masking is applied at every
+`new_context()` in the engine — probe, run, and the named `buyer`/`seller`
+contexts — because a probe proven on a masked UA that then ran on the stock one
+would fail at navigation for a reason no report could explain. A `@device`
+preset's real mobile UA is never rewritten (NOOD_0122's no-silent-swap rule,
+applied to the UA).
+
+NOOD_0238's webkit rescue is kept and still works; it is now a second line of
+defence that rarely fires rather than the expected path. The false "any headless
+chromium build" claim is corrected everywhere it was recorded — `default_channel`'s
+docstring, `docs/manual.md` (both entries), `docs/cli-reference.md`,
+`docs/encyclopedia.md` — because a stale wrong conclusion is how a wrong fix
+gets re-derived.
+
+`unit_tests/test_nood_0239.py` (29): the pure substitution, the opt-out, the
+`@device` and unreadable-UA cases, and three drift guards the user asked for —
+an **AST sweep** asserting every `new_context()` in `noodle/` routes through
+`context_options` (the bug was exactly one call site missing it), a check that
+the guard still *sees* those call sites so it cannot pass by matching nothing,
+and an opt-in live test (`NOODLE_LIVE_TESTS=1`) proving the real binary still
+sends the token the mask looks for.
+
+**NOOD_0238** — feature: the probe gets a browser selector, and rescues
+itself on webkit. NOOD_0237 established that a site can stall **every**
+headless chromium build (shell, full `channel="chromium"`, real Chrome — all
+timed out at 30 s on a URL headed Chrome loaded in 2.2 s) while headless
+webkit loads it, and it fixed the *run*: `@webkit`, `--browser webkit`,
+`NOODLE_BROWSER`. It left the *probe* behind. `noodle probe` / `probe_page`
+had no engine selector at all — `--timeout`, `--click`, `--do`, `--discover`,
+but nothing to pick an engine — so the one command an agent is told to run
+before authoring was unusable on exactly those sites, and the only move left
+was hand-authoring Gherkin against a page nobody had read (which also costs
+the goal path its `intent_verified`). Found while probing a live retail site:
+two independent probes, two identical `Page.goto` timeouts, no flag to try.
+
+`--browser` (CLI) / `browser=` (MCP `probe_page`) now take
+`chromium | firefox | webkit | safari | edge`, and the plumbing that already
+existed end to end — `probe(browser_name=…)` → `browser_pool` — is finally
+reachable from a door. Behaviour:
+
+- **Default** — chromium, then **one** retry on webkit if chromium proved
+  nothing. A probe that works today pays no second launch: the retry fires
+  only when `pages` is empty.
+- **A named engine is used exactly, never swapped** (`browser_pool`'s
+  NOOD_0122 rule — answering a webkit request with chromium evidence lies
+  about what was proven). `NOODLE_BROWSER` counts as the same explicit
+  choice, so an exported engine is not second-guessed either.
+- **A dead origin is never retried** — `ERR_CONNECTION_REFUSED`,
+  `ERR_NAME_NOT_RESOLVED`, `ERR_INTERNET_DISCONNECTED` are properties of the
+  host, not the browser; retrying buys a launch and the same error while
+  burying the fast `_ORIGIN_ERRORS` verdict.
+- **Never silent.** Every payload carries `browser.used`, and a fallback adds
+  `fell_back_from`/`why` plus `tag` (`@webkit`) — the tag the FEATURE needs,
+  because probe and run launch separately and an untagged feature built from
+  webkit-proven evidence reruns on chromium and fails at navigation. `render`
+  prints it as an `Engine:` header, and only when it is not chromium.
+
+Wired at `repl.core.probe_page`, the one choke point the CLI, MCP and
+goal-mode authoring all pass through, so `author(goal=…)` survives a stalling
+site instead of returning "probe returned no page evidence".
+
+Instruction budget: `noodle probe --help` 6400 → 6656 (+256; 6590 B used, 66
+headroom). One flag joined probe, and 190 of those bytes are rich's option
+row at 80 columns rather than prose — the help is a single line naming the
+engines and the retry, per the NOOD_0179/NOOD_0187 rule that a flag's
+existence is routing. The rationale moved to `docs/cli-reference.md`
+("When the probe falls back to webkit") and `docs/manual.md`'s NOOD_0237
+troubleshooting entry. `hot-tool-docstrings` absorbed `probe_page`'s
+`browser` clause **inside** its cap (6603 → 6639): the first draft spent
+430 B there explaining the fallback and was cut to 36, because an agent that
+never reads the clause is still rescued by the default and still reads the
+tag off the payload — the surface only has to name the parameter.
+
 ## [1.0.0a51] — 2026-08-07
 
 **NOOD_0237** — fix: the headless browser is a real browser, and the install

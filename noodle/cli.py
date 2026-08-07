@@ -3205,6 +3205,10 @@ def probe(
     discover: bool = typer.Option(False, "--discover", help="Trigger NAMES unknown? Clicks bounded disclosure candidates, deltas under revealed. Only for an unnamed control gating needed UI"),
     find: str = typer.Option(None, "--find", help="Only controls/result-items matching this text, pre-cap — replaces payload greps"),
     brief: bool = typer.Option(False, "--brief", help="Step templates once, not one sentence per control"),
+    # NOOD_0238 — probe had no engine selector, so a site that stalls every
+    # headless chromium build (NOOD_0237) was unprobeable and the agent had to
+    # hand-author blind. Default chromium; only the default auto-retries webkit.
+    browser: str = typer.Option(None, "--browser", help="Engine: chromium (default, retries webkit if it proves nothing), firefox, webkit, safari, edge"),
     # NOOD_0222 — every other command takes -w; probe rejecting it cost a
     # reviewed session a retry lap. It also does real work: {env:KEY} in --do
     # resolves against THIS workspace's env chain, not the cwd's.
@@ -3219,6 +3223,15 @@ def probe(
         raise typer.BadParameter(
             f"Unsupported section '{section}'. Valid: controls, pom, steps, headings, revealed, all",
             param_hint="'--section'")
+    # NOOD_0238 — a typo'd engine must fail HERE, before a browser launches.
+    # resolve_engine degrades an unknown name to chromium with a note (the
+    # probe is advisory), but for a flag the user typed by hand that reads as
+    # the probe ignoring them — `--browser webkti` proving chromium evidence.
+    if browser and browser.strip().lower() not in _VALID_BROWSERS:
+        raise typer.BadParameter(
+            f"Unsupported browser '{browser}'. "
+            f"Valid: {', '.join(sorted(_VALID_BROWSERS))}",
+            param_hint="'--browser'")
     from noodle.repl import core as _core
     result = _core.probe_page(url, timeout_ms=timeout,
                               click=list(click) if click else None,
@@ -3228,7 +3241,8 @@ def probe(
                               expect=list(expect) if expect else None,
                               open_native_controls=open_native,
                               max_reveal_depth=max_reveal_depth,
-                              discover=discover, workspace=workspace)
+                              discover=discover, workspace=workspace,
+                              browser=browser.strip().lower() if browser else None)
     if find:
         # NOOD_0169 — one control out of a big page, pre-cap: the answer the
         # payload-spill grep round trips used to reconstruct by hand.
