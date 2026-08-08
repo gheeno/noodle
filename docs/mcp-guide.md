@@ -81,10 +81,12 @@ installed, plus a free local LLM fallback (Ollama) for Noodle's own
 `--llm` mode if you want it.
 
 ```bash
-# macOS
+# macOS/Linux
 git clone https://github.com/gheeno/noodle.git && cd noodle
 uv pip install -e ".[all]"      # includes the mcp extra
-source .venv/bin/activate       # every new terminal, or use `uv tool install --editable` for a global PATH instead
+source .venv/bin/activate       # bash/zsh — fish: source .venv/bin/activate.fish (the plain
+                                # file is POSIX syntax fish can't parse). Every new terminal,
+                                # or use `uv tool install --editable` for a global PATH instead
 playwright install chromium
 noodle-mcp --help               # sanity check the entrypoint exists
 ```

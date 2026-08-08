@@ -3,10 +3,19 @@
 ## Setup
 
 ```bash
+uv venv                          # creates .venv — `uv pip install` will not
+source .venv/bin/activate        # bash/zsh — fish: source .venv/bin/activate.fish
+                                 # Windows (PowerShell): .venv\Scripts\Activate.ps1
 uv pip install -e ".[all,dev]"
-source .venv/bin/activate
 playwright install chromium
 ```
+
+Activating before installing is the order that matters: `uv pip install`
+errors with `No virtual environment found` when there is no `.venv`, and
+installs into your *system* Python if one is active instead. fish must use
+the `.fish` script — the plain `activate` is POSIX syntax fish rejects with
+`Unsupported use of '='`, which leaves the venv silently inactive
+(NOOD_0242).
 
 ## Before opening a PR
 
