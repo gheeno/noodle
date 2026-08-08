@@ -18,8 +18,8 @@ Noodle's LLM layer is intentionally thin — one gateway module, two functions:
 
 | Function | Purpose | Reads |
 |---|---|---|
-| `ask(prompt) -> str` | Step-JSON resolution (`resolver/step_resolver.py`) | `NOODLE_MODEL`, `NOODLE_LLM_URL` |
-| `ask_vision(prompt, image_b64) -> str` | Locator fallback, semantic assertions, RCA | `NOODLE_MODEL`, `NOODLE_LLM_URL` |
+| `ask(prompt) -> str` | Step-JSON resolution (`resolver/step_resolver.py`) | `NOODLE_MODEL`, `NOODLE_LLM_URL`, `NOODLE_LLM_TEMPERATURE`, `NOODLE_LLM_MAX_CALLS`, `NOODLE_LOG_LLM_PAYLOADS` |
+| `ask_vision(prompt, image_b64) -> str` | Locator fallback, semantic assertions, RCA | same, plus `NOODLE_RCA_MAX_CALLS` for the RCA leg |
 
 Everything routes through **LiteLLM**, so any provider (Ollama, Anthropic,
 Gemini, Groq, OpenAI, Foundry Local, GitHub Copilot) works via one
@@ -28,7 +28,7 @@ and deterministic by default — **no `NOODLE_MODEL` set means no LLM call,
 ever** (`docs/architecture.md` §1, §8). The LLM is a labelled fallback at
 four trigger points (`docs/architecture.md` §5), not a default path.
 
-Separately, `noodle repl` (README.md § Agentic mode) is a rule-based REPL
+Separately, `noodle repl` ([docs/manual.md § Plain-English shell](manual.md#plain-english-shell--noodle-repl-optional)) is a rule-based REPL
 for test creation/running/summaries. It costs $0 by default and only
 touches a model when `--llm claude|gemini|ollama` is passed, for two jobs:
 richer `create test` generation and richer `summary` narratives.
@@ -41,7 +41,7 @@ engine has no channel to call back into the MCP host, so the host agent can
 never be the run-time model — for a local, $0 run-time model use Ollama
 (§1). Every step the run-time model resolves is logged to the workspace's
 `docs/steps_dictionary_suggestions.md` for promotion into a real pattern
-(README § Pure LLM mode with a coding agent).
+([docs/manual.md § Pure LLM mode with a coding agent](manual.md#pure-llm-mode-with-a-coding-agent)).
 
 ---
 
@@ -94,7 +94,7 @@ connection error. Pick a backup deliberately, ahead of time:
 
 | Tier | Model | Notes |
 |---|---|---|
-| Free | `gemini/gemini-2.0-flash` (or current Gemini Flash) | Already the framework's documented free/vision-capable fallback. |
+| Free | `gemini/gemini-2.0-flash` (or current Gemini Flash) | Vision-capable and free-tier. Note the shipped `--llm gemini` preset is `gemini/gemini-1.5-flash` (`config.LLM_PRESETS`) — set `NOODLE_MODEL` explicitly for 2.0. |
 | Paid, more reliable | `anthropic/claude-haiku-4-5` | $1/$5 per MTok, fast, vision-capable. Also brings GA structured-outputs support (`strict: true` tool schemas), which could eventually replace the regex/fence JSON-extraction in `_parse_action()` entirely. |
 
 ---
@@ -109,13 +109,14 @@ schema reliability matter more than raw model intelligence.
   *runtime* fallback path: cheap, vision-capable, and its structured-outputs
   support is a better fit for `step_resolver`'s JSON contract than
   prompt-and-hope regex extraction.
-- **Claude Sonnet 5** ($2/$10 intro pricing through 2026-08-31, $3/$15
-  standard) — the right step-up for `noodle repl --llm claude` when actually
+- **Claude Sonnet 5** (see Anthropic's current pricing — the engine never
+  hardcodes rates; `llm/cost.py` prices each call through litellm at run
+  time) — the right step-up for `noodle repl --llm claude` when actually
   *authoring* `.feature`/POM files or narrating RCA/report summaries, where
   output quality matters more than per-call cost.
-- **Gemini Flash** — cheapest/free option, already the framework's documented
-  default free tier. Fine if cost is the only axis and schema rigor doesn't
-  matter as much.
+- **Gemini Flash** — cheapest/free option, and what the `--llm gemini`
+  preset selects (`gemini/gemini-1.5-flash`). Fine if cost is the only axis
+  and schema rigor doesn't matter as much.
 - **GitHub Copilot** — not a fit for the runtime LLM path via its IDE seat
   alone (no completions endpoint LiteLLM can target for a per-step JSON
   fallback) — but see §4 below for a callable path via `litellm`'s
@@ -192,7 +193,7 @@ the step-JSON path specifically).
 
 | Task | Local LLM capable? |
 |---|---|
-| Writing new tests (`noodle repl create test --llm ollama`) | Yes — `qwen2.5-coder` generates Gherkin fine. |
+| Writing new tests (`noodle repl --llm ollama`, then `create test …` at its prompt) | Yes — `qwen2.5-coder` generates Gherkin fine. |
 | Running tests / interacting with the agent | Doesn't need an LLM at all — `run`/`list`/`summary` are rule-based, $0, fully offline by design. |
 | Reviewing report output (`summary --llm`, `NOODLE_RCA`) | Yes — bounded narrative/classification tasks suit a local model well. |
 | **Spinning up the test-apps/busterblock** | **No framework support, local or cloud.** No environment-lifecycle primitive exists — only `run_command`/`run_script` (arbitrary shell, must be authored into a step) or `@precondition` (HTTP-only data seeding against an *already-running* app). An LLM could be told to emit a `run_command: docker compose up -d` step in full-LLM mode, but there is no readiness/health-check wait and no teardown-on-failure for a spun-up process. |
@@ -247,12 +248,13 @@ locally-pulled `ollama/llama3.1:8b` (not one of this doc's recommended
 box) to see what breaks in practice. Two distinct findings:
 
 1. **Wiring gap — confirmed, not a bug.** `client.py`'s
-   `ask()`/`ask_vision()` both default to `os.getenv("NOODLE_MODEL", ...)`,
-   but `step_resolver.py` gates the call on `if os.getenv('NOODLE_MODEL')`
-   *before* ever reaching `client.py` — so a running Ollama server is never
-   auto-detected. `NOODLE_MODEL=ollama/<tag>` must be set explicitly in
-   `.env`/`secrets.env`, matching whatever tag is actually pulled (`ollama
-   list`), not assumed from the client's internal default string.
+   `ask()`/`ask_vision()` read `os.getenv("NOODLE_MODEL")` with **no
+   default** (NOOD_0151 — an unset variable is a misconfig that should fail
+   loudly, not silently dial a phantom localhost), and `step_resolver.py`
+   gates the call on `if os.getenv('NOODLE_MODEL')` *before* ever reaching
+   `client.py` — so a running Ollama server is never auto-detected.
+   `NOODLE_MODEL=ollama/<tag>` must be set explicitly in `.env`/
+   `secrets.env`, matching whatever tag is actually pulled (`ollama list`).
 2. **Accuracy gap — confirmed, matches §1's recommendation.** With
    `NOODLE_MODEL=ollama/llama3.1:8b` set, the pipeline ran end-to-end (no
    config error) but picked the wrong action for `"authenticates using the

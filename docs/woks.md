@@ -23,7 +23,7 @@ are five woks, each standing alone:
 
 | Wok | Tests | Engine(s) | Routing tags | Extras |
 |-----|-------|-----------|--------------|--------|
-| **Web** | browser UI, canvas/terminal-style UIs | Playwright · OCR pixel bridge | `@web` (default), `@terminal` | none — core install |
+| **Web** | browser UI, canvas/terminal-style UIs | Playwright · OCR pixel bridge | `@web` (default), `@terminal`, `@mobile` (device *emulation*) | none — core install |
 | **API** | REST services, browserless | stdlib REST client — no browser, no driver | `@api` | none — core install |
 | **Mobile** | native Android/iOS apps on device/emulator | Appium (UiAutomator2 / XCUITest) | `@appium`, `@android`, `@ios` | `noodle[mobile]` |
 | **Desktop** | native Windows/macOS apps, terminal UIs, spreadsheets — "complex UIs" | Visual agent (OpenCV + OCR + PyAutoGUI) · Appium (WinAppDriver / Mac2) · stdlib `.xlsx` reader | `@visual`, `@windows`, `@mac` | `noodle[visual,desktop,mobile]` |
@@ -387,14 +387,19 @@ LSP alike):
 
 | Scenario tags | Table order |
 |---|---|
-| `@perf` | performance → web → desktop |
-| `@windows` / `@mac` | desktop → web → performance |
-| anything else, or no tags | **best guess:** web → performance → desktop |
+| `@perf` | performance → api → web → desktop |
+| `@windows` / `@mac` | desktop → api → web → performance |
+| anything else, or no tags | **best guess:** api → web → performance → desktop |
 
 So inside `@perf`, `the throughput should be at least 20 requests per
 second` is a real throughput assertion; in an untagged or `@web` scenario
 the same sentence falls to the web compare catch-all (best guess = the
-dominant web vocabulary, exactly the pre-wok behavior). Phrasings that are
+dominant web vocabulary, exactly the pre-wok behavior). The api table sits
+ahead of web in **every** order (NOOD_0216): its patterns are namespaced
+(`performs a GET call at …`, `the response json …`) and cheap to skip,
+while web's tail compare catch-alls — consulted after the whole web table —
+would otherwise steal a sentence like `the response json 'x' should equal
+'y'`. Phrasings that are
 namespaced enough not to collide (`runs a load test on …`, `reads cell …
 into …`, `throughput should exceed …`, `expects cell … to equal …`) resolve
 identically everywhere — prefer them in cross-wok scenarios. `@visual` is

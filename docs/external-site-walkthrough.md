@@ -10,7 +10,7 @@ reports. Every command, failure, and fix below actually happened, against
 [academybugs.com](https://academybugs.com) — a public QA-training site, not
 a fixture.
 
-**This is the direct-CLI path, not `noodle repl`.** The README's ["Your own
+**This is the direct-CLI path, not `noodle repl`.** docs/manual.md's ["Your own
 test workspace"](manual.md#your-own-test-workspace--a-manual-testers-guide)
 walkthrough documents two ways to write tests: hand-write Gherkin, or chat
 with `noodle repl`'s REPL. This is a third path — an agent (or a tester
@@ -147,13 +147,15 @@ see `docs/design-history.md` for the entry once folded in, or `git log
 ## 5. Reports — Allure, RCA, and per-scenario network logs
 
 ```bash
-noodle run --workspace . noodle_tests/academybugs/features --headless
+# The one command: --serve is ON by default outside CI, so the run rebuilds
+# and hosts BOTH reports and prints their URLs (NOOD_0200).
+noodle run --workspace . noodle_tests/academybugs/features --headless --json
+
+# The manual chain — for CI, or when you turned serving off:
 noodle summary    --workspace .                                   # plain pass/fail, no browser
 noodle rca-report --workspace . -o artifacts/reports/rca-report.md # why each failure happened
-
-cd .                          # report generate/open read cwd, not --workspace (yet)
-noodle report generate
-noodle report open            # serves over localhost, picks a free port automatically
+noodle report generate --workspace .
+noodle report open     --workspace .   # localhost, picks a free port automatically
 ```
 
 Every `@web` scenario's Allure result now carries its own **network log**

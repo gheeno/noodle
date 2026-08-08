@@ -69,6 +69,10 @@ maturin). Install only the extras you need:
 | `visual` | Desktop agent (OpenCV, Tesseract, PyAutoGUI) | `uv pip install -e ".[visual]"` |
 | `lsp` | VS Code language server | `uv pip install -e ".[lsp]"` |
 | `azure` | Azure Key Vault secret loader | `uv pip install -e ".[azure]"` |
+| `parallel` | Parallel feature runs via behavex | `uv pip install -e ".[parallel]"` |
+| `mobile` | Native Android/iOS (and Windows/Mac desktop) apps via Appium | `uv pip install -e ".[mobile]"` |
+| `desktop` | Window focus for the visual agent (pygetwindow) | `uv pip install -e ".[desktop]"` |
+| `mcp` | The `noodle-mcp` server — AI-SDLC integration | `uv pip install -e ".[mcp]"` |
 | `all` | Everything except `llm` | `uv pip install -e ".[all]"` |
 
 For reports you also need the **Allure 3 CLI**: `npm i -g allure`
@@ -91,7 +95,8 @@ docker run --rm noodle run sample_feature_tests/web/busterblock/ --headless
 
 ```
 noodle/             ← the package (cli, hooks, agents, resolver, reporting, llm, lsp)
-noodle_tests/       ← your tests live here (scaffolded by `noodle init`)
+sample_feature_tests/  ← the engine repo's bundled suites (a scaffolded WORKSPACE
+                       uses `noodle_tests/` instead — see workspace-guide.md)
   web/
     saucedemo/
       features/
@@ -161,8 +166,9 @@ NOODLE_FIND_TIMEOUT=120000     # element-find budget, ms — a CEILING, not a wa
                                # steps proceed the instant the element appears (NOOD_0089)
 NOODLE_WAIT_EXTENSION=30000    # one extra wait at the find deadline while the network
                                # shows the page still loading (chatty analytics filtered out)
-NOODLE_IGNORE_HTTPS_ERRORS=true # dev/sandbox certs: TLS errors ignored by default in ALL
-                               # browsers; false (or @secure_certs tag) restores validation
+NOODLE_IGNORE_HTTPS_ERRORS=false # certs VERIFIED by default; true (or @insecure_certs)
+                               # relaxes for a dev/sandbox site — never with real credentials
+                               # (@secure_certs always wins and forces verification)
 NOODLE_AUTO_DISMISS=true       # auto-close overlays that block a click + RCA warning;
                                # false = fail the click instead
 NOODLE_STRICT_LOCATOR=false    # true = ambiguous locators FAIL (recommended in CI)
@@ -332,7 +338,7 @@ Full capability map and credential setup: **[Manual → Part 5](manual.md#part-5
 - Pass/fail printed per scenario.
 - On failure: `artifacts/screenshots/FAILED_<step>.png` (annotated) **+ `artifacts/traces/<scenario>.zip`** (full Playwright trace — `playwright show-trace artifacts/traces/<scenario>.zip`) **+ `artifacts/network/<scenario>.json`** (console errors, failed requests, websocket frames).
 - If a locator self-healed: `artifacts/reports/healing-report.jsonl` + `artifacts/reports/healing-report.txt` with `pom.yaml` suggestions.
-- If any scenario failed: `artifacts/reports/rca.md`, a heuristic root-cause table.
+- Every run, pass or fail: `artifacts/reports/rca.md` + `artifacts/reports/rca.html`, a heuristic root-cause table (a green run renders a "no failures" page).
 - With `[reporting]` installed: Allure JSON written to `artifacts/allure-results/` automatically.
 - `noodle artifacts` / `noodle clean` / `noodle archive` list, wipe, or zip the whole `artifacts/` tree.
 
@@ -381,6 +387,8 @@ Add tags to a `Scenario` or `Feature` (feature-level applies to every scenario):
 | `@timezone:America/New_York` | Browser timezone — `Date`, `Intl` (or `NOODLE_TIMEZONE`) |
 | `@color_scheme:dark` | `prefers-color-scheme` emulation (or `NOODLE_COLOR_SCHEME`) |
 | `@offline` | Start the context with no network (or `NOODLE_OFFLINE=true`) |
+| `@insecure_certs` | Skip TLS certificate validation for this scenario (or `NOODLE_IGNORE_HTTPS_ERRORS=true` run-wide) — dev/sandbox certs only, logs a warning; never with real credentials |
+| `@secure_certs` | Force TLS certificate validation — always wins, even over `NOODLE_IGNORE_HTTPS_ERRORS=true` |
 | `@ocr_fallback` | Coordinate/OCR locator fallback for **closed** shadow DOM (or `NOODLE_OCR_FALLBACK=true`; needs `[visual]`) |
 | `@retry_step` | Retry each failed step once in place (or `NOODLE_STEP_RETRIES=N` run-wide) |
 | `@soft` | Collect assertion failures; fail once at scenario end |
@@ -1175,6 +1183,11 @@ it. The extension stopped claiming the `.feature` extension globally; instead
 ```json
 { "files.associations": { "**/noodle_tests/**/*.feature": "noodle" } }
 ```
+
+> Since NOOD_0241 the same file also carries the `chat.tools.terminal.autoApprove`
+> map (the agent shell policy — one noodle invocation per command line).
+> Hand-copying only `files.associations` into another workspace drops the policy
+> half; `noodle doctor --policy` verifies it's present and current.
 
 That maps *this* workspace's feature files to the `noodle` language (→ noodle
 grammar + LSP). It's folder-scoped — it only applies when this workspace is the

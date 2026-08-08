@@ -84,10 +84,20 @@ def bound(payload, budget: int | None = None, hint: str = "",
     each pass, so a payload dominated by one runaway value loses only that
     value; keys are never dropped, and the small keys an author actually
     reads (`ready`, `blocking`, `author_ready`, verdicts, paths, URLs) are
-    never the largest value and survive whole."""
+    never the largest value and survive whole.
+
+    NOOD_0241 — every dict payload leaves here stamped `payload_complete`.
+    The docs have always asserted payloads are pre-bounded, but the payloads
+    themselves never said so, and `| head -50` is a truncation-anxiety
+    reflex: an agent that cannot see "this is all of it" pages the output to
+    be safe. `payload_complete: true` = read as returned, nothing follows.
+    A trimmed payload says `payload_complete: false, truncated: true` and
+    the note names both what was cut and the knob that widens the budget."""
     budget = budget_bytes() if budget is None else budget
-    if not isinstance(payload, dict) or size(payload, indent) <= budget:
+    if not isinstance(payload, dict):
         return payload
+    if size(payload, indent) <= budget:
+        return {**payload, "payload_complete": True}
 
     # Trim to leave room for the note itself — otherwise the explanation of
     # the trim is what puts the payload back over the line.
@@ -114,13 +124,17 @@ def bound(payload, budget: int | None = None, hint: str = "",
 
     if not trimmed:
         # Nothing left to halve and still over: hand it back whole rather than
-        # drop a key the caller may need, and say so.
+        # drop a key the caller may need, and say so. Whole = complete.
+        out["payload_complete"] = True
         out["payload_note"] = (
             f"over the {budget // 1000} KB payload budget ({size(out, indent)} B) and "
             f"nothing is trimmable — every value is already small. {hint}".strip())
         return out
+    out["payload_complete"] = False
+    out["truncated"] = True
     out["payload_note"] = (
         f"trimmed {', '.join(trimmed)} to fit the {budget // 1000} KB payload "
         f"budget — the harness spills anything larger to a temp file. "
+        f"Widen it for this session with NOODLE_PAYLOAD_BUDGET_BYTES. "
         f"{hint}".strip())
     return out

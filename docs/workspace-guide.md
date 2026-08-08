@@ -18,7 +18,7 @@ needs to live inside — or touch — the `noodle` repo itself.
 self-contained folder scaffolded by `noodle init <path>` (templates
 refreshed by `noodle init --force`). It is one of the three canonical
 nouns — **engine** (the framework), **workspace** (this folder), **wok**
-(a capability work area: web/mobile/desktop/performance) — defined once in
+(a capability work area: web/api/mobile/desktop/performance) — defined once in
 [glossary.md § The three nouns](glossary.md#the-three-nouns--engine-workspace-wok).
 
 That workspace is meant to be **fully self-contained**: config, secrets,
@@ -39,27 +39,40 @@ it on an existing workspace is the **upgrade path** (NOOD_0089): engine-glue
 files are auto-synced to the installed engine, drifted template files are
 reported (refresh with `--force`, originals backed up to `*.bak`), and your
 config files (`.env`, `noodle.yaml`, `pom.yaml`) are never touched — the
-workspace stays yours even across noodle upgrades:
+workspace stays yours even across noodle upgrades. The agent shell-policy
+files are merge-only too — your own entries survive; `--no-agent-policy`
+opts out, and `noodle doctor --policy` verifies them (NOOD_0241):
 
 ```
 my-tests/                     ← your workspace — name it anything
 ├── noodle.yaml                  config: tests_dir, browser, headless
 ├── README.md                    auto-written next-steps cheat sheet
 ├── AGENTS.md                    instructions for AI coding agents — auto-read (see below)
+├── CLAUDE.md                    Claude Code pointer — inlines AGENTS.md
 ├── PROMPT_TEMPLATE.md           copy-edit-paste prompt for any agent (NOOD_0089)
 ├── .env                         run-wide settings — safe to commit
+├── .gitignore                   run output + secrets never committable (append-merged)
 ├── secrets.env                  credentials — YOU create this, gitignore it
 ├── environments.yaml             base URLs — YOU create this
+├── .mcp.json                    MCP server config for Claude Code (NOOD_0095)
+├── .vscode/                     mcp.json (VS Code Copilot MCP) + settings.json
+│                                (language association + agent shell policy, NOOD_0241)
+├── .claude/                     settings.json (agent shell policy) + skills/noodle
+├── .copilot/                    agent-policy.json (agent shell policy) +
+│                                mcp-config.json + skills/noodle
 ├── azure-pipelines/
 │   └── azure-pipelines.yml      runs this workspace in Azure DevOps (NOOD_0205)
 └── noodle_tests/                ← the test folder (rename via tests_dir)
     ├── environment.py            engine glue — never edit
     ├── steps/z_catch_all.py      engine glue — never edit
     ├── pom.yaml                  global page objects, shared by every app
-    └── sample_app/               a template app package to copy
-        ├── features/login.feature
-        ├── resources/pageobjects/login_pom.yaml
-        └── report/               this app's run output lands here
+    ├── sample_app/               a template app package to copy
+    │   ├── features/login.feature
+    │   ├── resources/pageobjects/login_pom.yaml
+    │   └── report/               this app's run output lands here (README.md inside)
+    └── sample_api/               the api-wok template — browserless (NOOD_0216)
+        ├── features/api_smoke.feature
+        └── resources/environments.yaml
 ```
 
 Every app-under-test gets its own package like `sample_app/` — features,
@@ -327,7 +340,7 @@ stages it into your workspace's own `docs/`, never the engine's.
 |---|---|---|
 | The workspace folder itself | **Yes** — any name, anywhere on disk | just pick the path for `noodle init` |
 | The test folder (default `noodle_tests/`) | **Yes** | `noodle.yaml`'s `tests_dir:` key |
-| Each app-under-test's folder name (`noodle_tests/<type>/<app>/`) | **Yes** — `<type>` and `<app>` are free-form; convention: `<type>` = the **wok** name (web/mobile/desktop/performance — [woks.md](woks.md)) | create whatever folder you like under `tests_dir` |
+| Each app-under-test's folder name (`noodle_tests/<type>/<app>/`) | **Yes** — `<type>` and `<app>` are free-form; convention: `<type>` = the **wok** name (web/api/mobile/desktop/performance — [woks.md](woks.md)) | create whatever folder you like under `tests_dir` |
 | `<app>/features/`, `<app>/resources/`, `<app>/report/` | **No** — fixed subfolder names | this is the one structural contract (§2's table) |
 | `noodle_tests/environment.py`, `noodle_tests/steps/` (name + location) | **No** | `behave` itself requires these exact names/positions — not a Noodle convention |
 | `resources/pageobjects/<page>_pom.yaml` | Page name is free; `_pom.yaml` suffix is fixed | lets Noodle infer the page name from the filename |
@@ -352,6 +365,13 @@ noodle report generate --workspace ~/my-tests   # NOOD_0052 — no cd needed
 noodle report open --workspace ~/my-tests
 noodle report serve --workspace ~/my-tests      # share on the network
 ```
+
+`-w`/`--workspace` is optional from anywhere **inside** the workspace tree
+(NOOD_0241): when omitted, the engine resolves it as explicit `-w` →
+the `NOODLE_WORKSPACE` env var → the nearest ancestor directory holding a
+`noodle.yaml` (walking up from the current dir) → the current dir itself.
+Set `NOODLE_WORKSPACE=~/my-tests` once and every command in the session
+targets that workspace with no flag at all.
 
 From `noodle repl` (which always runs *inside* the workspace it was
 started with, so this doesn't apply): `generate the report` isn't a chat

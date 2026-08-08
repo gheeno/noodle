@@ -21,16 +21,21 @@ Everything you write goes in `tmp/`, which is gitignored.
 
 Keep both — neither replaces the other.
 
-| | `noodle benchmark --gate` | this drill |
-|---|---|---|
-| Driven by | the engine, one command | you, by hand |
-| Measures | generation time, corrections, lines | **dev time + agent AIC per case** |
-| Cost | zero tokens | real tokens — that is the point |
-| Deterministic | yes | no (a model drives it) |
-| Role | pre-PR gate, exit 0 required | post-commit health check |
+| | `noodle benchmark --gate` | `noodle benchmark --session` | this drill |
+|---|---|---|---|
+| Driven by | the engine, one command | the engine + an agent in the loop | you, by hand |
+| Target | Wikipedia + a static fixture | bundled BusterBlock, hosted locally | a live external site |
+| Measures | generation time, corrections, lines | dev time split ENGINE vs OFF-ENG, corrections, payload tokens per spec, door (`cli`\|`mcp`) | **dev time + real agent AIC per case** |
+| Cost | zero tokens | engine-side payload tokens (model spend reported, never scored) | real tokens on YOUR host — that is the point |
+| Deterministic | yes | scored deterministically; the agent's laps are not | no |
+| Role | pre-PR gate, exit 0 required | the release benchmark — the workflow the product ships as | post-commit health check |
 
-The engine gate has no cost column on purpose. This drill is that missing
-half. It cannot gate a PR: an LLM in the loop means no stable exit code.
+Since NOOD_0232 the engine ships its own agent-in-the-loop instrument
+(`--session` … `--table`), and it records what the gate cannot: the
+ENGINE/OFF-ENG split, per-spec payload tokens, and which door carried each
+attempt. What this drill still uniquely gives is **host-side** cost — the
+AIC your actual agent burned — against a live external site nobody
+controls. It cannot gate a PR: an LLM in the loop means no stable exit code.
 
 ---
 

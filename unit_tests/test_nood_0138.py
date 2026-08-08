@@ -359,7 +359,7 @@ def test_json_output_contract(tmp_path, single_launcher):
     ids = {c["id"] for c in data["checks"]}
     assert {"install.active-build", "install.editable", "install.launchers",
             "workspace.config", "workspace.layout", "workspace.templates",
-            "workspace.mcp"} <= ids
+            "workspace.mcp", "workspace.policy"} <= ids
     assert all(c["status"] in ("pass", "info", "warn", "fail") for c in data["checks"])
     assert "\x1b" not in r.output  # no ANSI in JSON
 

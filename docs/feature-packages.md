@@ -50,10 +50,11 @@ with only one app-under-test (`api/`, `terminal/`) skip the extra app-name
 layer and put `features/`/`resources/` directly under the category.
 
 **`<category>` = the wok.** Since NOOD_0155 the category level is the formal
-**wok** (capability work area) name — `web/`, `mobile/`, `desktop/`,
-`performance/` (plus this repo's `api/`/`terminal/`, which belong to the web
-wok). The folder name is still free-form (nothing parses it), but matching
-the wok keeps suites discoverable — see [woks.md](woks.md).
+**wok** (capability work area) name — `web/`, `api/`, `mobile/`, `desktop/`,
+`performance/` (plus this repo's `terminal/`, which belongs to the web wok;
+`api/` has been its own wok since NOOD_0191, no longer under web). The
+folder name is still free-form (nothing parses it), but matching the wok
+keeps suites discoverable — see [woks.md](woks.md).
 
 Worked example: [`sample_feature_tests/web/busterblock/`](../sample_feature_tests/web/busterblock) has
 `BB_USER`/`BB_PASS` in `resources/busterblock_secrets.env.example` and its

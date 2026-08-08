@@ -1,4 +1,12 @@
 import errno
+
+# NOOD_0241 — the click EXCEPTION classes Typer actually raises. Some Typer
+# builds (typer-slim, uv tool venvs) vendor their own click fork at
+# `typer._click`; a plain `import click` there catches classes the parser
+# never throws and the agent-mode error envelope silently misses. Deriving
+# the module from TyperGroup's own base class follows whichever click this
+# Typer was built on.
+import importlib as _importlib
 import json
 import logging
 import os
@@ -13,6 +21,12 @@ from pathlib import Path
 
 import typer
 from typer.core import TyperGroup
+
+try:
+    _click_exc = _importlib.import_module(
+        TyperGroup.__mro__[1].__module__.rsplit(".", 1)[0] + ".exceptions")
+except Exception:              # pragma: no cover — unexpected typer layout
+    from click import exceptions as _click_exc
 
 from noodle import config, log, payload_budget
 from noodle.reporting import paths as _paths
@@ -49,9 +63,44 @@ def _log_run_end(results_root: str, rc: int, t0: float, data: dict | None = None
 class _OrderedGroup(TyperGroup):
     """List commands alphabetically in --help (Typer's default is definition
     order, which buried validate/inspect/probe/rca-report in a hard-to-scan
-    pile). ponytail: one override, no plugin."""
+    pile). ponytail: one override, no plugin.
+
+    NOOD_0241 — `main` is also the one choke point every usage error passes
+    through, so agent-mode error rendering lives here. Typer's default answer
+    to an unknown option is a Rich box on stderr ending in "Try '<cmd>
+    --help' for help." — for an agent that asked for --json that is (a)
+    unparseable, (b) an instruction to run the very --help discovery the
+    workspace rules ban, and (c) the literal first cause of the `--help |
+    head -50` shell leak the NOOD_0241 audit documents. In agent mode the
+    same error leaves as one bounded JSON envelope on stdout, exit code
+    preserved, naming every valid flag (and spec key, where the command has
+    them) so the second attempt can converge with no discovery call. Human
+    TTY sessions keep the Rich rendering untouched."""
     def list_commands(self, ctx):
         return sorted(super().list_commands(ctx))
+
+    def main(self, args=None, prog_name=None, complete_var=None,
+             standalone_mode=True, **extra):
+        tokens = list(args) if args is not None else sys.argv[1:]
+        if not (standalone_mode and _agent_error_mode(tokens)):
+            return super().main(args, prog_name, complete_var,
+                                standalone_mode=standalone_mode, **extra)
+        try:
+            rv = super().main(args, prog_name, complete_var,
+                              standalone_mode=False, **extra)
+        except _click_exc.Abort:
+            sys.exit(1)
+        except _click_exc.UsageError as e:
+            _json_out(_usage_error_payload(e, tokens))
+            sys.exit(e.exit_code)
+        except _click_exc.ClickException as e:
+            _json_out({"ok": False, "error": "usage",
+                       "detail": e.format_message(),
+                       "next": _CAPABILITIES_HINT})
+            sys.exit(e.exit_code)
+        # standalone semantics were requested: always leave via SystemExit so
+        # CliRunner and console-script wrappers see the same exit code.
+        sys.exit(rv if isinstance(rv, int) else 0)
 
 
 # NOOD_0195 — the console speaks UTF-8, whatever the OS default is. Windows
@@ -226,7 +275,19 @@ def _json_out(payload, indent: int | None = 2, **dumps_kwargs) -> None:
     NOOD_0215 — `indent=None` prints the payload on one line. A schema dump is
     machine-facing, and 245 lines of mostly-whitespace is what makes an agent
     reach for `sed -n '120,320p'` however loudly the no-pipes rule says not
-    to. One line cannot be paged."""
+    to. One line cannot be paged.
+
+    NOOD_0241 — every agent payload also self-reports invocation hygiene:
+    a shell-composed command line (pipes, &&, cd-prefix) stamps
+    `invocation_clean: false` + a note, the way `verified: false` is
+    surfaced, and appends a sighting to .noodle/invocation_log.jsonl so
+    leaks aggregate instead of evaporating with the transcript."""
+    if isinstance(payload, dict):
+        from noodle import invocation
+        stamp = invocation.report()
+        if stamp:
+            payload = {**payload, **stamp}
+            invocation.log_sighting(".")
     bounded = payload_budget.bound(payload, indent=indent)
     if isinstance(bounded, dict) and "payload_note" in bounded:
         full = _write_full_payload(payload)
@@ -287,10 +348,119 @@ def _serve_default() -> bool:
     return not (os.getenv("CI") or os.getenv("TF_BUILD"))
 
 
+def _ws_resolve(value: str) -> str:
+    """NOOD_0241 — resolve the -w default so `cd <ws> && noodle …` is never
+    necessary (six of six commands in the audited session opened with a cd,
+    and routine && chaining is the on-ramp to `| head` and `| tee`). An
+    explicit -w wins untouched. The default '.' resolves: NOODLE_WORKSPACE
+    (env) → the nearest ANCESTOR holding noodle.yaml → '.' unchanged. The
+    cwd-is-the-workspace case stays literally '.' so every existing relative
+    path in payloads is byte-identical. Wired as the click callback on every
+    -w option; direct (non-CLI) function calls bypass parsing and are
+    untouched."""
+    if isinstance(value, str) and value and value != ".":
+        return value
+    env = (os.getenv("NOODLE_WORKSPACE") or "").strip()
+    if env:
+        return env
+    cwd = Path.cwd()
+    if (cwd / "noodle.yaml").exists():
+        return "."
+    for d in cwd.parents:
+        if (d / "noodle.yaml").exists():
+            return str(d)
+    return "."
+
+
+# NOOD_0241 — the one authoritative spec-key list. It existed only as the
+# literal `data.get(...)` calls in `author`'s spec branch, restated by hand in
+# the --spec help text and two docs — which is exactly how the audited agent
+# came to guess flag names off a stale description. Error payloads and
+# `noodle capabilities` both read THIS tuple; the unit test pins it against
+# the spec branch so it cannot drift again.
+_SPEC_KEYS = ("app_name", "base_url", "feature_path", "feature_content",
+              "pom_content", "environment_values", "required_secret_keys",
+              "secret_values", "goal", "brief", "evidence_requests",
+              "overwrite", "allow_unverified_intent")
+
+_CAPABILITIES_HINT = ("`noodle capabilities --json` maps every operation's "
+                      "tool argument ↔ CLI flag ↔ spec key — the sanctioned "
+                      "discovery call; no help page, no pipe.")
+
+
+def _agent_error_mode(tokens) -> bool:
+    """NOOD_0241 — should a usage error render as JSON? Yes when the caller
+    asked for machine output (--json anywhere on the line: the output-format
+    contract must hold on the error path too) or when the session declares
+    itself agent-driven (NOODLE_AGENT_MODE, set by the MCP server and by
+    restricted-estate hosts). Deliberately NOT bare isatty(): a human piping
+    to a pager keeps human rendering, and CliRunner-driven tests keep the
+    Rich text they pin unless they opt in."""
+    if any(t == "--json" for t in tokens):
+        return True
+    return (os.getenv("NOODLE_AGENT_MODE") or "").strip().lower() in _TRUTHY
+
+
+def _usage_error_payload(err, tokens) -> dict:
+    """One self-sufficient correction payload for a usage error: every valid
+    flag, the spec keys where the command takes a spec, the unknown tokens
+    with nearest-match suggestions — enough to converge on the next attempt
+    with no discovery step, which is what removes the motive for
+    `--help | head` (NOOD_0241 audit, leaks #3/#4)."""
+    import difflib
+    ctx = getattr(err, "ctx", None)
+    cmd = ctx.command if ctx is not None else None
+    cmd_path = ctx.command_path if ctx is not None else "noodle"
+    valid = []
+    if cmd is not None:
+        for p in cmd.get_params(ctx):
+            valid += [o for o in (*p.opts, *p.secondary_opts)
+                      if o.startswith("--") and o != "--help"]
+    known = set(valid)
+    unknown = []
+    first = getattr(err, "option_name", None)
+    if first:
+        unknown.append(first)
+    # Every OTHER unknown option on the line too — click stops at the first,
+    # and a correction that names one of four wrong flags cannot converge.
+    scan = tokens
+    if ctx is not None and ctx.info_name in tokens:
+        scan = tokens[tokens.index(ctx.info_name) + 1:]
+    for t in scan:
+        name = t.split("=", 1)[0]
+        if name.startswith("--") and name not in known \
+                and name not in unknown and name != "--help":
+            unknown.append(name)
+    takes_spec = cmd_path.split()[-1] in ("author",)
+    did_you_mean = {}
+    for u in unknown:
+        key = u.lstrip("-").replace("-", "_")
+        close = difflib.get_close_matches(u, valid, n=1)
+        if takes_spec and key in _SPEC_KEYS and f"--{u.lstrip('-')}" not in known:
+            did_you_mean[u] = f"spec key '{key}'" + \
+                (f" or flag {close[0]}" if close else "")
+        elif close:
+            did_you_mean[u] = close[0]
+    payload = {"ok": False,
+               "error": "unknown_option" if first else "usage",
+               "command": cmd_path,
+               "detail": err.format_message(),
+               "valid_options": valid,
+               "next": "resubmit with flags from valid_options. " +
+                       _CAPABILITIES_HINT}
+    if unknown:
+        payload["unknown"] = unknown
+    if did_you_mean:
+        payload["did_you_mean"] = did_you_mean
+    if takes_spec:
+        payload["spec_keys"] = list(_SPEC_KEYS)
+    return payload
+
+
 @app.command()
 def run(
     path: str = typer.Argument(None, help="Path to .feature files or directory (default: workspace tests_dir)"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir (noodle.yaml, .env)"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir (noodle.yaml, .env)"),
     headless: bool = typer.Option(False, "--headless", help="Run browser without UI"),
     headed: bool = typer.Option(False, "--headed", help="Force a visible browser"),
     tag: str = typer.Option(None, "--tag", "-t", help="Filter by tag e.g. smoke"),
@@ -1507,15 +1677,20 @@ Hand-edited? `validate_feature` before re-running. Wrong element
 - One user goal per scenario; pre-reqs in `Background:` or tags.
 - Re-hosting an older run: ONLY `noodle report serve` (`serve_report`)
   — never `allure serve`, `http.server`, or `file://`.
-- Payloads are pre-bounded: read as returned, no jq/grep/sed/head
-  pipes; report URLs pre-checked (no curl) and a dead app origin is
-  named by `noodle probe <url>` itself, so never curl/wget one to
-  see; schema: `noodle author --vocabulary`; map: `noodle list`,
-  not find/ls sweeps. NEVER read the app's source — Noodle is
-  black-box, and source-derived selectors are implementation-coupled.
-  No noodle command for what you need? Say so and stop — an engine
-  gap to report, never a shell command to improvise. Identical
-  payload twice? Change the mechanism, not the wording (§7.6).
+- Command shape: a shell line is exactly ONE noodle invocation and
+  its flags. Any other executable — no jq/grep/sed/head, no curl,
+  no tee/cat/xargs, not find/ls sweeps (map: `noodle list`), nor
+  ANY unlisted one — and any of | > < && ; ` $( is forbidden;
+  never `cd` first (pass `-w`, or set NOODLE_WORKSPACE). Payloads
+  are complete as returned (`payload_complete: true`); report URLs
+  pre-checked and a dead app origin is named by `noodle probe
+  <url>` itself. Flags: `noodle capabilities` (never --help);
+  schema: `noodle author --vocabulary`. NEVER read the app's
+  source — Noodle is black-box, and source-derived selectors are
+  implementation-coupled. No noodle command for what you need? Say
+  so and stop — an engine gap to report, never a shell command to
+  improvise. Identical payload twice? Change the mechanism, not
+  the wording (§7.6).
 - Progress updates: max 2 sentences of current intent (e.g. "Serving
   the reports now"); quote only failing steps/errors. "do not output
   the shell command"? Then echo no command line.
@@ -1593,6 +1768,7 @@ def doctor(
     path: str = typer.Argument(".", help="Directory to diagnose (default: current dir). Doctor walks this path and its ancestors to find an engine checkout or a workspace (noodle.yaml) — never siblings or the wider filesystem."),
     scope: str = typer.Option("auto", "--scope", help="auto | engine | workspace | install — force a profile instead of auto-detecting. `install` inspects the build + every `noodle` launcher on PATH only."),
     json_out: bool = typer.Option(False, "--json", help="Emit one bounded JSON object (context + checks with stable IDs) instead of text."),
+    policy: bool = typer.Option(False, "--policy", help="NOOD_0241 — the agent shell policy check ONLY: the generated host permission files exist, carry the current allow/deny sets, and actually deny the canned probe leaks (e.g. `noodle author --help | head -50`). Exit 1 when any host's policy is missing, stale, or ineffective."),
 ):
     """NOOD_0138 — context-aware, read-only health check. Always checks the
     INSTALL (resolved build path, editable vs non-editable copy, git SHA, and
@@ -1600,7 +1776,8 @@ def doctor(
     builds are a failure with the exact reinstall command). Then, by context:
     an ENGINE checkout gets editable-linkage and stray-workspace-file checks
     (never template comparison); a generated WORKSPACE gets config/layout/
-    template-drift/MCP checks with `noodle init` remediation (NOOD_0128).
+    template-drift/MCP checks with `noodle init` remediation (NOOD_0128) plus
+    the NOOD_0241 agent-shell-policy check.
     Changes nothing; exit 0 = healthy, 1 = findings, 2 = bad path/scope."""
     from noodle import doctor as _doctor
     try:
@@ -1608,6 +1785,13 @@ def doctor(
     except _doctor.DoctorError as e:
         typer.echo(f"doctor: {e}", err=True)
         raise typer.Exit(2)
+    if policy is True:
+        checks = [c for c in checks if c.id == "workspace.policy"]
+        if not checks:
+            typer.echo("doctor: --policy needs a workspace (no noodle.yaml "
+                       "found from here) — run it inside one, or pass the "
+                       "workspace path", err=True)
+            raise typer.Exit(2)
     code = _doctor.exit_code(checks)
     typer.echo(_doctor.render_json(ctx, checks) if json_out else _doctor.render_text(ctx, checks))
     raise typer.Exit(code)
@@ -1680,6 +1864,7 @@ def init(
     llm: str = typer.Option(None, "--llm", help="claude | gemini | ollama — persist NOODLE_MODEL into .env so `noodle repl` picks it up automatically, no --llm flag needed next time"),
     model: str = typer.Option(None, "--model", help="Override the default model string for --llm, e.g. anthropic/claude-haiku-4-5"),
     force: bool = typer.Option(False, "--force", help="Refresh outdated template files (AGENTS.md, README.md, samples…) in an existing workspace; originals are backed up to *.bak. Config files (.env, noodle.yaml, pom.yaml) are never touched."),
+    agent_policy: bool = typer.Option(True, "--agent-policy/--no-agent-policy", help="NOOD_0241 — write/merge the host tool-permission policy files (.claude/settings.json, .vscode/settings.json, .copilot/agent-policy.json) that enforce 'one noodle invocation per shell line' mechanically. Merge-only: your existing entries are preserved. --no-agent-policy opts a workspace out."),
 ):
     """Scaffold a test workspace (noodle.yaml, .env, README.md, AGENTS.md AI
     instructions, PROMPT_TEMPLATE.md, and a noodle_tests/sample_app/ template
@@ -1794,7 +1979,22 @@ def init(
     # after `noodle init` in a fresh folder.
     typer.echo("\nAgent skill (/noodle slash command):")
     _copy_skills(root, force)
-    typer.echo(f"\nNext: cd {path} && noodle repl  — next steps in README.md")
+    # NOOD_0241 — the shell-leak audit's structural fix: the "noodle commands
+    # only" rule gets an enforcement surface in the same shot as the prose
+    # that states it. Default on so a workspace is born contained; merge-only
+    # so a team's own settings survive; --no-agent-policy is the opt-out.
+    if not isinstance(agent_policy, bool):
+        agent_policy = True
+    if agent_policy:
+        from noodle import agent_policy as _ap
+        typer.echo("\nAgent shell policy (noodle-only command lines):")
+        for rel, state in _ap.install(root).items():
+            typer.echo(f"  {root / rel}: {state}")
+        typer.echo("  → verify anytime: noodle doctor --policy")
+    # NOOD_0241 — not `cd {path} && noodle repl`: init just installed a
+    # policy that denies exactly that composed line, and the engine must
+    # never prescribe what its own policy forbids.
+    typer.echo(f"\nNext: noodle repl -w {path}  — next steps in README.md")
     # NOOD_0228 — this line used to end in "`ls -a` to see it", which is the
     # engine prescribing the shell reflex it forbids. `workspace inspect`
     # reports what is here, dotfiles included.
@@ -2032,7 +2232,7 @@ def _echo_auto_fix(audit: dict | None) -> None:
 @app.command(short_help="One call: prompt → probe → author → run → serve, with N engine-only self-heal laps.")
 def ship(
     goal: str = typer.Argument(..., help="The raw acceptance criteria — numbered plain-English steps, inline or a file path / '-' for stdin (same grammar as `author --prompt`)."),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     auto_fix: int = typer.Option(1, "--auto-fix", help="Engine-only self-heal laps allowed on a red run (see `author --auto-fix`). Default 1."),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
 ):
@@ -2054,7 +2254,7 @@ def ship(
     text, _ = _arg_text(goal)
     result = core.author_test(prompt=text, run_after_author=True,
                               auto_fix=auto_fix, overwrite=True,
-                              workspace=workspace)
+                              workspace=workspace, door="cli")
     result = core.collapse_green(result, workspace=workspace)
     if as_json:
         _json_out(result)
@@ -2075,8 +2275,13 @@ def author(
     evidence_step: list[int] = typer.Option(None, "--evidence-step", help="NOOD_0228 — capture an evidence screenshot on this 1-based step position (repeatable). The explicit form for a caller that already knows which step the picture proves."),
     evidence_skip: list[int] = typer.Option(None, "--evidence-skip", help="NOOD_0228 — decline an evidence screenshot on this 1-based step position (repeatable)."),
     prompt: str = typer.Option(None, "--prompt", help="NOOD_0169 — numbered plain-English steps ('1. go to <url> 2. search for X 3. add to cart 4. verify cart has X'), inline OR (NOOD_0198) a file path / '-' for stdin, so a generator upstream can hand off a written file without `\"$(cat ...)\"` mangling its backticks; the engine expands them deterministically into a goal (ambiguous steps borrow their subject from neighbouring steps, every inference echoed under prompt_expansion.assumptions) and derives app_name/base_url/feature_path from the URL. No spec file needed; combine with --run for prompt → authored → run → reports in ONE call."),
+    app_name: str = typer.Option(None, "--app-name", "--app", help="NOOD_0241 — the app package name, as a flag: the exact CLI twin of the tool argument / spec key `app_name`. Mutually exclusive with a spec that also carries the key."),
+    base_url: str = typer.Option(None, "--base-url", help="NOOD_0241 — the app's base URL, as a flag: the exact CLI twin of the tool argument / spec key `base_url`. Mutually exclusive with a spec that also carries the key."),
+    headless: bool = typer.Option(None, "--headless/--headed", help="NOOD_0241 — with --run: forward to the run leg (default headless), same name as on `noodle run`/run_and_report."),
+    retries: int = typer.Option(None, "--retries", help="NOOD_0241 — with --run: retries for the run leg (default 0), same name as on `noodle run`/run_and_report."),
+    serve_reports: bool = typer.Option(None, "--serve-reports/--no-serve-reports", help="NOOD_0241 — with --run: serve the reports after the run leg (default on), same name as run_and_report's argument."),
     feature_path: str = typer.Option(None, "--feature-path", help="NOOD_0236 — name the .feature this authoring writes, instead of letting the engine derive one from the URL/scenario. The spec form has always carried `feature_path`; --prompt had no spelling for it, which made any caller that must NAME its output (the `benchmark --session` ledger keys on `spec_<id>.feature`) reachable only over MCP. Optional — omit it and derivation is unchanged."),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
     run: bool = typer.Option(False, "--run", help="NOOD_0137 — atomic author+run: after a ready author, run once (headless, retries=0), serve both reports, and fail when 0 scenarios passed. Blocked authoring launches no browser. NOODLE_BROWSER=<engine> steers both the authoring probe and this run — the escape for a site that stalls headless chromium (NOOD_0237); the workspace default stays noodle.yaml's browser."),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing .feature at the target path. A blocked authoring attempt leaves its files behind (fix-in-place contract) — without this flag the retry refuses. Spec key `overwrite` works too; prompt mode has only this flag."),
@@ -2183,6 +2388,24 @@ def author(
         evidence_step = None
     if not isinstance(evidence_skip, list):
         evidence_skip = None
+    # NOOD_0241 — flag twins of the tool arguments (see capabilities): direct
+    # (non-CLI) calls leave OptionInfo defaults, same normalisation as above.
+    if not isinstance(app_name, str):
+        app_name = None
+    if not isinstance(base_url, str):
+        base_url = None
+    if not isinstance(headless, bool):
+        headless = None
+    if not isinstance(retries, int) or isinstance(retries, bool):
+        retries = None
+    if not isinstance(serve_reports, bool):
+        serve_reports = None
+    if (headless is not None or retries is not None
+            or serve_reports is not None) and not run:
+        raise typer.BadParameter(
+            "--headless/--headed, --retries and --serve-reports steer the "
+            "run leg of an atomic author+run — add --run",
+            param_hint="'--run'")
     ev_reqs = ([{"step": n} for n in (evidence_step or [])]
                + [{"step": n, "skip": True} for n in (evidence_skip or [])]) \
         or None
@@ -2199,8 +2422,12 @@ def author(
         # engine's own derivation, so the default path is byte-identical.
         result = core.author_test(prompt=prompt, run_after_author=run,
                                   auto_fix=auto_fix, run_scope=run_scope,
+                                  app_name=app_name, base_url=base_url,
                                   feature_path=feature_path,
-                                  overwrite=overwrite, workspace=workspace)
+                                  headless=headless, retries=retries,
+                                  serve_reports=serve_reports,
+                                  overwrite=overwrite, workspace=workspace,
+                                  door="cli")
     else:
         # NOOD_0197 — --spec accepts the document inline: an argument
         # that resolves to no file is the spec itself. This removes the
@@ -2221,12 +2448,24 @@ def author(
         # NOOD_0213 — neither are app_name/base_url when the goal navigates
         # to a URL: author_test derives all three from navigation[0]. The
         # gate here only rejects what the engine cannot derive downstream.
+        # NOOD_0241 — a flag and its spec key are mutually exclusive: two
+        # spellings of one value silently disagreeing is exactly the drift
+        # the capabilities manifest exists to prevent. (--feature-path keeps
+        # its NOOD_0236 flag-wins contract, documented on the flag.)
+        for flag_val, key in ((app_name, "app_name"), (base_url, "base_url")):
+            if flag_val is not None and data.get(key):
+                raise typer.BadParameter(
+                    f"--{key.replace('_', '-')} and spec key '{key}' were "
+                    "both given — pass exactly one",
+                    param_hint=f"'--{key.replace('_', '-')}'")
         goal_navs = (data.get("goal") or {}).get("navigation") \
             if isinstance(data.get("goal"), dict) else None
         goal_has_url = bool(goal_navs) and isinstance(goal_navs[0], str) \
             and goal_navs[0].startswith(("http://", "https://"))
         missing = [] if goal_has_url else \
-            [k for k in ("app_name", "base_url") if not data.get(k)]
+            [k for k in ("app_name", "base_url")
+             if not (data.get(k) or {"app_name": app_name,
+                                     "base_url": base_url}[k])]
         if not data.get("feature_path") and not data.get("goal"):
             missing.append("feature_path (or goal, which derives it)")
         if not data.get("feature_content") and not data.get("goal"):
@@ -2235,7 +2474,8 @@ def author(
             raise typer.BadParameter(f"spec missing required field(s): {', '.join(missing)}",
                                      param_hint="'--spec'")
         result = core.author_test(
-            app_name=data.get("app_name"), base_url=data.get("base_url"),
+            app_name=app_name or data.get("app_name"),
+            base_url=base_url or data.get("base_url"),
             # NOOD_0236 — the explicit flag wins over the spec's own key.
             feature_path=feature_path or data.get("feature_path"),
             feature_content=data.get("feature_content"),
@@ -2250,7 +2490,8 @@ def author(
             # NOOD_0156 — explicit expert override for the manual-fallback gate;
             # autonomous agents must never set it.
             allow_unverified_intent=bool(data.get("allow_unverified_intent", False)),
-            run_scope=run_scope, workspace=workspace)
+            run_scope=run_scope, headless=headless, retries=retries,
+            serve_reports=serve_reports, workspace=workspace, door="cli")
     # NOOD_0217 — green atomic results collapse to the verdict + pointers;
     # the full envelope is on disk at `full_payload`. Red keeps everything.
     result = core.collapse_green(result, workspace=workspace)
@@ -2344,6 +2585,30 @@ def _echo_author_result(result: dict) -> None:
             typer.echo(f"  → {result['next']}")
         raise typer.Exit(1)
     raise typer.Exit(0)
+
+
+@app.command(short_help="Parity manifest: every operation's tool argument ↔ CLI flag ↔ spec key, one bounded JSON payload.")
+def capabilities(
+    operation: str = typer.Option(None, "--operation", help="One slice only: author | run | probe"),
+):
+    """NOOD_0241 — the sanctioned discovery call. When a flag name is unknown,
+    this is the answer — never `--help` (banned in agent workspaces, and its
+    output is prose), never a pipe. Built from the live command and core
+    signatures at call time, so it cannot drift from the real surface; in a
+    no-MCP estate it is also the proof that the CLI reaches every documented
+    tool capability."""
+    from noodle import capabilities as _caps
+    m = _caps.manifest()
+    if operation:
+        op = m["operations"].get(operation.strip().lower())
+        if op is None:
+            _json_out({"ok": False,
+                       "error": f"unknown operation {operation!r}",
+                       "operations": sorted(m["operations"])}, indent=None)
+            raise typer.Exit(1)
+        m = {"ok": True, "operation": operation.strip().lower(), **op,
+             "spec_keys": m["spec_keys"], "note": m["note"]}
+    _json_out(m, indent=None)
 
 
 @app.command()
@@ -2465,7 +2730,7 @@ def ticket_cmd(
 @app.command()
 def task(
     text: str = typer.Argument(None, help="What you want, in plain English — 'write a test that ...', 'run the tests', 'did it pass'. Noodle picks the command. NOOD_0198 — a file path or '-' reads the text from there instead."),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     tag: str = typer.Option(None, "--tag", "-t", help="Filter a run to this tag"),
     headed: bool = typer.Option(False, "--headed", help="Visible browser (local demo; CI and containers are headless)"),
     no_serve: bool = typer.Option(False, "--no-serve", help="Skip hosting the reports afterwards"),
@@ -2520,7 +2785,7 @@ def task(
 
 @app.command()
 def summary(
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     llm: str = typer.Option("none", "--llm", help="none | claude | gemini | ollama — richer narrative via litellm"),
     as_json: bool = typer.Option(False, "--json", help="Structured output (counts + failures) for agents/CI (NOOD_0045)"),
 ):
@@ -2540,7 +2805,7 @@ def summary(
 @app.command()
 def cost(
     target: str = typer.Argument(None, help="Prompt or .feature file to estimate — omit to show the last run's actual spend"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     model: str = typer.Option(None, "--model", help="Model string to price against (default: NOODLE_MODEL from the workspace .env)"),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
 ):
@@ -2749,7 +3014,7 @@ def _benchmark_session(want_table: bool, as_json: bool) -> int:
 def benchmark(
     session: bool = typer.Option(False, "--session", help="Open an AGENT-DRIVEN run — the workflow the product ships in: starts BusterBlock, scaffolds the workspace, arms the ledger and prints the runbook for THIS LLM session to follow. The agent is the interpreter, so no spec is blocked by phrasing; what is measured is how much work the loop took. Finish with --table"),
     table: bool = typer.Option(False, "--table", help="Print the table for the open --session run, from the ledger the engine wrote (never from what the agent remembers doing), then stop the app"),
-    gate: bool = typer.Option(False, "--gate", help="Run the PR GATE instead: the same 5 canonical FLOWS every time (Wikipedia + a static fixture), which is what a branch has to pass before its PR. ~90s. Without it, the 5 request SHAPES against BusterBlock, which is the release benchmark"),
+    gate: bool = typer.Option(False, "--gate", help="Run the PR GATE instead: the same 5 canonical FLOWS every time (Wikipedia + a static fixture), which is what a branch has to pass before its PR. ~90s. Without it, the 6 request SHAPES against BusterBlock, which is the release benchmark"),
     as_json: bool = typer.Option(False, "--json", help="One bounded JSON payload instead of the table"),
     specs_file: str = typer.Option(None, "--specs", help="Read the specs from this markdown file instead of docs/benchmark-specs.md"),
     score_file: str = typer.Option(None, "--score", help="--gate only: re-score an existing run's results JSON instead of running — prints the table and writes verdict.json/html next to it"),
@@ -2842,7 +3107,7 @@ def benchmark(
 
 @app.command("rca-report")
 def rca_report(
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     out: str = typer.Option(None, "--out", "-o", help="Write to this file instead of stdout"),
     llm: bool = typer.Option(False, "--llm", help="Add a prose narrative via NOODLE_MODEL (text-only, no vision needed)"),
     propose_fix: bool = typer.Option(False, "--propose-fix", help="Ask NOODLE_MODEL for a unified-diff fix per failure (text-only, never applied)"),
@@ -2877,7 +3142,7 @@ def rca_report(
 @app.command()
 def validate(
     path: str = typer.Argument(None, help="Path to validate (default: workspace tests_dir)"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     resolve: bool = typer.Option(False, "--resolve", help="Also dry-run every step against the pattern table — shows which steps need the LLM fallback"),
     as_json: bool = typer.Option(False, "--json", help="With --resolve: per-file matched/unmatched steps as JSON (NOOD_0045)"),
 ):
@@ -2983,7 +3248,7 @@ def _validate_resolve_json(target: Path) -> int:
 @app.command("list")
 def list_scenarios(
     path: str = typer.Argument(None, help="Path to scan (default: workspace tests_dir)"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Feature/tag inventory as JSON, no behave dry-run — scenario names only with --query (NOOD_0162)"),
     query: str = typer.Option(None, "--query", help="Substring match over path/feature/scenario/tag; matching features carry their scenario names (implies --json)"),
 ):
@@ -3018,7 +3283,7 @@ def list_scenarios(
 @app.command()
 def remove(
     path: str = typer.Argument(..., help="Workspace-relative .feature path to delete (see `noodle list`)"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Result as JSON"),
 ):
     """Remove a superseded authored feature: the file, its compiled POM
@@ -3135,7 +3400,7 @@ def wok(
 @app.command("step-search")
 def step_search_cmd(
     query: str = typer.Argument(..., help="Plain-English description of the step you're looking for"),
-    workspace: str = typer.Option(".", "--workspace", "-w",
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve,
         help="Workspace whose docs/ holds the project's own staged vocabulary "
              "(read AND written here — same place `noodle run --workspace` "
              "loads accepted suggestions from)"),
@@ -3212,7 +3477,7 @@ def probe(
     # NOOD_0222 — every other command takes -w; probe rejecting it cost a
     # reviewed session a retry lap. It also does real work: {env:KEY} in --do
     # resolves against THIS workspace's env chain, not the cwd's.
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace for {env:} in --do"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace for {env:} in --do"),
 ):
     """Proactive DOM probe: every actionable control (visible AND hidden) with
     a ready selector, POM YAML for the ones that need it, a suggested step
@@ -3264,6 +3529,11 @@ def probe(
         from noodle.agents.web.probe import render
         typer.echo(render(result, compact=compact, section=section,
                           max_controls=max_controls, brief=brief))
+        # NOOD_0241 — the text payload says it is whole, like every JSON door
+        # does via payload_complete: an agent that can see "nothing follows"
+        # has no reason to page the output through `head`.
+        typer.echo("payload complete — nothing follows; a capped list names "
+                   "its widening flag inline (--max-controls, --full)")
     if not result["pages"]:
         raise typer.Exit(1)
 
@@ -3323,7 +3593,7 @@ def inspect(
 
 @app.command()
 def repl(
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir holding noodle.yaml, noodle_tests/, .env"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir holding noodle.yaml, noodle_tests/, .env"),
     llm: str = typer.Option(None, "--llm", help="claude | gemini | ollama — turn on free-form requests, run-failure repair, and compound-request planning for this session"),
     model: str = typer.Option(None, "--model", help="Override the default model string for --llm"),
 ):
@@ -3340,7 +3610,7 @@ def repl(
 def record(
     output: str = typer.Option(None, "--output", "-o", help="Path to write the generated .feature file (default: <workspace>/<tests_dir>/recorded.feature)"),
     name: str = typer.Option("Recorded Feature", "--name", "-n", help="Feature/scenario name"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir holding noodle.yaml, noodle_tests/, .env"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir holding noodle.yaml, noodle_tests/, .env"),
 ):
     """Record a new test by performing actions in a browser."""
     from noodle.recorder.recorder import Recorder
@@ -3360,7 +3630,7 @@ app.add_typer(report_app, name="report")
 @report_app.command("open")
 def report_open(
     report_dir: str = typer.Argument(None, help="Path to the Allure report directory (default: the workspace's last-run reports)"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
 ):
     """Open the last Allure report in the browser."""
     from noodle.reporting.builder import open_report
@@ -3371,7 +3641,7 @@ def report_open(
 def report_generate(
     results_dir: str = typer.Argument(None, help="Path to allure-results/ (default: the workspace's last-run results)"),
     report_dir: str = typer.Option(None, "--out", "-o", help="Output directory (default: the workspace's last-run reports)"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
 ):
     """Re-generate BOTH reports (Allure HTML + RCA md/html) from existing results."""
     from noodle.reporting import rca_report as _rca_report
@@ -3601,7 +3871,7 @@ def _adhoc_report_servers() -> dict:
 @report_app.command("stop")
 def report_stop(
     port: int = typer.Option(None, "--port", "-p", help="Only stop the server on this port (default: all)"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
 ):
     """Stop hosted report servers (Allure + RCA) — ones this workspace's
     .noodle/report_servers.json registry knows about, plus any other listening
@@ -3752,7 +4022,7 @@ def _echo_coverage(target: str, workspace: str) -> None:
 @report_app.command("serve")
 def report_serve(
     report_dir: str = typer.Argument(None, help="Reports root or Allure report dir, an archives/*.zip, or a bare archive stamp like 20260713_101112 (default: the workspace's last-run reports root — hosts the Allure report AND rca.html together)"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address (default localhost-only). Pass --host 0.0.0.0 to share with teammates on the same network — the report's failure screenshots/traces can contain typed credentials, so only do this on a trusted network"),
     port: int = typer.Option(None, "--port", "-p", help="Port to serve on (default: 8000 foreground, falling back to an OS-assigned port if taken / OS-assigned for --background — agents never hit a port-conflict retry)"),
     background: bool = typer.Option(False, "--background", "-b", help="Start the server detached, print the URLs, and return immediately (for agents/scripts) — stop it later with `noodle report stop`"),
@@ -3813,7 +4083,7 @@ def report_serve(
 
 @report_app.command("reset")
 def report_reset(
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
 ):
     """Start this package's report from nothing — drop every accumulated
     scenario result and its evidence.
@@ -3844,7 +4114,7 @@ def report_reset(
 
 @report_app.command("list")
 def report_list(
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable list for agents"),
 ):
     """List what `report serve` can host: the live report and archived runs."""
@@ -3875,7 +4145,7 @@ def report_list(
 
 @app.command()
 def clean(
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     purge_history: bool = typer.Option(
         False, "--purge-history",
         help="Also delete the Allure trend history (default: preserved across clean)"),
@@ -3923,7 +4193,7 @@ def clean(
 
 @app.command()
 def archive(
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     out: str = typer.Option("archives", "--out", "-o", help="Directory to write the zip into"),
 ):
     """Zip the artifacts/ tree with a timestamp, for stashing a run's reports
@@ -3941,7 +4211,7 @@ def archive(
 
 @app.command()
 def artifacts(
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
 ):
     """List what the artifacts/ tree holds, by category — so an agent (or you)
     can see what a run produced without knowing each report's path."""
@@ -3979,7 +4249,7 @@ def diagnostic_log(
     agent: str = typer.Option(None, "--agent", help="Driving agent/model (e.g. 'codex 5.3')"),
     agent_cost: str = typer.Option(None, "--agent-cost", help="The agent's OWN session spend (e.g. '23 AIC')"),
     session: str = typer.Option(None, "--session", help="Stable session id — a repeat log call updates the same file"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
 ):
     """Write this session's failure self-report into the workspace's
     gitignored diagnostics/ folder. Engine facts (last-run result, compact
@@ -4005,7 +4275,7 @@ def diagnostic_log(
 
 @diagnostic_app.command("list")
 def diagnostic_list(
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
 ):
     """List the diagnostics on disk, newest first — file, app, triggers, when."""
     from noodle import diagnostics as _diag
@@ -4033,7 +4303,7 @@ def diagnostic_guide():
 
 @diagnostic_app.command("bundle")
 def diagnostic_bundle(
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
 ):
     """Zip every diagnostic into one file to send back to the Noodle team.
     Secrets never enter diagnostics (values are scrubbed at write time), so
@@ -4062,7 +4332,7 @@ def pom_resolve(
     ambiguity_id: str = typer.Argument(..., help="The A-prefixed id printed by the ambiguous-locator warning"),
     choose: str = typer.Option(..., "--choose", "-c", help="Which candidate you meant: C0, C1, …"),
     app_name: str = typer.Option(None, "--app", help="Test package (default: the one the run was in)"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
 ):
     """Pin the candidate you meant for a recorded ambiguity. The engine already
@@ -4095,7 +4365,7 @@ def pom_set(
     placeholder: str = typer.Option(None, "--placeholder", help="Placeholder text"),
     app_name: str = typer.Option(None, "--app", help="Test package (default: the only one)"),
     page: str = typer.Option(None, "--page", help="Write a per-page file instead; the engine adds `match: {}` so it still applies everywhere"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
 ):
     """Pin a control name to an explicit selector. The escape hatch for a
@@ -4117,7 +4387,7 @@ def pom_set(
 @pom_app.command("list")
 def pom_list(
     app_name: str = typer.Option(None, "--app", help="Only this test package"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     as_json: bool = typer.Option(True, "--json/--no-json", help="Structured output (default) or a short human listing"),
 ):
     """Every POM pin in the workspace, per file, WITH each file's URL scope —
@@ -4151,7 +4421,7 @@ app.add_typer(workspace_app, name="workspace")
 @workspace_app.command("inspect")
 def workspace_inspect(
     app_name: str = typer.Option(None, "--app", help="Only this test package"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     as_json: bool = typer.Option(True, "--json/--no-json", help="Structured output (default) or a short human listing"),
 ):
     """Everything a caller would otherwise `ls` for: test packages, their
@@ -4192,7 +4462,7 @@ app.add_typer(migrate_app, name="migrate")
 @migrate_app.command("evidence-markers")
 def migrate_evidence_markers(
     write: bool = typer.Option(False, "--write", help="Apply the rewrite (default: report what would change)"),
-    workspace: str = typer.Option(".", "--workspace", "-w", help="Workspace dir"),
+    workspace: str = typer.Option(".", "--workspace", "-w", callback=_ws_resolve, help="Workspace dir"),
     as_json: bool = typer.Option(False, "--json", help="Structured output for agents/CI"),
 ):
     """Convert per-step evidence requests written inside step text into

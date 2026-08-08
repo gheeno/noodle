@@ -19,13 +19,14 @@ time. **The rest of this page is the gate.**
 
 ## Every flag, and when you want it
 
-`noodle benchmark` with no flag runs the SPEC-SHAPE benchmark headless — the
-deterministic compiler alone, no agent, no model. Everything else is a
+`noodle benchmark` with no flag runs the SPEC-SHAPE benchmark headless — no
+agent; no model when `NOODLE_MODEL` is unset — and the table's
+`interpretation:` line records which path was measured. Everything else is a
 variation on that or on the gate.
 
 | Flag | Mode | What it does |
 |---|---|---|
-| *(none)* | shape | Headless run of all six specs. Reproducible and free, so it is the right instrument for comparing two builds. A spec the compiler cannot take is a real finding about the grammar. |
+| *(none)* | shape | Headless run of all six specs — no agent; no model when `NOODLE_MODEL` is unset (the table's `interpretation:` line says which). Reproducible and free, so it is the right instrument for comparing two builds. A spec the compiler cannot take is a real finding about the grammar. |
 | `--session` | shape | Opens an **agent-driven** run: starts BusterBlock, scaffolds the workspace with the real `noodle init`, arms the ledger and prints the runbook for THIS LLM session to follow. The agent is the interpreter, so no spec is blocked by phrasing — what is measured is how much work the loop took. |
 | `--table` | shape | Prints the table for the open `--session` run **from the ledger the engine wrote**, never from what the agent remembers doing, then stops the app. This ends the session. |
 | `--json` | both | One bounded JSON payload instead of the table. |
@@ -34,7 +35,9 @@ variation on that or on the gate.
 | `--gate --init` | gate | Only scaffold the fresh workspace under `regression_runs/<stamp>_<build>_<sha>/` and stop. |
 | `--gate --score <results.json>` | gate | Re-score an existing run instead of running it again; writes `verdict.json`/`verdict.html` next to it. |
 
-Exit **0 = PASS, 1 = REGRESSED**, in both modes.
+Exit **0 = PASS, 1 = REGRESSED**, in both modes; **2 = the benchmark could
+not run** (a setup fault, `--table` with no open session, a second
+`--session` while one is open) — never a REGRESSED verdict.
 
 ### The two shape modes are not interchangeable
 
@@ -100,21 +103,24 @@ noodle benchmark --gate --init     # only scaffold the fresh workspace, don't ru
 noodle benchmark --gate --score results.json   # re-score an existing run
 ```
 
-Exit **0 = PASS, 1 = REGRESSED**. One call from anywhere — a bare terminal,
-Claude Code, Copilot CLI — does the whole thing: scaffolds a fresh workspace,
-authors and runs all three canonical cases, runs them again combined onto one
-Allure + RCA, scores, serves, prints the table.
+Exit **0 = PASS, 1 = REGRESSED**; **2 = the benchmark could not run** (a
+setup fault — never a REGRESSED verdict). One call from anywhere — a bare
+terminal, Claude Code, Copilot CLI — does the whole thing: scaffolds a fresh
+workspace, authors and runs all five canonical cases, runs them again
+combined onto one Allure + RCA, scores, serves, prints the table.
 
 ```
-🧪 benchmark — noodle 1.0.0a6
-   workspace: /…/regression_runs/20260727-101500_1.0.0a6_6859c75
+🧪 benchmark — noodle 1.0.0a54
+   workspace: /…/regression_runs/20260807-101500_1.0.0a54_258eda3
 
    TEST CASE                  GENERATE    RUN   CORR  LINES  GREEN  VERIFIED
-   tc1_search_suggestion           4.4s    15s      1     10  ✅     ✅
-   tc2_account_textboxes             5s    13s      0     15  ✅     ✅
-   tc3_api_seeds_ui_verifies       2.6s    12s      0     10  ✅     ✅
+   tc1_search_suggestion          12.1s    14s      1     10  ✅     ✅
+   tc2_account_textboxes           5.3s    13s      0     16  ✅     ✅
+   tc3_api_seeds_ui_verifies       3.4s    11s      0     10  ✅     ✅
+   tc4_multipage_checkout          3.9s    11s      0     33  ✅     ✅
+   tc5_search_pick_add             3.6s    14s      2     22  ✅     ✅
    ────────────────────────────────────────────────────────────────────────
-   average                           4s 13.33s   0.33  11.67
+   average                        5.66s  12.6s    0.6   18.2
 
    VERDICT: PASS
 
@@ -167,7 +173,7 @@ site drifts, update the content there; never bend the scoring.
 | `tc4_multipage_checkout` | numbered prompt | NOOD_0227 — four-page flow: per-card `within:`-scoped click, same-URL DOM-mutation cart panel, three-field commit form, end-state assertions |
 | `tc5_search_pick_add` | numbered prompt | NOOD_0230 — the loose search→pick→add→verify shape on a deterministic grid: ordinal pick binding, `add_to` lowering, single deduplicated destination click |
 
-All three are the plain-English path a human or agent actually sends. tc3
+All five are the plain-English path a human or agent actually sends. tc3
 (NOOD_0191) is the other real shape: *"get the data from the API, then prove
 the UI shows it"* — the most common mix in a real suite, because most UI is
 an API with a face on it. It exercises the REST client, `{env:}` across both
@@ -178,7 +184,7 @@ step families in one scenario, and the compiler's cross-wok step **order**
 web-only and a cross-wok test genuinely had to be hand-written Gherkin — which
 meant the one cross-wok case in a *generation* benchmark measured no
 generation at all and printed `—` for LINES. Now the api verbs are in the
-grammar, so all three cases measure what the engine writes, and the risk and
+grammar, so all five cases measure what the engine writes, and the risk and
 work effort of a cross-wok test is a number like any other. What the swap gave
 up is covered where it belongs, in `unit_tests/woks/api/`: `{var:}` chaining
 from a response field, and the `feature_content` door.
@@ -199,8 +205,8 @@ driving agent.
 | `run_s` | `run.seconds` | The generated test's own execution time. |
 | `development_s` | **derived:** `elapsed_s − run_s` | How long *generation* took. This is what the time budget applies to. |
 | `corrections` | `run.healing_events` + `run.flaky` + re-author passes | The engine's own repair signals: a locator that needed self-healing, a scenario that needed a retry, a re-author because `ready` came back false. Never a self-report — last session tc1 claimed `corrections: 0` while the run log recorded a real heal (`locator 'search', strategy visible-filter, multiple matches, exactly one visible`). The engine knew; the old protocol never asked. |
-| `lines` | `author.compiled.feature` + `author.compiled.pom` line count | The simplicity signal: *are we still generating simple `.feature` files*. Reported, not gated — if generation starts padding features with extra steps or POM entries, this moves. `—` for a `feature_content` case: nothing was generated, so there is nothing to count, and it is excluded from the average rather than counted as zero. Since NOOD_0192 all three cases are prompts, so all three report a number. |
-| `green` / `verified` | `run.failed`, `run.verified`, `author.intent_verified` | The run contract: `failed == 0` **and** `verified: true` **and** the intent contract held. A pass held up by fuzzy healing or lenient matching is not a pass. `intent_verified` asks "did the *compiled* goal match probe evidence", so it applies to the prompt cases — which, since NOOD_0192, is all three. (A `feature_content` case states its intent literally, with nothing inferred to verify against; there `run.verified` alone is the bar.) |
+| `lines` | `author.compiled.feature` + `author.compiled.pom` line count | The simplicity signal: *are we still generating simple `.feature` files*. Reported, not gated — if generation starts padding features with extra steps or POM entries, this moves. `—` for a `feature_content` case: nothing was generated, so there is nothing to count, and it is excluded from the average rather than counted as zero. Since NOOD_0192 all five cases are prompts, so all five report a number. |
+| `green` / `verified` | `run.failed`, `run.verified`, `author.intent_verified` | The run contract: `failed == 0` **and** `verified: true` **and** the intent contract held. A pass held up by fuzzy healing or lenient matching is not a pass. `intent_verified` asks "did the *compiled* goal match probe evidence", so it applies to the prompt cases — which, since NOOD_0192, is all five. (A `feature_content` case states its intent literally, with nothing inferred to verify against; there `run.verified` alone is the bar.) |
 
 Accuracy has a human half too: the HIL (or a reviewing agent) reads the
 generated `.feature` against the prompt — steps match the intent, assertions
@@ -224,9 +230,11 @@ path makes zero model calls (`translation_mode: deterministic-fast-path`,
 that actually moves here. If you want to compare *agent* cost across hosts,
 that is [llm-performance.md §7](llm-performance.md), not this benchmark.
 
-**Cost is measured in the drill instead** (NOOD_0232), and door-native: the
-bytes each door actually returns for one authoring lap — `len(stdout)` for
-the CLI, the serialized tool result for MCP — at bytes ÷ 4. That survives
+**Cost is measured in the drill instead** (NOOD_0232), and door-agnostic:
+the collapsed + bounded payload the engine hands back for one authoring lap,
+serialized bytes ÷ 4 — identical whichever door drove the lap, because both
+doors apply the same two transforms before the payload crosses the wire
+(`benchmark.py _tokens`). That survives
 where the host figure did not, because it is deterministic, needs no billing
 API, is identical on every machine, moves the moment a payload grows, and
 measures the only part of an agent's bill the engine controls. It is also
@@ -241,6 +249,16 @@ question actually requires.
 |---|---|---|
 | Per-TC **development time** (`elapsed_s − run_s`) | 120 s | `NOODLE_REG_MAX_ELAPSED_S` |
 | Per-TC corrections | 2 | `NOODLE_REG_MAX_CORRECTIONS` |
+
+The spec-shape benchmark (`noodle benchmark` / `--session`) has its own pair,
+and shares the third with the gate — a spec is a test case like any other and
+is not graded on a softer curve:
+
+| Ceiling | Default | Env override |
+|---|---|---|
+| Per-spec **development time** | 120 s | `NOODLE_BENCH_MAX_DEV_S` |
+| Per-spec **payload tokens** (scored only on green specs) | 2048 | `NOODLE_BENCH_MAX_TOKENS` |
+| Per-spec corrections | 2 | shared with the gate: `NOODLE_REG_MAX_CORRECTIONS` |
 
 Overrides exist for a deliberately slower machine or site — set them in the
 shell, not in code.

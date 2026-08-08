@@ -434,6 +434,39 @@ def _mcp_check(root: Path) -> Check:
                  "MCP client config present and its command resolves: " + ", ".join(present))
 
 
+def _policy_check(root: Path) -> Check:
+    """NOOD_0241 — the generated agent shell policy: present, current, and
+    actually denying the audit's canned leak lines (`noodle author --help |
+    head -50` and friends) while still allowing a bare noodle invocation.
+    In a no-MCP estate these files are the only mechanical control between
+    the workspace rules and an unrestricted shell tool, so a missing or
+    stale one is a finding, not a footnote. A host that can only gate
+    approval (VS Code) is reported as advisory rather than pretended
+    enforcing."""
+    from noodle import agent_policy
+    findings = agent_policy.verify(root)
+    bad = [f for f in findings if not f["ok"]]
+    detail = "\n".join(f"{f['file']} [{f['enforcement']}]: {f['detail']}"
+                       for f in findings)
+    if all("missing" in f["detail"] for f in bad) and len(bad) == len(findings):
+        return Check("workspace.policy", "workspace", "warn",
+                     "no agent shell policy files — the noodle-only rule is "
+                     "prose with no enforcement surface",
+                     detail=detail,
+                     remediation=f"noodle init {root} writes them "
+                                 "(--no-agent-policy opts out)")
+    if bad:
+        return Check("workspace.policy", "workspace", "fail",
+                     "agent shell policy present but not protective: "
+                     + "; ".join(f"{f['file']} — {f['detail']}" for f in bad),
+                     detail=detail,
+                     remediation=f"noodle init {root} --force re-merges the "
+                                 "current allow/deny sets")
+    return Check("workspace.policy", "workspace", "pass",
+                 "agent shell policy current — probe leaks denied, bare "
+                 "noodle allowed", detail=detail)
+
+
 def workspace_checks(root: Path) -> list[Check]:
     cfg_check, tests_dir = _config_check(root)
     checks = [cfg_check]
@@ -441,6 +474,7 @@ def workspace_checks(root: Path) -> list[Check]:
         checks.append(_layout_check(root, tests_dir))
     checks.append(_templates_check(root))
     checks.append(_mcp_check(root))
+    checks.append(_policy_check(root))
     return checks
 
 

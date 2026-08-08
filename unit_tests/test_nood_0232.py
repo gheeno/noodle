@@ -767,8 +767,11 @@ def test_a_session_holds_every_shape_to_pass(tmp_path):
     # every spec judged on its own row; the only regression left is the report,
     # which a bare tmp workspace has no artifacts to build
     assert all(not c["failures"] for c in v["cases"])
+    # NOOD_0241 — count-free wording: the spec set grew to six and the
+    # message hardcoded "five", so the sentence a user reads was wrong the
+    # moment a spec was added. Pinned by shape, not by tally.
     assert v["regressions"] == [
-        "report: the one Allure report over all five specs was not built "
+        "report: the one Allure report over all the specs was not built "
         "and hosted"]
 
 

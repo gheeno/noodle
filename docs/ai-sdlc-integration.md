@@ -176,8 +176,9 @@ There are two, and MCP is not required.
 
 Plenty of corporate networks don't allow MCP. Nothing is lost: **every MCP
 tool has a CLI twin** (`author_test` → `noodle author`, `run_and_report` →
-`noodle run --json --serve`, `get_rca` → `noodle rca-report --compact`, and so
-on — [cli-reference.md](cli-reference.md)). Losing MCP costs the tool
+`noodle run --json --serve`, `get_rca` → `noodle rca-report --compact`;
+`noodle capabilities --json` emits the argument-by-argument parity manifest —
+[cli-reference.md](cli-reference.md)). Losing MCP costs the tool
 *discovery* affordance, not any capability.
 
 For an agent that has never read these docs, `noodle task` is that discovery
@@ -214,7 +215,7 @@ SDLC isn't prose at all — it's the issue payload the workflow agent already
 holds, and it usually names no base URL. Send it as-is:
 
 ```bash
-noodle ticket ./BB-42.json --json          # MCP: plan_from_ticket(payload=...)
+noodle ticket ./BB-42.json          # MCP: plan_from_ticket(payload=...)
 ```
 
 Deterministically, with no model call: Atlassian Document Format is walked,

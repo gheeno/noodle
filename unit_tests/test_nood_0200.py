@@ -212,9 +212,13 @@ def test_playbook_recommends_no_shell_constructs():
     assert "as a heredoc rather than" not in text
     # NOOD_0227 — the DON'T got its DO: the ban alone left multi-line specs
     # with no published path, so sessions reached for the forbidden heredoc
-    # anyway (RC-5). The playbook now names the supported form — write a
-    # file, pass the path — and keeps the heredoc named as the anti-pattern.
-    assert "pass the path" in text
+    # anyway (RC-5). NOOD_0228 then made the DO better than a file: --spec-text
+    # carries the whole multi-line document as ONE argument value. NOOD_0241 —
+    # the playbook said "write spec.yaml and pass the path" long after that
+    # shipped, which is a shell step the engine no longer needs. Pin the
+    # current supported form instead.
+    assert "--spec-text" in text
+    assert "does NOT need a file, a heredoc, or shell redirection" in text
     assert "heredoc" in text
     assert "python -m http.server" not in text
 

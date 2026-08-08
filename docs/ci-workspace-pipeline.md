@@ -9,7 +9,8 @@
 ## What this file is
 
 It is the **only** CI file your repo owns, and it is deliberately tiny: a
-trigger, two parameters, one repository resource, one template reference. Every
+build-number line, CI + PR triggers, four parameters, one repository resource,
+one template reference. Every
 *step* — checkout, Python, `pip install`, browser download, Allure CLI, the run
 itself, and all three publish surfaces — lives in the engine's own
 `ci/azure/noodle-tests.yml`. So upgrading CI is a version bump here, not a diff.
@@ -29,28 +30,42 @@ otherwise every workspace re-invents it and none of them get the fix.
 ## Anatomy
 
 ```yaml
-trigger:                                  # ① when it runs
+name: noodle-tests-$(Date:yyyyMMdd)$(Rev:.r)   # ① the build number
+
+trigger:                                  # ② when it runs
   - main
 
-parameters:                               # ② what a human can pick at Run time
-  - name: noodleRef
-    default: refs/tags/1.0.0a39
-  - name: testTag
-    default: all
+pr:                                       # ...and on every PR into main
+  - main
 
-resources:                                # ③ which engine build to use
+parameters:                               # ③ what a human can pick at Run time
+  - name: testTag
+    default: all                          # 'all' runs every feature/scenario
+  - name: shard
+    type: boolean
+    default: false                        # one agent per .feature (large suites)
+  - name: parallelProcesses
+    type: number
+    default: 4                            # processes within the job (0 = single)
+  - name: noodleRef
+    default: refs/tags/1.0.0a54           # PIN IT — a branch is not a build
+
+resources:                                # ④ which engine build to use
   repositories:
     - repository: noodle
       type: git
       name: <Project>/noodle
       ref: ${{ parameters.noodleRef }}
 
-jobs:                                     # ④ hand off to the engine template
+jobs:                                     # ⑤ hand off to the engine template
   - template: ci/azure/noodle-tests.yml@noodle
     parameters:
-      workspaceDir: ''
+      workspaceDir: ''                    # this repo IS the workspace
       testTag: ${{ parameters.testTag }}
-      parallelProcesses: 4
+      shard: ${{ parameters.shard }}
+      parallelProcesses: ${{ parameters.parallelProcesses }}
+      # extras: '[visual]'                # ONLY if the suite uses @visual / @appium
+      # publishAllureTab: false           # if the org has no Allure extension
 ```
 
 **The three values that must be right before the first run:**
@@ -76,7 +91,7 @@ using the old path.
 ### Run a different engine version
 
 ```yaml
-      default: refs/tags/1.0.0a39      # ← the pinned version
+      default: refs/tags/1.0.0a54      # ← the pinned version
 ```
 
 `ref:` resolves against **tags in the engine repo**, so bumping the engine's

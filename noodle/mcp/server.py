@@ -317,6 +317,10 @@ def author_test(app_name: str | None = None, base_url: str | None = None,
                 brief: str | None = None,
                 evidence_requests: list | None = None,
                 run_scope: str = "feature",
+                auto_fix: int = 0,
+                headless: bool | None = None,
+                retries: int | None = None,
+                serve_reports: bool | None = None,
                 workspace: str | None = None) -> dict:
     """Write a whole test package in ONE transaction (web/<app_name> or
     the existing package mapped to base_url — environments.yaml, POM,
@@ -372,7 +376,9 @@ def author_test(app_name: str | None = None, base_url: str | None = None,
         overwrite=overwrite,
         allow_unverified_intent=allow_unverified_intent,
         prompt=prompt, brief=brief, evidence_requests=evidence_requests,
-        run_scope=run_scope, workspace=ws), workspace=ws)
+        run_scope=run_scope, auto_fix=auto_fix, headless=headless,
+        retries=retries, serve_reports=serve_reports,
+        workspace=ws, door="mcp"), workspace=ws)
 
 
 @_tool()

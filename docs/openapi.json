@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Noodle Engine API",
-    "version": "unknown (not installed)",
+    "version": "1.0.0a54",
     "description": "Drive the Noodle test engine from another system: every MCP tool as a plain JSON endpoint (NOOD_0193), for callers that can't speak MCP.\n\nThis is the ENGINE API \u2014 the caller side. It is not the 'api wok', which is Noodle testing someone else's REST service with @api feature files; nothing here is a test target.\n\nCalls are SYNCHRONOUS: a run returns when it finishes, so set client read timeouts in minutes, not seconds. One call runs at a time per server. Green means `failed == 0` AND `verified == true`."
   },
   "servers": [
@@ -772,6 +772,47 @@
                     "default": "feature",
                     "title": "Run Scope",
                     "type": "string"
+                  },
+                  "auto_fix": {
+                    "default": 0,
+                    "title": "Auto Fix",
+                    "type": "integer"
+                  },
+                  "headless": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Headless"
+                  },
+                  "retries": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Retries"
+                  },
+                  "serve_reports": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Serve Reports"
                   },
                   "workspace": {
                     "anyOf": [

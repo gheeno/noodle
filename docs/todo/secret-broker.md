@@ -1,7 +1,9 @@
-# TODO — masked secret broker (future hardening, deferred)
+# TODO — masked secret broker: the HOST-SIDE half (deferred)
 
-Status: **deferred future hardening**, ticket not yet assigned — NOT current
-behavior. As of NOOD_0130 the shipped policy accepts prompt credentials and
+Status: the **Noodle-side** items below all shipped (NOOD_0118/0171 — see the
+SHIPPED marks in the next section). What remains deferred, ticket not yet
+assigned, is the **AI-SDLC host** half: prompt text and tool arguments are
+not reachable by Noodle's redactor, and no engine change can make them so. As of NOOD_0130 the shipped policy accepts prompt credentials and
 writes them (write-only) to the app-local gitignored `<app>_secrets.env` via
 `author_test(secret_values=…)`; this file is the eventual replacement for that
 temporary transcript-risk acceptance, not a description of how Noodle works
@@ -31,20 +33,22 @@ normal edit/shell/MCP call, the host may record that tool argument. The agent
 can avoid repeating the value; Noodle can redact its own runtime output;
 neither hides a payload the host already logged.
 
-## Noodle changes (implementable now, respect the 70-line AGENTS.md ceiling)
+## Noodle changes — ALL SHIPPED (NOOD_0118 / NOOD_0171)
 
-1. Register values from secret-like process-env keys with the existing value
-   redactor in `noodle/hooks.py` (`log.register_secret`) — cover at least
-   `PASSWORD`, `PASS`, `PASSWD`, `PWD`, `TOKEN`, `SECRET`, `API_KEY`,
-   `PRIVATE_KEY`.
-2. Register again after app-local env loading and Key Vault loading so
-   late-loaded values get the same protection.
-3. Reuse the existing redactor for console, `run.log`, captured warnings, RCA
-   inputs — do not build a second masking system.
-4. Preflight guidance in `noodle/repl/core.py` should name process env, CI
-   secret store, and pre-populated `*_secrets.env` as valid sources.
-5. Generated `AGENTS.md` in `noodle/cli.py`: on missing keys, return the
-   structured preflight failure and fail the step — never pause for HIL.
+Kept for the audit trail; none of this is open work.
+
+1. **SHIPPED** — secret-like process-env keys register with the value
+   redactor (`noodle/log.py` `register_env_secrets()`; the key set covers
+   `PASSWORD`, `PASSWD`, `TOKEN`, `SECRET`, `API_KEY`, `PRIVATE_KEY`).
+2. **SHIPPED** — registration runs again after app-local env loading
+   (`noodle/hooks.py`) and after Key Vault loading (`noodle/secrets_akv.py`),
+   so late-loaded values get the same protection.
+3. **SHIPPED** — one redactor serves console, `run.log`, captured warnings
+   and RCA inputs; there is no second masking system.
+4. **SHIPPED** — preflight names process env, the CI secret store and a
+   pre-populated `*_secrets.env` as valid sources (`noodle/repl/core.py`).
+5. **SHIPPED** — missing keys return the structured preflight failure and
+   launch no browser; the engine never pauses for HIL.
 
 ## AI-SDLC host changes (outside Noodle's redactor)
 

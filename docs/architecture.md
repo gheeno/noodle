@@ -155,7 +155,7 @@ flowchart TD
     RUN["orchestrator/runner.py<br/>execute_step() (web)"]
     VRUN["orchestrator/visual_runner.py<br/>(@visual)"]
     RES["resolver/step_resolver.py<br/>resolve()"]
-    PAT["resolver/patterns.py · visual_patterns.py<br/>perf_patterns.py · desktop_patterns.py<br/>250+ regex patterns"]
+    PAT["resolver/patterns.py · visual_patterns.py<br/>api_patterns.py · perf_patterns.py · desktop_patterns.py<br/>250+ regex patterns"]
     ACT["agents/web/actions.py<br/>click / fill / assert_*"]
     SCRIPT["orchestrator/script_runner.py<br/>run external script / command"]
     PRE["preconditions.py<br/>@precondition data setup/teardown"]
@@ -166,6 +166,7 @@ flowchart TD
     MOB["agents/mobile/*<br/>Appium driver — @appium ·<br/>@android/@ios/@windows/@mac"]
     PERF["agents/perf/*<br/>load generator + latency chart (@perf)"]
     DESKS["agents/desktop/spreadsheet.py<br/>.xlsx cell reads (browserless)"]
+    APIA["agents/api/actions.py · rest_client.py<br/>REST steps (browserless)"]
     PW["Playwright (browser)"]
     LLM["llm/client.py<br/>ask() / ask_vision() → LiteLLM"]
     HOOK["hooks.py<br/>behave lifecycle · browser · retries · tracing"]
@@ -187,6 +188,7 @@ flowchart TD
     RUN -->|"@appium — mobile step family"| MOB
     RUN -->|"perf_* steps"| PERF
     RUN -->|"desktop_* file steps"| DESKS
+    RUN -->|"REST steps — any scenario"| APIA
     RUN --> ACT --> LOC -->|"role / label / text"| PW
     LOC -. "not found" .-> POM
     POM -. "still not found + model set" .-> LLM
@@ -213,6 +215,7 @@ flowchart TD
 | **Route** | `noodle/hooks.py` + `steps/catch_all.py` | `hooks.py` reads scenario tags → the wok's session: Playwright browser (web), browserless (`@api`/`@perf`), or an Appium session (`@appium`/platform tags); the `@visual` → desktop-agent dispatch itself happens in `catch_all.py`. The registry mirror of this routing lives in `noodle/wok.py`. |
 | **Interpret** | `noodle/resolver/` | Turn a sentence into a structured action via regex. Tag-aware (NOOD_0155): the scenario's wok table gets first claim on the sentence (`@perf` → perf table first), web-first best guess with no tags — `wok.pattern_priority`, same order at runtime, in `noodle validate`, and in the LSP. LLM fallback only if no pattern matches. |
 | **Act (web)** | `noodle/agents/web/` | `actions.py` (do it) → `locator.py` (find it, accessibility-first) → `pom.py` (named selectors). |
+| **Act (api)** | `noodle/agents/api/` | `actions.py` (REST protocol engine) + `rest_client.py` (stdlib urllib transport) — browserless; the `@api` wok's whole lifecycle, and REST steps compose into any scenario. |
 | **Act (mobile)** | `noodle/agents/mobile/` | Appium session + gestures for `@appium`/`@android`/`@ios` (and native `@windows`/`@mac` apps, which belong to the desktop wok). |
 | **Act (perf)** | `noodle/agents/perf/` | `loadgen.py` — stdlib threaded HTTP load generator with p50–p99/error/throughput metrics; `chart.py` — the wok's "screenshot": a rendered latency PNG through the evidence pipeline. |
 | **Act (desktop files)** | `noodle/agents/desktop/` | `spreadsheet.py` — stdlib `.xlsx` cell reads, browserless, composable into any scenario (the Excel-value-into-a-web-test flow). |
@@ -228,7 +231,7 @@ flowchart TD
 | **Network capture** | `noodle/hooks.py` (`_wire_capture_listeners`) | Per-scenario console/page errors, failed requests, requests, websocket frames — dumped to `artifacts/network/<scenario>.json` for **every** web scenario (pass or fail) and attached to that scenario's Allure result. |
 | **Secrets/config** | `noodle/secrets_akv.py`, `environments.yaml` | Base URLs + secrets (Azure Key Vault or `secrets.env`) resolved into `{env:X}` refs. |
 | **Log** | `noodle/log.py` | One logger, `NOODLE_LOG_LEVEL`, mirrored to `artifacts/logs/noodle.log` for the run. `NOODLE_LOG_FORMAT=json` emits OTel-shaped structured events (run/scenario/step/llm/locator/mcp) with `run_id` correlation and secret redaction — full reference: [logging.md](logging.md). |
-| **Drive** | `noodle/cli.py` | The `noodle` command — authoring (`init`, `init-mcp`, `author`, `scan`, `task`, `probe`, `probe-app`, `inspect`, `record`, `repl`, `steps`, `step-search`), running (`run`, `validate`, `list`, `wok`, `doctor`, `update`, `cost`, `benchmark --gate`), and reporting (`report …`, `rca-report`, `summary`, `artifacts`, `clean`, `archive`, `diagnostic …`) + retry/quarantine exit code. Full list: [cli-reference.md](cli-reference.md). |
+| **Drive** | `noodle/cli.py` | The `noodle` command — authoring (`init`, `init-mcp`, `author`, `scan`, `task`, `probe`, `probe-app`, `inspect`, `record`, `repl`, `steps`, `step-search`), running (`run`, `validate`, `list`, `wok`, `doctor`, `update`, `capabilities`, `cost`, `benchmark --gate`), and reporting (`report …`, `rca-report`, `summary`, `artifacts`, `clean`, `archive`, `diagnostic …`) + retry/quarantine exit code. Full list: [cli-reference.md](cli-reference.md). |
 | **Integrate** | `noodle/mcp/server.py` + `noodle/mcp/rest.py` | `noodle-mcp` — the same tool registry served two ways: MCP (stdio or streamable-http) for AI agents, and the plain-HTTP **engine API** (`/api/*`) for callers that can't speak MCP. See [§2.5](#the-engine-surfaces--how-something-drives-noodle). |
 | **Edit** | `noodle/lsp/` + `vscode-extension/` | LSP step validation, tag/variable autocomplete, syntax highlighting. |
 
@@ -273,10 +276,10 @@ flowchart TD
 | **Engine API** | same process, `/api/*` routes | a remote **non-MCP** caller — Java/.NET/Node/CI | [engine-api-guide.md](engine-api-guide.md) |
 | **LSP** | the VS Code extension | authoring feedback while typing | [manual.md](manual.md) |
 
-Two things worth knowing about the engine API (NOOD_0193):
+Three things worth knowing about the engine API:
 
-- **It adds no API.** `/api/*` is a second *doorway* onto the MCP tool
-  registry, dispatching through one handler over `mcp.call_tool` — so a tool
+- **It adds no API** (NOOD_0193). `/api/*` is a second *doorway* onto the MCP
+  tool registry, dispatching through one handler over `mcp.call_tool` — so a tool
   added to `server.py` appears on both doorways at once and keeps its payload
   budget (NOOD_0164) and audit event (NOOD_0172). It exists because `/mcp`
   answers a bare `tools/call` with `400 Missing session ID`, which no plain
@@ -288,6 +291,13 @@ Two things worth knowing about the engine API (NOOD_0193):
   mid-run. `rest.dispatch` hands each call to a worker thread, serialized by
   one lock (concurrent runs would otherwise race on `NOODLE_RUN_ID` and the
   workspace's single `report/`).
+- **Doorway parity is machine-asserted** (NOOD_0241). `noodle capabilities
+  --json` (`noodle/capabilities.py` `manifest()`) emits the argument-by-argument
+  CLI ↔ MCP parity manifest, built from the live signatures at call time — so
+  it cannot drift from the code. The shell-side rule (noodle commands only) is
+  enforced by init-generated host policy files (`noodle/agent_policy.py`), and
+  composed invocations self-report (`noodle/invocation.py`) — together the
+  "Govern" trio.
 
 `docs/openapi.json` is **generated** from the tool registry
 (`python -m noodle.mcp.rest`), with a unit test failing when the committed
@@ -833,7 +843,7 @@ newer), and why it's here.
 
 | Tech | Purpose |
 |------|---------|
-| [pytest](https://pytest.org/) | The `unit_tests/` suite — **1,800+ tests, no browser/LLM/display needed**. `make test`. |
+| [pytest](https://pytest.org/) | The `unit_tests/` suite — **3,600+ tests, no browser/LLM/display needed**. `make test`. |
 | Makefile | `make test`, `make lint`, `make vsix`, `make install-ext`, `make clean`. |
 | Azure Pipelines | `azure-pipelines.yml` (Linux) + `azure-pipelines-windows.yml` (Windows) — **file-level matrix sharding** (one `.feature` file per agent), publish JUnit + Allure + failure traces. |
 | Docker / devcontainer | `Dockerfile` (Playwright base image, browsers preinstalled) + `.devcontainer/` for reproducible CI and local parity. |

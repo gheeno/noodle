@@ -91,9 +91,9 @@ Background:
   Given User is on '{env:BASE_URL}'
 ```
 
-Resolution → `@viewport:1920x1080` tag or `NOODLE_VIEWPORT`; cert errors are
-already ignored by default (`NOODLE_IGNORE_HTTPS_ERRORS`, `@secure_certs` to
-re-enable validation for a scenario).
+Resolution → `@viewport:1920x1080` tag or `NOODLE_VIEWPORT`; certs are
+verified by default — `@insecure_certs` (or `NOODLE_IGNORE_HTTPS_ERRORS=true`)
+relaxes validation for a scenario/run, and `@secure_certs` always wins.
 
 **Popups/overlays** — three cases, in order of preference:
 1. Irrelevant to the test → write nothing. The engine auto-dismisses an
@@ -244,14 +244,18 @@ POM, feature, and empty placeholders for the secret keys you name — validates
 the Gherkin, and rolls back every file it wrote if anything fails.
 
 Over the CLI, prefer `--prompt "<the ask, verbatim>"` — no file, no shell
-quoting beyond one string. When you do need a spec, `--spec` takes **three
-forms**: a file path (`--spec spec.yaml`), `-` for stdin, or the document
-inline (`--spec '<yaml>'`). A multi-line spec — anything with quotes, `$`,
-`*`, or emoji that shell single-quoting mangles — goes in a file: write
-`spec.yaml` with your editor/Write tool and pass the path (NOOD_0227). No
-heredoc gymnastics are ever required; inline is for one-liners.
-The spec keys are exactly `author_test`'s arguments, listed in the MCP tool
-schema and in `noodle author --vocabulary` (`--section <name>` filters it). If the
+quoting beyond one string. It also accepts a file path or `-` for stdin.
+When you do need a spec, there are **three spellings, no file required**:
+`--spec` (a file path, `-` for stdin, or the document inline for
+one-liners), `--spec-text` (the whole multi-line document as ONE argument
+value, newlines and all — NOOD_0228), and `--spec-line` (one line per flag,
+joined in order, for hosts that mangle embedded newlines). A multi-line spec
+does NOT need a file, a heredoc, or shell redirection: that is exactly what
+`--spec-text` exists to remove.
+The spec keys are exactly `author_test`'s arguments — `noodle capabilities
+--operation author` maps every one to its flag and tool argument, and
+`noodle author --vocabulary` (`--section <name>` filters it) carries the
+goal schema. If the
 original prompt supplied credential *values* (NOOD_0130), pass them once as
 `secret_values={KEY: value}`: they are written ONLY into the gitignored
 `<app>_secrets.env`, never echoed back or returned, and never placed in a
@@ -1186,7 +1190,7 @@ the final step of every passing web scenario ships a viewport-only JPEG with
 the asserted element boxed in green — proof the test did what it claims. A
 tester requests more with the `@evidence`/`@no_evidence` tags, per-step tag
 metadata (`@evidence:steps=2,7` / `@evidence:skip=3` — 1-based positions,
-NOOD_0227), or `NOODLE_EVIDENCE=all|last|off`
+NOOD_0227), or `NOODLE_EVIDENCE=all|assertions|last|off`
 (see docs/steps_dictionary.md § Evidence screenshots). **Never hand-author
 either** (NOOD_0225): the brief already says what it wants — "take evidence
 screenshot on this step", "attach evidence per each step", "DO NOT ADD
@@ -1509,6 +1513,58 @@ Two of the laps above are ones the engine can now take itself, because
 
 If a dropped check mattered, reword it to text the probe actually saw and
 re-author — the blocker names the probed candidates.
+
+---
+
+## 7.7 — Shell discipline: one noodle invocation per line (NOOD_0241)
+
+A session audit caught an agent completing a valid test the wrong way:
+`--help | head -50` after a flag guess failed, `2>&1 | tee /tmp/…`
+exfiltrating a full payload outside the workspace, and six commands
+prefixed `cd <ws> &&`. Root cause was friction, not malice — the flags it
+guessed existed only on the tool surface, the usage error was an
+unparseable Rich box that *recommended* `--help`, and the ban was an
+executable list it read as closed (tee and cd weren't on it). Everything
+below exists so the compliant path is also the easiest one.
+
+**The rule is a shape, not a list.** A shell line is exactly ONE noodle
+invocation and its flags. If it contains `|`, `>`, `<`, `&&`, `;`,
+backticks, `$(`, or any executable other than `noodle` (git is the one
+exception — version control, not observability), it is forbidden —
+regardless of what the executable is. Output is complete as returned:
+every JSON payload carries `payload_complete: true` (a trimmed one says
+`truncated: true` and names `NOODLE_PAYLOAD_BUDGET_BYTES` as the widener),
+so paging, filtering, or capturing it buys nothing.
+
+**Discovery is `noodle capabilities --json`** — the machine-readable
+parity manifest: every operation's tool argument ↔ CLI flag ↔ spec key,
+built from the live signatures. The CLI is a FULL surface (`author` takes
+`--app-name/--app`, `--base-url`, and with `--run` the forwarding flags
+`--headless/--headed`, `--retries`, `--serve-reports`); a no-MCP estate
+loses nothing, and `--help` is never the answer. Usage errors honour the
+contract too: with `--json` (or `NOODLE_AGENT_MODE=1`) an unknown flag
+returns one bounded JSON envelope naming every unknown token, every valid
+flag, the spec keys and nearest matches — exit code preserved, no `--help`
+suggestion — so the second attempt converges with no discovery call.
+
+**Never `cd` into a workspace.** Pass `-w <workspace>`, or set
+`NOODLE_WORKSPACE`; a bare `-w`-less command run anywhere inside a
+workspace walks up to the nearest `noodle.yaml` on its own.
+
+**The rule is also enforced, not just stated.** `noodle init` writes host
+tool-permission policy per workspace — `.claude/settings.json`
+(allow `Bash(noodle:*)`/`Bash(git:*)`, deny the composition
+metacharacters and the text-wrangling executables), `.vscode/settings.json`
+(terminal auto-approve map — advisory), and `.copilot/agent-policy.json`
+(the canonical host-neutral copy). The metacharacter denials are the
+load-bearing entries: `noodle author --help | head -50` still starts with
+`noodle`, so a bare allow-list would wave it through. `noodle doctor
+--policy` verifies the files exist, are current, and actually deny the
+canned leak lines (exit 1 otherwise); `noodle init --force` re-merges,
+`--no-agent-policy` opts a workspace out. The engine also self-reports:
+a payload produced under a composed command line carries
+`invocation_clean: false` + `invocation_note`, and sightings aggregate in
+`.noodle/invocation_log.jsonl`.
 
 ---
 

@@ -1609,26 +1609,46 @@ objects (POM), custom scripts, naming rules, and reports:
 
 ### All commands
 
-One binary, `noodle`, every capability a subcommand — run `noodle --help`
-for this list, or `noodle <command> --help` for one command. For every flag,
+One binary, `noodle`, every capability a subcommand. Humans: `noodle --help`
+lists them, `noodle <command> --help` details one. Agents:
+`noodle capabilities --json` is the machine-readable manifest (NOOD_0241 —
+use it, not `--help`, which agent workspace policy denies). For every flag,
 its purpose, when to use it, and sample output, see
 **[docs/cli-reference.md](cli-reference.md)**.
 
 | Command | Purpose | Example |
 |---|---|---|
 | `run` | Run `.feature` files | `noodle run web/busterblock --headless --tag @smoke` |
-| `init` | Scaffold a workspace (`noodle.yaml`, `.env`, `noodle_tests/`, `.vscode/settings.json`) | `noodle init ~/my-tests --llm ollama` |
+| `author` | Author a whole test package in one transaction; `--run` makes it author+run+serve | `noodle author --prompt "1. go to https://x 2. …" --run --json` |
+| `ship` | prompt → probe → author → run → serve with 1 self-heal lap | `noodle ship "1. go to https://x 2. …"` |
+| `capabilities` | The parity manifest: tool arg ↔ CLI flag ↔ spec key, one bounded JSON payload | `noodle capabilities --operation author` |
+| `init` | Scaffold a workspace (`noodle.yaml`, `.env`, `noodle_tests/`, MCP config, agent skills + shell policy — `--no-agent-policy` opts out) | `noodle init ~/my-tests --llm ollama` |
+| `init mcp` / `init-mcp` | (Re)write just the MCP client config files | `noodle init mcp --force` |
+| `update` | Re-link the install to its engine checkout — THE step after `git pull` | `noodle update` |
 | `install-extension` | Link the VS Code extension into the editor (no vsce/.vsix/`code` CLI) | `noodle install-extension` |
-| `doctor` | Context-aware, read-only health check: install + launcher provenance always, plus engine-checkout or workspace checks by context ([reference](#health-check--noodle-doctor)) | `noodle doctor --json` |
+| `doctor` | Context-aware, read-only health check; `--policy` verifies the agent shell policy ([reference](#health-check--noodle-doctor)) | `noodle doctor --json` |
 | `validate` | Parse features + check step/var resolution, no browser | `noodle validate . --resolve` |
 | `list` | List discovered scenarios without running them | `noodle list --workspace ~/my-tests --json` |
+| `remove` | Delete a feature and its orphaned package files, report-consistently | `noodle remove noodle_tests/web/app1/features/old.feature` |
 | `steps` | Search the step dictionary for example phrasing | `noodle steps clipboard` |
 | `step-search` | Find (or draft) the closest step for a plain-English action | `noodle step-search "clear the cart" --accept` |
 | `probe` | Pre-authoring DOM probe: controls + selectors + POM suggestions, no test run | `noodle probe https://example.com/login` |
+| `probe-app` | Native-app accessibility-tree probe (Appium, snapshot-only) | `noodle probe-app android --json` |
 | `inspect` | Debug a locator phrase: every candidate (text/alt/aria/POM/DOM-scan source, visibility) + what `find()` picks | `noodle inspect https://example.com "Weekly Flyer"` |
+| `scan` / `api-scan` | Deterministic repo / OpenAPI scan: stacks, endpoints, test plan questions | `noodle scan .` |
+| `ticket` | Compile a JIRA-style ticket payload into an authoring plan | `noodle ticket ./ticket.json` |
+| `task` | One-call intent envelope for agent hosts (`--contract` prints the schema) | `noodle task "test search on https://x"` |
+| `wok` | The capability work areas and what each one routes on | `noodle wok --json` |
 | `summary` | Plain-English pass/fail summary of the last run | `noodle summary --json` |
 | `rca-report` | Root-cause every failed/errored scenario as Markdown | `noodle rca-report --serve` |
-| `report generate` \| `open` \| `serve` | Build / open / network-serve the Allure HTML report | `noodle report generate && noodle report open` |
+| `report generate` \| `open` \| `serve` \| `list` \| `stop` \| `reset` | Build / open / host / enumerate / stop / reset reports | `noodle report serve --background` |
+| `diagnostic log` \| `list` \| `guide` \| `bundle` | Session diagnostics: capture, browse, bundle | `noodle diagnostic log --json` |
+| `pom resolve` \| `set` \| `list` | POM pin admin: settle an ambiguity, pin a selector, list pins | `noodle pom list` |
+| `workspace inspect` | Structured `ls` substitute: packages, features, env key names, POM scope | `noodle workspace inspect --json` |
+| `migrate evidence-markers` | Rewrite in-step evidence text to `@evidence:` tags | `noodle migrate evidence-markers --write` |
+| `benchmark` | Spec-shape benchmark; `--gate` PR gate; `--session`/`--table` agent-driven | `noodle benchmark --gate` |
+| `cost` | LLM cost: last run's actual spend, or a pre-run estimate | `noodle cost` |
+| `docs` | Read framework docs (index, one doc, or grep) | `noodle docs agent-playbook` |
 | `repl` | Interactive plain-English shell (rule-based; `--llm` for free-form) | `noodle repl --workspace ~/my-tests --llm ollama` |
 | `record` | Record a new test by acting in a browser | `noodle record --workspace ~/my-tests` |
 | `clean` | Delete the last run's artifacts tree — everything a run regenerates | `noodle clean --workspace ~/my-tests` |

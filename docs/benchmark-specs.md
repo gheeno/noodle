@@ -1,6 +1,6 @@
 # The benchmark specs (NOOD_0232)
 
-The five test specs `noodle benchmark` runs, in the exact wording it sends
+The six test specs `noodle benchmark` runs, in the exact wording it sends
 them. **This file is the source of truth** — the engine parses the fenced
 blocks below at run time, so the spec a human copies is byte-for-byte the
 spec the benchmark measures. There is no second copy inside the Python to
@@ -103,7 +103,7 @@ cd test-apps/busterblock && npm ci
 
 ## Sending a spec by hand
 
-The same five blocks work outside the benchmark, which is the reason they
+The same six blocks work outside the benchmark, which is the reason they
 live in a document rather than in a Python list.
 
 - **Human, in an LLM session** — copy one fenced block and paste it. Nothing
@@ -111,8 +111,10 @@ live in a document rather than in a Python list.
   message. The engine's own numbers come back in the payload.
 - **MCP / A2A client** — send the block verbatim as the `prompt` argument of
   `author_test`, with `run_after_author: true`. Same string, same result.
-- **CLI** — `noodle author --spec-text "<block>" --run`, or put the block in
-  a file and use `--prompt <file>`.
+- **CLI** — `noodle author --prompt "<block>" --run` (add
+  `--feature-path spec_<id>.feature` when the benchmark ledger must key on
+  it), or put the block in a file and use `--prompt <file>`. `--spec-text`
+  is for a JSON/YAML *spec document*, not a prompt block.
 
 Whichever door you use, do **not** reword the block to help it through. A
 reworded spec measures your rewording.
@@ -139,7 +141,7 @@ for Alien. Confirm that the Alien listing is what you are left looking at.
 
 The numbered imperative list: one action per line, control names quoted, the
 assertion on its own line. The shape every other benchmark in this repo is
-written in, kept here as the **control** — it is what the other four are read
+written in, kept here as the **control** — it is what the other five are read
 against.
 
 ```text
@@ -183,7 +185,7 @@ user: reel_ryan / Popcorn1!
 
 **The assertion is deliberately wrong.** `Casablanca` is not in BusterBlock's
 catalogue, and searching for `Halloween` cannot put it there. This spec is
-here to measure what the other four cannot: that a test which *should* fail
+here to measure what the other five cannot: that a test which *should* fail
 **does** fail, visibly, with a diagnosis.
 
 A green run here is the worst result the benchmark can produce — it would
@@ -396,7 +398,7 @@ Two benchmarks, deliberately:
 | | `noodle benchmark --gate` | `noodle benchmark` |
 |---|---|---|
 | Question | can the engine still generate a good test | can it still take a request phrased the way people phrase them |
-| Varies | the **flow** (5 flows, one shape) | the **shape** (5 shapes, one app) |
+| Varies | the **flow** (5 flows, one shape) | the **shape** (6 shapes, one app) |
 | Target | Wikipedia + a static fixture | BusterBlock, behind its login gate |
 | Role | **required** before any engine-code PR | on demand, and before a release |
 | Cost | ~90s | ~2-3 min |

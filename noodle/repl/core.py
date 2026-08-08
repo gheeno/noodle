@@ -1164,13 +1164,17 @@ def author_test(**kw) -> dict:
     what the caller paid a round trip for.
     """
     started, t0 = time.time(), time.monotonic()
+    # NOOD_0241 — `door` is ledger metadata, not an authoring argument: the
+    # CLI passes "cli", the MCP server "mcp", direct/REPL callers nothing.
+    # Popped here so the transaction below never sees it.
+    door = kw.pop("door", None)
     result = _author_test_door(**kw)
     if isinstance(result, dict):
         from noodle import benchmark as _bench
         _bench.record(kw.get("workspace", "."),
                       feature_path=kw.get("feature_path"),
                       started=started, seconds=time.monotonic() - t0,
-                      result=result)
+                      result=result, door=door)
     return result
 
 
@@ -1569,6 +1573,9 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
                 overwrite: bool = False,
                 allow_unverified_intent: bool = False,
                 run_scope: str = "feature",
+                headless: bool | None = None,
+                retries: int | None = None,
+                serve_reports: bool | None = None,
                 workspace: str = ".") -> dict:
     """NOOD_0128/0129 — write a whole test package in one transaction:
     locate/create the app package (no sample_app copy), write environments.yaml
@@ -2440,8 +2447,16 @@ def _author_test_impl(*, app_name: str, base_url: str, feature_path: str,
                         # NOOD_0212 — the BLOCKED CONTRACT's blockers, not
                         # this call's; see the note where the entry is saved.
                         "blocking": (contract.get("blocking") or blocking)}}
+    # NOOD_0241 — the run leg's knobs are now caller-forwardable (CLI
+    # --headless/--retries/--serve-reports, tool args of the same names): the
+    # audited session guessed `author --headless` off run_and_report's
+    # documented surface and hit exit 2 four times before improvising a
+    # shell pipe. None keeps the long-standing defaults exactly.
     run = run_and_report(result["feature"], workspace=workspace,
-                         headless=True, retries=0, serve_reports=True,
+                         headless=True if headless is None else headless,
+                         retries=0 if retries is None else retries,
+                         serve_reports=(True if serve_reports is None
+                                        else serve_reports),
                          package=rel(app_dir) if run_scope == "app" else None)
     if run.get("ok") and not run.get("passed"):
         # An empty run exits 0 — a green that ran nothing is a failure.

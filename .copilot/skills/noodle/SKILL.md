@@ -20,11 +20,15 @@ Nouns: engine = framework repo/install; workspace = `noodle init` test
 project; wok = capability work area, tag-routed
 (`read_docs('woks')`).
 
-⛔ **Noodle commands only** — no curl, no jq, no `find`/`cat`/`grep`/
-`xargs`/`node`/`python` on a page, payload or app: payloads arrive
-pre-bounded, URLs pre-checked (`http_ok`), a dead origin named by
-`noodle probe <url>`. Nothing in noodle answers it? Stop and name the
-engine gap to report — a shell command only hides it.
+⛔ **Command shape** — a shell line is exactly ONE noodle invocation
+and its flags: any other executable (no curl, no jq, no `grep`/`head`/
+`cat`/`find`/`xargs`/`node`/`python`/`tee` — nor ANY unlisted one), or
+any of `|` `>` `<` `&&` `;` `` ` `` `$(`, is forbidden; never `cd`
+first (pass `-w`). Payloads arrive complete (`payload_complete: true`), URLs
+pre-checked (`http_ok`), a dead origin named by `noodle probe <url>`.
+Unknown flag? `noodle capabilities --json`, never `--help`. Nothing in
+noodle answers it? Stop and name the engine gap to report — a shell
+command only hides it.
 
 ## Green path
 
