@@ -6,9 +6,10 @@
 > machine that may have nothing on it yet. Supports **macOS** and
 > **Windows 11**. A human can follow it too, but the phrasing, checkpoints,
 > and failure tables are written for an agent executing commands and reading
-> their output. The human-narrative version of this material is README.md's
-> Setup guide (Parts 1–7); if this file and the README ever disagree on a
-> command, the README wins — report the drift.
+> their output. The human-narrative version of this material is the Setup
+> guide (Parts 1–7) in [docs/manual.md](manual.md#setup-guide); if this file
+> and the manual ever disagree on a command, the manual wins — report the
+> drift.
 
 **Contract with the user:** installation only. Do **not** run tests, start
 BusterBlock or any other test app, or generate a test unless the user
@@ -198,16 +199,20 @@ Tests live **outside** the engine clone (see
 directory:
 
 ```bash
-noodle init my-tests            # scaffolds noodle.yaml, .env, AGENTS.md, noodle_tests/, MCP config
-cd my-tests
-noodle list                     # discovers the scaffolded sample — proves config + engine wiring
+noodle init my-tests            # scaffolds noodle.yaml, .env, AGENTS.md, noodle_tests/, MCP config, agent shell policy
+noodle list -w my-tests         # discovers the scaffolded sample — proves config + engine wiring
+noodle doctor my-tests --policy # the generated agent shell policy is present and protective
 ```
 
 `noodle init <dir>` is non-destructive (never overwrites existing files), so
-it's safe on a partially set-up workspace.
+it's safe on a partially set-up workspace. It also merges the NOOD_0241
+host tool-permission files (`.claude/settings.json`, `.vscode/settings.json`,
+`.copilot/agent-policy.json`) unless `--no-agent-policy` is passed.
 
 **Checkpoint:** `noodle list` prints the sample package's scenarios with no
-traceback. That — not a test run — is the "installed" bar for this runbook.
+traceback, and `noodle doctor --policy` exits 0 (exit 1 = a host policy is
+missing, stale, or ineffective). That — not a test run — is the "installed"
+bar for this runbook.
 Only run an actual test (`noodle run … --headless`, then serve both reports
 per [agent-playbook.md §5](agent-playbook.md)) if the user asked for a full
 install-plus-run.

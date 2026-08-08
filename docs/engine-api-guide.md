@@ -48,7 +48,8 @@ choice below:
   There is no job id and nothing to poll: the response body is the result.
 - **There is no REST resource model.** No `/tests/{id}` with GET/PUT/DELETE.
   Every operation is `POST /api/tools/<name>` with that tool's arguments as the
-  body. One verb, one shape, 24 operations. This is deliberate: the tool list
+  body. One verb, one shape, one operation per tool — `GET /api/tools` is the
+  live list. This is deliberate: the tool list
   is generated from the engine, so it can never drift from what Noodle can
   actually do.
 
@@ -121,7 +122,7 @@ Confirm it's up and which build is running:
 
 ```bash
 curl -s http://localhost:8080/api/health -H "x-api-key: $NOODLE_MCP_API_KEY"
-# {"noodle_version":"1.0.0a9","started_at":"...","pid":41914,"workspace":"/home/you/my-tests"}
+# {"noodle_version":"1.0.0a54","started_at":"...","pid":41914,"workspace":"/home/you/my-tests"}
 ```
 
 Every request needs the key, as **either** header:
@@ -241,7 +242,7 @@ curl -X POST $BASE/api/tools/author_test -H "x-api-key: $KEY" \
 curl -X POST $BASE/api/tools/generate_test -H "x-api-key: $KEY" \
   -H "content-type: application/json" -d '{
     "url": "https://example.com/cart", "description": "remove an item",
-    "append_to": "noodle_tests/shop/features/cart.feature"
+    "append_to": "cart"
   }'
 ```
 
@@ -323,6 +324,7 @@ payload. See [benchmark.md](benchmark.md).
   "target": "noodle_tests/shop/features/login.feature",
   "passed": 3, "failed": 0, "skipped": 0,
   "verified": true,
+  "payload_complete": true,
   "report": "/home/you/my-tests/.../allure-report/index.html",
   "rca_html": ".../rca.html", "rca_md": ".../rca.md",
   "served": {"urls": ["http://localhost:53412/allure-report/index.html", "..."]}
@@ -337,6 +339,11 @@ match — the test is green, but not for the reason you asked for. Treat it as a
 failure in CI and read `unverified_reasons` / `healing_events`. A gate of just
 `failed == 0` will eventually report success for a test that isn't checking
 what you think.
+
+`payload_complete: true` means read the body as returned — nothing was cut.
+`false` (paired with `truncated: true`) means the body was trimmed to the
+payload budget: `payload_note` names what was cut, and
+`NOODLE_PAYLOAD_BUDGET_BYTES` widens the budget (NOOD_0241).
 
 On red, `rca_compact` is already in the response: verdict, failing step,
 suggested fix. No second call needed.

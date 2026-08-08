@@ -4,6 +4,98 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [1.0.0a54] — 2026-08-07
+
+**NOOD_0241** — fix: the shell stops being the easy way out — CLI/tool
+parity, machine-readable errors, and enforced host policy close the
+shell-leak audit.
+
+A session audit (report `noodle-shell-leak-2026-08-07`) caught an agent
+producing a valid, verified test the wrong way: `noodle author --help |
+head -50`, a payload tee'd to `/tmp`, and six commands prefixed
+`cd <ws> &&` — on a corporate estate where MCP is banned and the CLI is
+the only permitted agent surface, permanently. The causal chain was
+mechanical: the docs describe tool arguments (`author_test(app_name=…,
+run_after_author=True)`, `run_and_report(headless=True)`) whose CLI twins
+did not exist, so the agent's first guess exited 2; the Click error came
+back as a Rich box that itself recommended `--help` despite `--json` on
+the line; three failed laps later the agent fell back to universal shell
+habits, escalating from a read-only `head` to a `tee` outside the
+workspace. The no-pipes rule existed only as prose — an executable
+enumeration the model read as a closed list (`tee`, `cd`, `2>&1` were
+unlisted, therefore "allowed"). Every fix below works with the CLI as the
+sole surface and no MCP server registered; none breaks estates that do
+run MCP — the two doors stay in parity, neither privileged.
+
+| Fix | What changed |
+|---|---|
+| CLI ⇄ tool parity | `noodle author` gains `--app-name`/`--app`, `--base-url`, and the run-leg forwarders `--headless/--headed`, `--retries`, `--serve-reports` (exact tool-argument names; defaults unchanged). MCP `author_test` gains the CLI-only `auto_fix` plus the same run-leg trio, so neither door is privileged. A flag and its spec key together are a clear error; the audit's exact failing command now parses on attempt one. |
+| `noodle capabilities` | The sanctioned discovery call: one bounded JSON manifest mapping every operation's tool argument ↔ CLI flag ↔ spec key, built from the live click/core signatures at call time (`--operation author\|run\|probe` slices it). The `--help` ban only holds while a machine-readable alternative exists; this is it. `unit_tests/test_nood_0241.py` ast-parses the MCP signatures and fails CI when any documented tool argument loses its CLI counterpart. |
+| Agent-mode errors | Usage errors honour the output contract: with `--json` anywhere on the line or `NOODLE_AGENT_MODE=1`, a usage error is ONE bounded JSON envelope on stdout — `error: unknown_option`, EVERY unknown token (click stops at the first; the envelope rescans the line), `did_you_mean` nearest matches, every `valid_options` entry, the `spec_keys`, exit code preserved — and never a `--help` suggestion. Human TTY rendering is untouched. Interception lives in `_OrderedGroup.main`, the one choke point, and follows whichever click Typer was built on (typer-slim vendors its own fork — a plain `import click` catches classes the parser never raises). |
+| `payload_complete` | Every dict payload leaving `payload_budget.bound()` (MCP, REST, CLI `--json`) is stamped `payload_complete: true`; a trimmed one says `payload_complete: false, truncated: true` and names `NOODLE_PAYLOAD_BUDGET_BYTES` as the widener. Probe's text rendering gains a final "payload complete — nothing follows" line. `| head -50` is a truncation-anxiety reflex; the payload now carries the proof that paging buys nothing. |
+| Generated host policy | `noodle init` (and `--force`; `--no-agent-policy` opts out) writes/merges per-host tool-permission files: `.claude/settings.json` (allow `Bash(noodle:*)`/`Bash(git:*)`, deny the POSIX+PowerShell composition metacharacters and the text-wrangling executables), `.vscode/settings.json` (terminal auto-approve map — reported as advisory, not pretended enforcing), `.copilot/agent-policy.json` (canonical host-neutral copy). Merge-only — a team's own entries survive. The metacharacter denials are the load-bearing part: `noodle author --help \| head -50` still starts with `noodle`, so a bare allow-list waves it through — pinned by a regression test. `noodle doctor --policy` verifies the files exist, are current, and actually deny the canned leak lines (exit 1 otherwise); `workspace.policy` joins the doctor's workspace profile. |
+| cd-free workspaces | Every `-w` option resolves its `.` default via `NOODLE_WORKSPACE`, then a nearest-ancestor `noodle.yaml` walk-up (cwd-is-workspace stays literally `.` so payload paths are byte-identical). Six of six audited commands opened with `cd <ws> &&`; none needs to. |
+| Invocation hygiene | The engine inspects its parent command line (Linux /proc, macOS ps; Windows honestly abstains) and, when a shell composed the call — noodle piped, redirected, command-substituted, or the two-segment `cd <ws> && noodle …` shape — stamps `invocation_clean: false` + `invocation_note` on the payload and appends a sighting to `.noodle/invocation_log.jsonl`. Precision over recall: agent harnesses wrap commands in `-c` plumbing full of operators the agent never wrote, so only composition touching the noodle segment itself is flagged, and quoted metacharacters inside a prompt stay clean. Informational, never a refusal — enforcement is the host policy above. |
+| Ledger `door` | `benchmark --session`'s ledger now actually records which door carried each attempt (`cli` \| `mcp` \| `direct`) — the runbook and docs/benchmark.md have claimed this since the two-door instructions landed; nothing wrote it. |
+| Surfaces | AGENTS.md, both skill cards and the copilot digest replace the closed-list enumeration with the shape rule — a shell line is exactly ONE noodle invocation and its flags; any other executable (the old names stay as examples, per the NOOD_0215/0224 pins) or any of `\| > < && ; \` $(` is forbidden regardless — plus the two pointers that remove the improvisation motive (`noodle capabilities`, `payload_complete`) and the cd ban. Cap raises logged in `instruction_budget.py` (agents-md/claude-card/copilot-card/copilot-digest +512 each, one cause). docs/mcp-guide.md's `author_test` row now lists the full live signature; docs/agent-playbook.md §7.7 carries the rationale; docs/openapi.json regenerated. |
+
+`ready: true / passed: 1 / verified: true` was never the issue — the audit's
+test was sound. What was missing was any reason for a frictioned agent to
+stay inside the engine, and any control when it didn't. Now the first
+attempt parses, the error that would have stopped it converges on the
+second, the payload says it is whole, and the host permission layer — the
+only mechanical control that survives a no-MCP estate — is generated, not
+remembered.
+
+**Documentation sweep — the whole tree audited against the code, not just
+this ticket's surface.** Six parallel audits compared every doc and every
+mermaid diagram to the live signatures; 26 files changed. The
+NOOD_0241 surface (`capabilities`, `doctor --policy`, the new `author`
+flags, the generated policy files, `NOODLE_WORKSPACE`/`NOODLE_AGENT_MODE`/
+`NOODLE_PAYLOAD_BUDGET_BYTES`, `payload_complete`) now appears wherever a
+doc enumerates commands, flags, env vars, scaffold output or workspace
+files. Pre-existing drift fixed in the same pass, most of it older than
+this branch:
+
+- **cli-reference.md** had no `noodle author` section at all, and no entry
+  for `capabilities`, `update`, `docs`, `probe-app`, `pom`, `workspace
+  inspect`, `migrate` or `report reset` — added, plus corrections to
+  `benchmark` (bare = 6 spec shapes, `--gate` = 5 flows, `--session`/
+  `--table` are the agent-driven pair), `report serve --port/--background`,
+  probe's `--brief`, and a duplicated `--log-level` row.
+- **manual.md**'s "All commands" table listed 17 of ~37 commands; doctor's
+  check-ID table was missing four IDs including `workspace.policy`.
+- **Counts that had silently drifted:** the MCP tool tables said 21–23 tools
+  in three places (31 registered — 10 tools were undocumented entirely);
+  architecture.md said "1,800+ tests" (3,600+); benchmark docs said three
+  canonical gate cases (five) and five specs (six).
+- **Claims that were simply wrong:** glossary/encyclopedia said TLS
+  verification is OFF by default and named the wrong tag (it is ON;
+  `@insecure_certs` relaxes — a security-relevant inversion); both said the
+  RCA report is only written on failure (every run writes `rca.md` +
+  `rca.html`); woks.md's tag-priority table omitted the `api` table and
+  inverted the default order; feature-packages.md still filed `api/` under
+  the web wok (its own wok since NOOD_0191); README's PowerShell sample
+  copied into `tests\` instead of `noodle_tests\`; external-site-walkthrough
+  prescribed a `cd` for a flag that has existed for releases.
+- **Stale pointers:** several docs still sent readers to "README.md Parts
+  1–7" after the Setup guide moved to manual.md.
+- **steps_dictionary.md** documented every phrasing it listed (445/445
+  resolve against the live tables) but omitted three families entirely —
+  screen/terminal OCR assertions, `load_resource` payloads, and `set_page`.
+  Added, and the existing drift guard now covers them.
+- **codebase-spec.md** was pinned at NOOD_0150 while claiming to be the
+  current inventory — regenerated §3/§4 and the workspace tree.
+- **docs/todo/**: secret-broker.md listed five shipped items as open work
+  (NOOD_0118/0171) and is now scoped to the host-side half; the NOOD_0191
+  plan's "CLI ⟷ MCP parity is effectively complete — do not rebuild" is
+  annotated as superseded by this ticket.
+- Two engine strings the audit caught: `noodle init` printed
+  `Next: cd <path> && noodle repl` — the engine prescribing the exact
+  composed line the policy it had just installed denies (now
+  `noodle repl -w <path>`) — and a benchmark regression message hardcoded
+  "all five specs" for a six-spec set.
+
 ## [1.0.0a53] — 2026-08-07
 
 **NOOD_0240** — fix: a test case in the Allure report shows every tag that

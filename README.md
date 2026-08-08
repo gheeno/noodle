@@ -32,7 +32,9 @@ No prior AI, automation, or Python experience assumed.
 > OS you're on, install the CLI + prerequisites + the VS Code extension,
 > confirm a `.feature` file actually renders in colour, and stop there.
 > Don't run, generate, or start a test app unless you were separately
-> asked to.
+> asked to. And whenever you need a flag name: `noodle capabilities --json`
+> is the sanctioned discovery call (never `--help`), and payloads carry
+> `payload_complete: true` — read them as returned, no piping.
 
 ---
 
@@ -151,8 +153,8 @@ test, and it drives Noodle for you; see
 Drop into `noodle repl` — Noodle's own built-in chat shell, no AI agent
 needed — only if you have neither a company Copilot seat nor a personal
 Claude account; it works fully offline, for free, with no AI model
-configured at all. Everything under
-[Reference (engineers / CI authors)](docs/manual.md#reference-engineers--ci-authors) below
+configured at all. Everything under docs/manual.md's
+[Reference (engineers / CI authors)](docs/manual.md#reference-engineers--ci-authors)
 is the manual, no-agent version of the same commands.
 
 **How does Noodle know what a plain-English step means?**
@@ -178,7 +180,10 @@ inside its own folder.
    it's always on `PATH` — see [Part 2](docs/manual.md#part-2--get-the-framework)). Already
    `cd`'d into `my-tests` — or into one app's folder like
    `my-tests/noodle_tests/app1` (then every command scopes to that app)?
-   Drop `--workspace` — it defaults to `.`.
+   Drop `--workspace` — it defaults to `.`, and that default resolves
+   itself: `NOODLE_WORKSPACE` (env) if set, otherwise the nearest ancestor
+   folder holding `noodle.yaml` — so a bare command works from anywhere
+   inside a workspace tree. An explicit `-w` still wins.
 4. Using an AI agent instead of the terminal? Launch the agent **from
    inside** that folder (not from inside the Noodle install folder), and
    point its MCP connection at the same `--workspace` path. Full
@@ -220,15 +225,17 @@ involved (with or without `noodle repl`, Noodle's own plain-English shell):
 ```mermaid
 flowchart TD
     Start(["You open a terminal"]) --> Q{"What do you want?"}
-    Q -- "New test case" --> A1["Hand-write a .feature file,<br/>or noodle repl 'create test for X at Y'"]
+    Q -- "New test case<br/>(direct CLI — the default lane)" --> A0["noodle probe on an unfamiliar page,<br/>then noodle author --prompt or --spec, with --run —<br/>exit 0 = ready: authored, validated, run,<br/>both reports served (a separate validate adds nothing);<br/>noodle ship is the same pipeline as one call"]
+    Q -- "New test case<br/>(hand-written Gherkin)" --> A1["Hand-write a .feature file,<br/>or open noodle repl and type<br/>'create test for X at Y' at its prompt"]
     Q -- "Update a test case" --> A2["Open the .feature file,<br/>edit the plain-English step text"]
     Q -- "Step needs custom code<br/>(nothing built-in fits)" --> A3["Add a .py/.js/.sh file under<br/>noodle_tests/steps/ or resources/functions/;<br/>the step calls it via 'runs the script …'<br/>or 'calls the function …'"]
-    A1 --> B["noodle validate --resolve<br/>checks it parses and every step resolves"]
+    A1 --> B["noodle validate --resolve —<br/>hand-written Gherkin only —<br/>checks it parses and every step resolves"]
     A2 --> B
     A3 --> B
     B --> C["Step Resolver matches the step text<br/>and expands {env:}/{var:}/{pom:} —<br/>patterns first, LLM only if configured"]
-    C --> D["noodle run --headless<br/>(or noodle repl 'run that')"]
+    C --> D["noodle run --headless<br/>(or type 'run that' at the repl prompt)"]
     D --> E["noodle rca-report --serve<br/>+ noodle report generate / open"]
+    A0 --> F
     E --> F(["You read the pass/fail summary,<br/>the Allure report, and the RCA report yourself"])
 ```
 
@@ -345,8 +352,8 @@ Feature: Checkout latency gate
 
 The whole install-to-report journey, commands only, no prose. Three
 versions — pick the one that matches how you'll run Noodle. Detailed
-explanation of each step is in [Setup guide](docs/manual.md#setup-guide) below (macOS /
-Windows) or [Running in CI](docs/manual.md#running-in-ci--azure-devops) below (pipeline).
+explanation of each step is in the manual's [Setup guide](docs/manual.md#setup-guide)
+(macOS / Windows) or [Running in CI](docs/manual.md#running-in-ci--azure-devops) (pipeline).
 
 ### Zero to hero — macOS
 
@@ -390,7 +397,7 @@ noodle install-extension     # links the extension in — no vsce/.vsix/code CLI
 cd ..                                                       # up to noodle's parent folder
 cp -R noodle/sample_feature_tests ./sample_feature_tests    # ⚠️ destination must NOT already exist —
                                                               # cp nests the folder inside it otherwise
-noodle init sample_feature_tests --force                    # scaffolds noodle.yaml, .env, MCP config, agent skills
+noodle init sample_feature_tests --force                    # scaffolds noodle.yaml, .env, MCP config, agent skills, agent shell policy
 cd sample_feature_tests
 noodle doctor               # health check: install + launcher provenance, and this workspace's scaffold/config
 cp web/busterblock/resources/busterblock_secrets.env.example \
@@ -455,7 +462,7 @@ cd ..                                                                    # up to
 Copy-Item -Recurse noodle\sample_feature_tests .\sample_feature_tests   # ⚠️ destination must NOT already
                                                                           # exist — Copy-Item nests the
                                                                           # folder inside it otherwise
-noodle init sample_feature_tests --force                # scaffolds noodle.yaml, .env, MCP config, agent skills
+noodle init sample_feature_tests --force                # scaffolds noodle.yaml, .env, MCP config, agent skills, agent shell policy
 cd sample_feature_tests
 noodle doctor               # health check: install + launcher provenance, and this workspace's scaffold/config
 Copy-Item web\busterblock\resources\busterblock_secrets.env.example web\busterblock\resources\busterblock_secrets.env
@@ -473,7 +480,7 @@ noodle rca-report --serve   # RCA report — pass or fail, every run
 No shell to paste — this is UI/YAML in Azure DevOps. Both pipeline files
 already ship in this repo; you're wiring them up, not writing them. Full
 detail, including running another team's tests repo through this pipeline:
-[Running in CI — Azure DevOps](docs/manual.md#running-in-ci--azure-devops) below.
+[Running in CI — Azure DevOps](docs/manual.md#running-in-ci--azure-devops) in the manual.
 
 1. Create a variable group named `noodle-secrets` holding your test
    credentials, and link it in the pipeline YAML — already referenced by
@@ -521,8 +528,8 @@ actually missing, rather than blindly redoing everything.
 runbook (macOS + Windows 11) with preflight checks, per-phase verification
 checkpoints, and a failure table: *"Follow docs/llm-install.md in this repo
 to install Noodle on this machine — installation only."* The prompts below
-predate it and drive the README's own Setup guide instead; both routes end
-at the same place.
+predate it and drive the Setup guide in [docs/manual.md](docs/manual.md#setup-guide)
+instead; both routes end at the same place.
 
 **Install only — get the tool + VS Code ready, don't run anything:**
 
@@ -543,11 +550,11 @@ at the same place.
 >
 > Then read README.md in this repo top to bottom. Detect which OS this
 > machine is running yourself (don't ask me) and follow Part 1 through
-> Part 3 of the Setup guide for it — prerequisites, get the framework
-> (use Option B, the permanent-PATH install, not Option A), and the VS
-> Code extension. Run each command yourself and check its actual output
-> against what the README says to expect; fix anything that doesn't match
-> instead of guessing.
+> Part 3 of the Setup guide in docs/manual.md for it — prerequisites, get
+> the framework (use Option B, the permanent-PATH install, not Option A),
+> and the VS Code extension. Run each command yourself and check its
+> actual output against what that guide says to expect; fix anything that
+> doesn't match instead of guessing.
 >
 > After installing the VS Code extension: fully quit VS Code and reopen it
 > (not "Developer: Reload Window" — a full quit, per Part 3). Open any
@@ -573,19 +580,20 @@ at the same place.
 **Full install + a real run, reports included:**
 
 > Read README.md in this repo top to bottom and set up Noodle Test
-> Framework by following Part 1 through Part 7 of the Setup guide exactly.
-> Detect which OS this machine is running yourself (don't ask me). Run
-> each command yourself, check its actual output against what the README
-> says to expect before moving to the next step, and fix anything that
-> doesn't match instead of guessing. Stop and show me both the Allure
-> report and the RCA report at the end.
+> Framework by following Part 1 through Part 7 of the Setup guide in
+> docs/manual.md exactly. Detect which OS this machine is running yourself
+> (don't ask me). Run each command yourself, check its actual output
+> against what that guide says to expect before moving to the next step,
+> and fix anything that doesn't match instead of guessing. Stop and show
+> me both the Allure report and the RCA report at the end.
 
 Works because every command here is already meant to be copy/pasted by a
 human — an agent just runs them and reads the output instead of you doing
-it. The commands live here in the README;
+it. The commands live in this README's Zero-to-hero blocks and the
+manual's [Setup guide](docs/manual.md#setup-guide);
 [docs/llm-install.md](docs/llm-install.md) only adds the agent-facing
 decision procedure (preflight, checkpoints, failure table) around them —
-when a command changes, this README is the source of truth to update.
+when a command changes, those two files are the source of truth to update.
 
 ## Connect an AI coding agent (for testers & PMs)
 
@@ -593,7 +601,7 @@ No code, no step vocabulary to learn: connect the AI agent you already use
 (Claude Code, GitHub Copilot, or Noodle's own built-in shell) and ask it in
 plain English to generate a test, run it, and hand you the report. This
 section is the fastest path for testers and PMs; the [Setup guide](docs/manual.md#setup-guide)
-below is the detailed manual version of the same install.
+in docs/manual.md is the detailed manual version of the same install.
 
 ### Install the noodle skill (Claude Code / Copilot CLI)
 
@@ -855,9 +863,9 @@ cd ~/projects/noodle/test-apps/busterblock && npm install && npm start
 # Windows 11 (PowerShell)
 noodle init $HOME\projects\my-tests
 Copy-Item -Recurse $HOME\projects\noodle\sample_feature_tests\web\busterblock `
-    $HOME\projects\my-tests\tests\web\busterblock
-Copy-Item $HOME\projects\my-tests\tests\web\busterblock\resources\busterblock_secrets.env.example `
-    $HOME\projects\my-tests\tests\web\busterblock\resources\busterblock_secrets.env
+    $HOME\projects\my-tests\noodle_tests\web\busterblock
+Copy-Item $HOME\projects\my-tests\noodle_tests\web\busterblock\resources\busterblock_secrets.env.example `
+    $HOME\projects\my-tests\noodle_tests\web\busterblock\resources\busterblock_secrets.env
 cd $HOME\projects\noodle\test-apps\busterblock; npm install; npm start
 ```
 

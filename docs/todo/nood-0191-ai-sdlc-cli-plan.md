@@ -48,6 +48,17 @@ without copy-pasting 400 lines of hard-won Allure wiring.
 
 - **CLI ⟷ MCP parity is effectively complete.** Every MCP tool has a CLI twin:
 
+  > **Superseded by NOOD_0241.** "Effectively complete" was not complete: a
+  > shell-leak audit found `author_test`'s `app_name`/`base_url` and
+  > `run_and_report`'s run-leg arguments had no CLI twins, and an agent
+  > guessing them off the documented tool surface ate an exit-2 cascade.
+  > Those flags now exist (`--app-name`/`--app`, `--base-url`,
+  > `--headless`, `--retries`, `--serve-reports`), and parity is no longer a
+  > claim to take on faith — `noodle capabilities --json` emits the
+  > argument-by-argument manifest from the live signatures, with a CI test
+  > that fails when the two surfaces drift. Treat the table below as
+  > historical.
+
   | MCP tool | CLI |
   |---|---|
   | `author_test` | `noodle author --spec/--prompt --json [--run]` |

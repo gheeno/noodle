@@ -199,6 +199,20 @@ Ceiling accounting (moved verbatim from the retired test asserts):
   agent that never reads the clause still gets rescued by the default and
   still reads the tag off the payload, so the surface only has to name the
   parameter.
+- NOOD_0241: agents-md 6144 → 6656 (+512; 5829 B used at the bump, 315 → 827
+  headroom, floor 512 restored), claude-skill-card 8704 → 9216 (+512; 8860 B
+  used), copilot-skill-card 8960 → 9472 (+512; 9046 B used), copilot-digest
+  7424 → 7936 (+512; edited in the same change). One cause, four surfaces:
+  the shell-leak audit showed the "no jq/grep/sed/head" EXECUTABLE
+  ENUMERATION reads as a closed list — the audited agent treated tee, cd
+  and 2>&1 as unlisted-therefore-allowed — so every surface now carries the
+  SHAPE rule instead (one noodle invocation per line, any metacharacter or
+  other executable forbidden regardless), plus the two pointers that remove
+  the improvisation motive: `noodle capabilities --json` (sanctioned flag
+  discovery, replacing banned --help) and `payload_complete: true` (the
+  payload's own proof that paging/piping buys nothing). That is rule text in
+  the §7 sense — it changes what the agent DOES on the very first
+  turn — not rationale, which stays in docs/agent-playbook.md.
 """
 from __future__ import annotations
 
@@ -208,12 +222,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 CEILINGS: dict[str, int] = {
-    "agents-md (cli._AGENTS_MD)": 6144,
+    "agents-md (cli._AGENTS_MD)": 6656,
     "prompt-template (cli._PROMPT_TEMPLATE)": 1024,
     "mcp-instructions (server._INSTRUCTIONS)": 2688,
-    "claude-skill-card (.claude/skills/noodle/SKILL.md)": 8704,
-    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 8960,
-    "copilot-digest (.github/copilot-instructions.md)": 7424,
+    "claude-skill-card (.claude/skills/noodle/SKILL.md)": 9216,
+    "copilot-skill-card (.copilot/skills/noodle/SKILL.md)": 9472,
+    "copilot-digest (.github/copilot-instructions.md)": 7936,
     "hot-tool-docstrings (probe/author/run_and_report/run)": 6656,
     "cli-help (noodle probe --help)": 6656,
     "cli-help (noodle run --help)": 5504,

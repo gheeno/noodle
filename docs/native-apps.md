@@ -90,7 +90,7 @@ exposes.
 
 ```bash
 noodle probe-app windows            # android | ios | windows | mac
-noodle probe-app android --json     # raw payload for an agent
+noodle probe-app android --json     # compact author-evidence payload (--full for every node)
 ```
 
 One Appium session (same env contract as tagged runs — `NOODLE_<PLATFORM>_APP`,

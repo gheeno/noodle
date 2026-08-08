@@ -193,7 +193,7 @@ MCP tool call stamps its own, so "agent called `run_and_report`" ties to
 
 | `event` | Emitted at | Key attributes |
 |---|---|---|
-| `run.start` / `run.end` | the CLI, once per run | target, tags, browser, headless, parallel / duration_ms, passed, failed, verified, exit_code, llm_usd, model, engine_version, git_sha |
+| `run.start` / `run.end` | the CLI, once per run | target, tags, browser, headless, parallel / duration_ms, passed, failed, verified, exit_code, llm_usd, model, llm_mode, engine_version, git_sha |
 | `feature.start` | behave hooks | file |
 | `scenario.start` / `scenario.end` | behave hooks | tags / status, duration_ms |
 | `step.end` | behave hooks, **DEBUG only** | step, status, duration_ms |

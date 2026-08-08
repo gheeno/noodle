@@ -368,19 +368,19 @@ interactive agent to consume MCP config in CI.
 
 | Tool | Parameters | Returns | Use it for |
 |---|---|---|---|
-| `generate_test` | `url`, `description`, `use_llm?`, `overwrite?`, `workspace?` | `ok`, `feature`, `pom`, `runnable`, `output` | "create a test for X" — templates + quoted-value slot filling; `runnable=false` means `<placeholders>` remain |
+| `generate_test` | `url`, `description`, `use_llm?`, `overwrite?`, `append_to?` (a feature STEM — `"cart"` adds this scenario to that file), `workspace?` | `ok`, `feature`, `pom`, `runnable`, `output` | "create a test for X" — templates + quoted-value slot filling; `runnable=false` means `<placeholders>` remain |
 | `run_test` | `target?`, `tag?`, `workspace?`, `headless?`, `browser?`, `retries?`, `parallel?`, `parallel_scheme?` | run result (below) | "run the test" / "run login" / "run the smoke tag". Omit `target` → last created/run feature, else newest `.feature`; `workspace` may point at one app package (`<ws>/noodle_tests/app1`) — with no `target` that whole app runs, its output landing in the app's own `report/` (NOOD_0086). `headless` overrides the workspace's `.env` default for this run only — pass `true` whenever *you* are the one running it (NOOD_0059), not only when the host lacks a display: a fresh workspace's `.env` defaults to headed for a human watching locally. `browser` (chromium\|firefox\|webkit\|safari\|edge), `retries` (extra re-runs per failed scenario — pass `0` while developing; the default (1) doubles wall-clock time on every failed fix→rerun cycle) and `parallel` (N feature files at once, web only, use `headless`; `parallel_scheme` `feature`/`scenario`) mirror the CLI flags, defaulting to workspace config (NOOD_0084) |
 | `get_last_result` | `workspace?` | `passed`, `failed`, `failures[]` (feature, scenario, step, message), `seconds` | "what was the last run result" |
 | `run_and_report` | `target?`, `tag?`, `workspace?`, `headless?`, `browser?`, `retries?`, `parallel?`, `parallel_scheme?`, `serve_reports?` | run result + `report` (index.html path) + `rca_html`/`rca_md` paths + `rca_compact` on red (+ `served.urls` when `serve_reports=true`) | "run the test and generate the result" in one call; run params as in `run_test`. NOOD_0128 — preflights secrets first (returns `missing_secret_keys` with NO browser launch if a `{env:KEY}` is missing/placeholder), folds the compact RCA in on red, and optionally serves the reports — so no separate `preflight`/`get_rca`/`serve_report` call is needed on the normal path |
 | `preflight` | `target?`, `workspace?` | `ok`, `missing_secret_keys[]`, `errors[]`, `warnings[]` | NOOD_0128 — check a test is runnable BEFORE a browser: every `{env:KEY}` it references resolves to a real value (not missing/CHANGE_ME/empty), and no redundant post-navigation waits. Tells the user which secret keys to populate in the gitignored secrets.env |
-| `author_test` | `app_name`, `base_url`, `feature_path`, `feature_content`, `pom_content?`, `environment_values?`, `required_secret_keys?`, `secret_values?`, `overwrite?`, `workspace?` | `ok`, `app`, `feature`/`pom`/`environments`/`secrets` paths, `created_secret_keys[]`, `missing_secret_keys[]`, `unmatched[]`, `warnings[]`, `ready`, `blocking[]` | NOOD_0128 — create a whole test package in ONE transaction (app package + environments.yaml + POM + feature + missing secret placeholders), validated, with rollback on failure. Replaces copy-sample_app → rename → edit×4 → validate. NOOD_0130 — `secret_values` (prompt-supplied `{KEY: value}`) is written WRITE-ONLY into the gitignored `<app>_secrets.env` and never returned; any key still unset stays in `missing_secret_keys` and blocks `ready` |
+| `author_test` | `prompt?`, `goal?`, `app_name?`, `base_url?`, `feature_path?`, `feature_content?`, `pom_content?`, `environment_values?`, `required_secret_keys?`, `secret_values?`, `brief?`, `evidence_requests?`, `run_after_author?`, `run_scope?`, `auto_fix?`, `headless?`, `retries?`, `serve_reports?`, `overwrite?`, `allow_unverified_intent?`, `workspace?` | `ok`, `app`, `feature`/`pom`/`environments`/`secrets` paths, `created_secret_keys[]`, `missing_secret_keys[]`, `unmatched[]`, `warnings[]`, `ready`, `blocking[]` (+`{author, run}` with `run_after_author`) | NOOD_0128 — create a whole test package in ONE transaction (app package + environments.yaml + POM + feature + missing secret placeholders), validated, with rollback on failure. Replaces copy-sample_app → rename → edit×4 → validate. NOOD_0130 — `secret_values` (prompt-supplied `{KEY: value}`) is written WRITE-ONLY into the gitignored `<app>_secrets.env` and never returned; any key still unset stays in `missing_secret_keys` and blocks `ready`. NOOD_0241 — this list is the full live signature, and every argument has an exact CLI twin (flag or spec key): `noodle capabilities --json` is the machine-readable parity manifest, so a no-MCP estate loses nothing. `headless`/`retries`/`serve_reports` steer the `run_after_author` run leg (defaults: headless, 0, serve) |
 | `list_tests` | `workspace?`, `query?` | `{tests: [{path, feature, tags[], scenario_count}], note}` | "what tests do we have". NOOD_0162 — index first: scenario NAMES are the bulk of this payload, so they ship only for a `query` (substring over path / feature / scenario / tag), and matching features then carry `scenarios[]` |
 | `validate_feature` | `content`, `workspace?` | `error`, `steps[{step, matched}]`, `unmatched[]` | pre-flight Gherkin before writing it |
 | `write_feature` | `path`, `content`, `overwrite?`, `workspace?` | `ok`, `feature`, `unmatched[]` | store caller-authored Gherkin (validated; path locked under the tests dir) |
 | `search_step` | `query`, `workspace?` | `found`, `step`, `confidence`, `reason`, `candidates[{step, score}]` | "is there a step that clears the cart?" — `found` is true only on a high-confidence match (NOOD_0058); a low-confidence best guess still appears in `step`/`candidates` |
-| `probe_page` | `url` (space/comma-separate several) | `pages[{url, title, controls[{kind, name, selector, visible, needs_pom, step}], pom_yaml, headings[], next_pages[]}]`, `errors[]` | NOOD_0113 — proactive DOM probe BEFORE authoring against an unfamiliar/SPA page: every actionable control (hidden trigger zones included) with a ready selector, paste-ready POM YAML for the ones generic steps can't name, a vocabulary-shaped step each, exact heading texts for assertions, and same-origin next-page candidates. Opens a real headless browser (one for all URLs) but runs nothing |
+| `probe_page` | `url` (space/comma-separate several), `click?`, `do?`, `search?`, `suggest?`, `follow?`, `expect?`, `compact?`, `brief?`, `open_native_controls?`, `max_reveal_depth?`, `discover?`, `find?`, `workspace?`, `browser?` | `pages[{url, title, controls[{kind, name, selector, visible, needs_pom, step}], pom_yaml, headings[], next_pages[]}]`, `errors[]` | NOOD_0113 — proactive DOM probe BEFORE authoring against an unfamiliar/SPA page: every actionable control (hidden trigger zones included) with a ready selector, paste-ready POM YAML for the ones generic steps can't name, a vocabulary-shaped step each, exact heading texts for assertions, and same-origin next-page candidates. Opens a real headless browser (one for all URLs) but runs nothing |
 | `inspect_locator` | `url`, `text` | `candidates[{source, count, matches[{tag, text, visible}]}]`, `resolved{tag, text, visible, healed[]}`, `error?` | NOOD_0115 — debug WHY a locator phrase does/doesn't resolve: runs `find()`'s exact resolution machinery headless and labels every candidate by source (visible text node / image alt / aria-label / title / POM key / DOM scan) plus what `find()` actually picks and any self-heal tier used. Call when a step times out on an element that's clearly on the page, or grabs the wrong one |
-| `get_rca` | `workspace?` | markdown | per-failure root cause after a red run |
+| `get_rca` | `workspace?`, `compact?` (default `true`) | markdown | per-failure root cause after a red run. `compact=true` is the cheap-evidence-first read — verdict + failing step + suggested fix, a few lines; `false` returns the full markdown |
 | `serve_report` | `workspace?`, `report_dir?`, `port?` (default 0 = free port) | `ok`, `host`, `port`, `pid`, `urls[]`, `reused?` | NOOD_0082 — host the last run's Allure report + rca.html on localhost, non-blocking; rebuilds missing reports from allure-results first. Hand the `urls` to the user. NOOD_0161: a detached child whose URLs survive this MCP server restarting, and a live server for the same root is reused (`reused: true`) so the URL doesn't change every run |
 | `stop_report_server` | `workspace?` | `stopped_ports[]`, `detached` | tear down every report server this workspace hosts, including the detached children that outlive this MCP process (NOOD_0161). Only once the user is done with the links — stopping it early is what makes them dead |
 | `list_reports` | `workspace?` | `live` (path, allure/rca present, generated_at), `archives[{stamp, path, size_mb}]` | NOOD_0082 — what can be (re-)hosted; extract an archive and pass its reports/ dir as `report_dir` to serve an older run |
@@ -388,7 +388,17 @@ interactive agent to consume MCP config in CI.
 | `cost_estimate` | `target`, `model?`, `workspace?` | `ok`, `target`, `model`, `input_tokens`, `usd_input_floor` | NOOD_0084 — pre-flight token/$ estimate for a prompt or `.feature` file before an LLM run (input-cost floor; output tokens unknowable pre-run). The last run's *actual* spend is `get_last_result`'s `llm_cost` |
 | `scan_repo` | `path?` | `stacks[]`, `frameworks[]`, `api_specs[]`, `endpoints[]`, `serve[]`, `test_dirs[]`, `woks[]`, `questions[]` | NOOD_0192 — for *"review this repo and write tests for the new features"*, which names no URL and no steps. A deterministic marker-file scan (no LLM, no execution, nothing written): what the repo is built with, how it says it serves itself, the OpenAPI endpoint list (the API test plan the developer already wrote), where tests live — and `questions`, what is still missing before authoring. Settle those, then `author_test` with the URL and numbered steps |
 | `server_info` | — | `noodle_version`, `started_at`, `pid`, `workspace` | "is this server running the code I think it is" — a `started_at` older than your last deploy means restart it (NOOD_0057) |
-| `read_docs` | `name?`, `query?` | no args: `docs[{name, summary}]`; `name`: `content`; `query`: `hits[{doc, line, text}]` | NOOD_0089 — token-lean framework lookup: list the docs, fetch one by name (`agent-playbook`), or grep a fact (`query="NOODLE_FIND_TIMEOUT"`) instead of guessing or stuffing docs into your prompt. Needs a repo checkout / editable install (wheels don't ship docs/) |
+| `read_docs` | `name?`, `query?`, `section?` | no args: `docs[{name, summary}]`; `name`: `content`; `query`: `hits[{doc, line, text}]` | NOOD_0089 — token-lean framework lookup: list the docs, fetch one by name (`agent-playbook`), or grep a fact (`query="NOODLE_FIND_TIMEOUT"`) instead of guessing or stuffing docs into your prompt. Needs a repo checkout / editable install (wheels don't ship docs/) |
+| `list_workspace_resources` | `app?`, `workspace?` | packages, features + tags, environment KEY NAMES (never values), POM files with URL scope + pinned phrases, whether a secrets file exists, where reports land | NOOD_0228 — what this workspace contains, so nothing has to be listed with a shell |
+| `resolve_locator` | `ambiguity_id`, `candidate_id`, `app?`, `workspace?` | `ok`, the written POM file | NOOD_0228 — pin the element you meant for an ambiguity the run recorded. The warning prints a stable `A`-id and one `C`-id per candidate; this call supplies only the choice |
+| `set_pom_entry` | `phrase`, one of `css`/`xpath`/`testid`, `app?`, `page?`, `workspace?` | `ok`, the written POM file | NOOD_0228 — pin a plain-English control name to an explicit selector. The escape hatch for a phrase no probe settles; `page` writes a per-page file |
+| `list_pom` | `app?`, `workspace?` | pins per file WITH each file's URL scope, plus the last run's ambiguities and their candidate ids | NOOD_0228 — what is pinned, and what `resolve_locator` could settle |
+| `remove_feature` | `path`, `workspace?` | `ok`, what was removed | NOOD_0230 — remove a superseded authored feature: the `.feature`, its compiled POM sidecar, its accumulated Allure results and its intent contract, so a stale duplicate stops riding every future report |
+| `probe_app` | `platform` (`android`\|`ios`\|`windows`\|`mac`), `compact?` | nodes with lookup strategy, visibility, a suggested step each, POM entries for nameless nodes | NOOD_0136 — the `probe_page` of Appium: one session, snapshot the accessibility tree, tap nothing. `NOODLE_<PLATFORM>_APP` / `NOODLE_APPIUM_CAPS` / `NOODLE_APPIUM_URL` as in a tagged run |
+| `probe_api` | `base_url?`, `ports?`, `workspace?`, `suite?` | liveness, the OpenAPI document from the well-known routes, the REAL endpoint list | NOOD_0201 — the api wok's `probe_page`. With `base_url` it interrogates one server; without, it discovers the localhost app |
+| `plan_from_ticket` | `payload` (issue JSON as text), `base_url?`, `workspace?` | one authorable goal per acceptance criterion | NOOD_0201 — the AI-SDLC handoff where the only context is a JIRA ticket. Deterministic, no LLM |
+| `reset_intent` | `feature?`, `workspace?` | `ok`, cleared contracts | NOOD_0227 — clear recorded intent contract(s): a path/filename clears one, omitting it clears all. The recovery for a stale BLOCKED contract refusing auto-runs |
+| `log_diagnostic` | `app`, `triggers`, `summary`, `timeline?`, `suspected_cause?`, `fixes_tried?`, `duration_min?`, `attempts?`, `agent?`, `agent_cost?`, `session?`, `workspace?` | `ok`, the written diagnostic path | NOOD_0147 — session-end failure self-report, AT MOST ONCE per developed test and only when a trigger fired. See [session-diagnostics.md](session-diagnostics.md) |
 
 `run_test` / `run_and_report` return: `ok`, `exit_code`, `target`, the
 structured counts/failures (same shape as `get_last_result`), and the tail
@@ -420,11 +430,15 @@ Tool returns pass a shared **payload budget** — 8 KB serialized, the same one
 gets spilled to a temp file, and the agent then pays inferences to `jq` back
 what the tool already returned. Three sessions in a row died that way.
 
-A trimmed payload says so in `payload_note`: what was cut and how to get the
-rest (`query=` for `list_tests`, `compact=False` for the probes, the doc file
-itself for `read_docs`). Small keys — `ready`, `blocking`, `author_ready`,
-verdicts, paths, URLs — are never the largest value, so they always survive
-whole. Raise it for a host that inlines more with
+**Read `payload_complete` (NOOD_0241).** Every dict payload leaving the
+budget is stamped: `payload_complete: true` means read it as returned,
+nothing follows — there is nothing for a pipe or a pager to find. A trimmed
+payload says `payload_complete: false` plus `truncated: true`, and
+`payload_note` names what was cut and how to get the rest (`query=` for
+`list_tests`, `compact=False` for the probes, the doc file itself for
+`read_docs`). Small keys — `ready`, `blocking`, `author_ready`, verdicts,
+paths, URLs — are never the largest value, so they always survive whole.
+Raise the budget for a host that inlines more with
 `NOODLE_PAYLOAD_BUDGET_BYTES=16000`.
 
 ## 5. The authoring loops
@@ -629,7 +643,7 @@ flowchart LR
         G{{"API-key gate<br/>Bearer / x-api-key<br/>else 401"}}
         G --> M["/mcp<br/>MCP transport"]
         G --> R["/api/*<br/>rest.py dispatcher"]
-        M --> REG["the one tool registry — 23 tools<br/>payload budget + audit event"]
+        M --> REG["the one tool registry — 31 tools<br/>payload budget + audit event"]
         R --> REG
         REG --> CORE["noodle.repl.core"]
     end
@@ -703,6 +717,12 @@ per operation (author, update, run serial/parallel, reports):
   upgrade path.
 - **`write_feature` is path-locked** to the workspace's tests dir and
   `.feature` files only; content must parse as Gherkin before it lands.
+- **Every MCP caller is agent-driven by definition.** The server sets
+  `NOODLE_AGENT_MODE=1` before the workspace `.env` loads (NOOD_0228), which
+  turns workspace-strict containment on — a run refuses to trample files the
+  engine did not author — and makes CLI usage errors render as JSON. A
+  `workspace_strict: false` in `noodle.yaml` still wins, so a workspace can
+  opt out deliberately.
 - The engine executes wherever `noodle-mcp` runs — treat the host like a CI
   runner: its network reach is what tests (and a compromised caller) can
   touch. Scope the workspace's `{env:...}` secrets accordingly.

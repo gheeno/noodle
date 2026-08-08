@@ -241,10 +241,16 @@ def _spec_of(feature_path: str | None, specs: list) -> str | None:
 
 
 def record(workspace, *, feature_path, started: float, seconds: float,
-           result: dict) -> None:
+           result: dict, door: str | None = None) -> None:
     """Append one attempt to the ledger. Never raises — a benchmark ledger is
     an observation, and failing an author call because the observation could
-    not be written would corrupt the very thing being measured."""
+    not be written would corrupt the very thing being measured.
+
+    NOOD_0241 — `door` records which surface carried the attempt (cli | mcp
+    | direct). The runbook and docs/benchmark.md have claimed the ledger
+    records this since the two-door instructions landed; until now nothing
+    wrote it, so a session run "via MCP" and one "via CLI" produced
+    indistinguishable ledgers."""
     try:
         sess = active(workspace)
         if not sess:
@@ -268,6 +274,7 @@ def record(workspace, *, feature_path, started: float, seconds: float,
                 "passed": run.get("passed") or 0, "failed": run.get("failed") or 0,
                 "verified": run.get("verified") is True,
                 "engine_repairs": repairs,
+                "door": door or "direct",
                 "tokens": _tokens(result, str(workspace)),
                 "blocked_by": (result.get("error")
                                or next(iter(author.get("blocking") or []), None)),
@@ -756,7 +763,7 @@ def _report(workspace: str, expected_features: int) -> dict:
     """ONE Allure report over every spec that ran, built and hosted.
 
     No re-authoring and no second run: `allure-results/` accumulates
-    (NOOD_0229 — a run replaces only what it re-ran), so the five per-spec
+    (NOOD_0229 — a run replaces only what it re-ran), so the per-spec
     runs above have already deposited five results in one directory. The
     report is therefore of exactly the runs that were measured, which a
     re-authoring second phase could not promise.
@@ -925,7 +932,7 @@ def score(results: dict) -> dict:
     report = results.get("report") or {}
     if not report.get("ok"):
         regressions.append(
-            "report: the one Allure report over all five specs was not built "
+            "report: the one Allure report over all the specs was not built "
             "and hosted" + (f" — {report['error']}" if report.get("error") else ""))
     elif (got := report.get("features")) is not None \
             and got < (want := report.get("expected_features") or 0):

@@ -17,7 +17,7 @@ which one you mean removes most ambiguity about where a change lands.
 |---|---|---|
 | **noodle engine** | The framework itself — this repo (`noodle/` package: resolver, agents, hooks, reporting, CLI) or the installed `noodle` distribution. A tool you install, like `git`. | Change framework code in this repo: feature branch, `NOOD_XXXX` ticket, unit tests, docs. |
 | **noodle workspace** | The self-contained test project scaffolded by `noodle init <path>` (refresh templates with `noodle init --force`): `noodle.yaml`, `.env`, `AGENTS.md`, `noodle_tests/`, and every report a run produces. Owned by the tester, lives outside the engine repo. | Change tests, config, POM, secrets, or fixtures in that folder — never engine code. Full guide: [workspace-guide.md](workspace-guide.md). |
-| **noodle wok** | A capability work area — **web, mobile, desktop, performance**: a slice through the engine (agents + pattern tables + extras) with its own samples and per-wok unit tests. | Extend that capability in the engine (its agent/patterns/tests), e.g. "update our noodle wok mobile". Full concept: [woks.md](woks.md). |
+| **noodle wok** | A capability work area — **web, api, mobile, desktop, performance**: a slice through the engine (agents + pattern tables + extras) with its own samples and per-wok unit tests. | Extend that capability in the engine (its agent/patterns/tests), e.g. "update our noodle wok mobile". Full concept: [woks.md](woks.md). |
 
 The three compose: the **engine** runs a **workspace**'s tests, each
 scenario cooking in one (or, composed, several) **woks**.
@@ -52,6 +52,7 @@ different tests.
 | Element aliases when labels fail | `pom.yaml` | In the app's `resources/` folder (sibling of its `features/` folder). |
 | Precondition / teardown HTTP calls | `preconditions.yaml` | In the app's `resources/` folder (sibling of its `features/` folder). |
 | Azure Key Vault connection | `.env` (`NOODLE_KEYVAULT_URL`) + `secrets.env` | Requires `.[azure]` extra. |
+| Agent shell policy (one noodle invocation per line) | `.claude/settings.json`, `.vscode/settings.json`, `.copilot/agent-policy.json` | Merge-only, written by `noodle init` (`--no-agent-policy` opts out); verify with `noodle doctor --policy` (NOOD_0241). |
 
 ---
 
@@ -61,11 +62,14 @@ different tests.
 
 | Variable | Default | What it does |
 |----------|---------|-------------|
-| `NOODLE_BROWSER` | `chromium` | `chromium` \| `firefox` \| `webkit` |
-| `NOODLE_HEADLESS` | `false` | `true` for CI |
+| `NOODLE_BROWSER` | `chromium` | `chromium` \| `firefox` \| `webkit` \| `safari` \| `edge` (`safari` = WebKit alias; `edge` needs MS Edge installed — NOOD_0179) |
+| `NOODLE_HEADLESS` | `false` | Bare-`behave` fallback only — `noodle run` follows `noodle.yaml` (`headless: true` in a fresh workspace); `true` for CI |
+| `NOODLE_WORKSPACE` | *(unset)* | Default workspace when `-w` is omitted: explicit `-w` wins; else this env; else the nearest-ancestor `noodle.yaml` walk-up from the cwd (NOOD_0241) |
+| `NOODLE_AGENT_MODE` | *(unset)* | Set by the MCP server and agent hosts — CLI usage errors render as one JSON correction payload instead of Rich text (NOOD_0241) |
+| `NOODLE_PAYLOAD_BUDGET_BYTES` | `8000` | Widens the one payload byte-bound at the MCP/CLI boundary for a session (NOOD_0164) |
 | `NOODLE_STRICT_LOCATOR` | `false` | `true` = ambiguous locators fail (recommended in CI) |
 | `NOODLE_RETRIES` | `1` | Re-run a failed scenario N extra times |
-| `NOODLE_IGNORE_HTTPS_ERRORS` | `true` | TLS + self-signed/invalid cert errors ignored in all browsers; `false` (or `@secure_certs` tag) to surface them |
+| `NOODLE_IGNORE_HTTPS_ERRORS` | `false` | Certs are **verified by default** (`noodle/hooks.py`); `true` (or the `@insecure_certs` tag, per scenario) relaxes validation with a logged warning — never against production credentials. `@secure_certs` always wins and forces verification |
 | `NOODLE_DEV_FIX_ATTEMPTS` | `10` | Agent test-dev loop: max auto-fix + rerun attempts on mechanical failures before it stops and reports the test as flaky |
 | `NOODLE_PARALLEL_PROCESSES` | *(unset)* | Number of parallel workers (requires `.[parallel]` extra) |
 | `NOODLE_SCRIPT_TIMEOUT` | `60` | Timeout in seconds for `run the script` steps |
@@ -103,7 +107,7 @@ Variable resolution order (highest wins): **Key Vault → shell/CI → root `.en
 | What you're looking for | Where |
 |------------------------|-------|
 | Feature files (bundled sample tests) | `sample_feature_tests/` (user workspaces: `<tests_dir>`, default `noodle_tests/`) |
-| Woks (capability work areas: web/mobile/desktop/performance) | registry `noodle/wok.py` · concept doc `docs/woks.md` · CLI `noodle wok` · per-wok unit tests `unit_tests/woks/<wok>/` |
+| Woks (capability work areas: web/api/mobile/desktop/performance) | registry `noodle/wok.py` · concept doc `docs/woks.md` · CLI `noodle wok` · per-wok unit tests `unit_tests/woks/<wok>/` |
 | BusterBlock test suite | `sample_feature_tests/web/busterblock/features/` |
 | SauceDemo tests | `sample_feature_tests/web/saucedemo/features/` |
 | API tests | `sample_feature_tests/api/features/` |
@@ -140,9 +144,10 @@ it for `artifacts/`:
 | Playwright traces | `artifacts/traces/` | `playwright show-trace artifacts/traces/<name>.zip` |
 | Healing telemetry | `artifacts/reports/healing-report.jsonl` | JSON Lines, one entry per healed locator |
 | Healing report | `artifacts/reports/healing-report.txt` | Plain text with `pom.yaml` suggestions |
-| RCA report | `artifacts/reports/rca.md` | Auto-written when a run has failures AND isn't `--parallel`; run `noodle rca-report` explicitly for stdout/`--out`/`--llm`, or `--serve` for the styled HTML view (never auto-written) |
+| RCA report | `artifacts/reports/rca.md` + `artifacts/reports/rca.html` | Written on **every** run, pass or fail (a green run renders a "no failures" page), parallel included; `noodle rca-report` is for stdout/`--out`/`--llm` |
 | Network/console capture | `artifacts/network/<scenario>.json` | Failed scenarios only — console errors, failed requests, websocket frames |
 | Run log (sys log) | `artifacts/logs/noodle.log` | Everything the console got, mirrored to a file |
+| Shell-composition sightings | `.noodle/invocation_log.jsonl` | Appended by the engine when a shell composed a noodle call (NOOD_0241); `.noodle/` is run-local engine state, gitignored |
 
 `noodle artifacts` lists all of the above with file counts/size; `noodle clean`
 deletes the whole tree; `noodle archive` zips it to `archives/artifacts_<timestamp>.zip`.
@@ -159,11 +164,19 @@ deletes the whole tree; `noodle archive` zips it to `archives/artifacts_<timesta
 | `docs/steps_dictionary.md` | All built-in step patterns with phrasings and examples |
 | `docs/architecture.md` | Deep dive: components, resolution hierarchy, the LLM layer |
 | `docs/woks.md` | The wok concept — the five capability work areas (web/api/mobile/desktop/performance), routing tags, cross-wok composition, per-wok unit tests |
-| `docs/design-history.md` | Rationale behind each capability, condensed from the build phases |
+| `docs/design-history.md` | Rationale behind each capability plus completed plans and point-in-time reviews, condensed as dated Phase entries (e.g. LLM-mode hardening NOOD_0038, the AI-agent decision NOOD_0056, the readiness audit NOOD_0058) |
 | `docs/agent-playbook.md` | **The** canonical AI-agent guide — workspace routing, Gherkin/tag vocabulary, steps-dictionary/POM resolution pipeline, mandatory RCA+Allure reporting, edge cases. `.github/copilot-instructions.md` and `CLAUDE.md` both point here |
 | `.github/copilot-instructions.md` | Copilot-native digest of the playbook above (Copilot auto-loads this path) |
 | `docs/llm-setup.md` | Picking/configuring an LLM provider, cloud cost comparison, and reaching one through a locked-down work GitHub/Copilot/Azure account (GitHub Models is retired 2026-07-30 — Azure AI Foundry is the current path) |
-| `docs/design-history.md` | Completed plans and point-in-time reviews, condensed as dated Phase entries (e.g. LLM-mode hardening NOOD_0038, the AI-agent decision NOOD_0056, the readiness audit NOOD_0058) |
+| `docs/manual.md` | The complete human manual: full setup (Windows + macOS), writing and running tests, RCA, `noodle repl`, quick reference, and troubleshooting (stale installs) |
+| `docs/cli-reference.md` | Every `noodle` subcommand and flag, what it's for, and when to reach for it |
+| `docs/workspace-guide.md` | Manual tester's walkthrough of a self-contained workspace: scaffolding, POM mapping, custom scripts, naming rules, reports |
+| `docs/logging.md` | Logging & observability: sinks, the JSON/OTel record shape, the event reference, secret redaction |
+| `docs/session-diagnostics.md` | Agent session self-reports — failure triggers, `noodle diagnostic log`/`bundle` (NOOD_0147) |
+| `docs/benchmark.md` | The two benchmark modes — `--gate` (headless pre-PR floor) vs `--session` (agent-driven spec shapes) — and every flag |
+| `docs/engine-api-guide.md` | Driving Noodle over plain HTTP (`/api/*` on `noodle-mcp`) from Java/curl — the engine API, not the api wok |
+| `docs/ci-project-repo.md` | Running Noodle tests from an application repo's own Azure DevOps pipeline, gating its PRs |
+| `docs/ci-workspace-pipeline.md` | Editing the scaffolded workspace pipeline (`azure-pipelines/azure-pipelines.yml`) |
 | `docs/mcp-guide.md` | `noodle-mcp` setup, local quickstart, tool reference, design rationale, and MAF / Azure AI Foundry wiring |
 | `docs/ai-sdlc-integration.md` | Azure DevOps setup, wiring a LangChain/MAF agent via `noodle-mcp`, and a worked multi-agent Squad-pattern example |
 | `docs/external-site-walkthrough.md` | Worked example: a real suite built against a live external site |

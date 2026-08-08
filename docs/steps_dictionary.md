@@ -93,6 +93,14 @@ Given the login page with the url value of '{env:BASE_URL}/login'
 Given User is on the checkout page whose url is '{env:BASE_URL}/checkout'
 ```
 
+**Naming the current page (no navigation).** A *quoted page name* with no URL
+sets the POM page scope for the steps that follow — it does not navigate:
+```gherkin
+Given User is on the "checkout" page
+```
+Use it when a POM file is scoped per page and the flow arrived there by
+clicking. Anything carrying a URL navigates, as above.
+
 In the page-with-url forms the page name is descriptive only — the quoted
 url is what gets navigated to. A scheme-less `www.…` url gets `https://`
 prepended automatically (NOOD_0062).
@@ -205,6 +213,19 @@ By screen position (pixel/OCR bridge — canvas & terminal UIs, no DOM):
 ```gherkin
 When User clicks at (120, 340)
 When User clicks on the screen text 'Start'
+```
+
+### Screen / terminal text (pixel-OCR bridge)
+
+The assertion half of the same bridge — for canvas apps, emulators and
+terminal UIs where the text is painted pixels, not DOM nodes. OCR reads what
+is on screen; `the terminal buffer` reads the emulator's own character
+buffer instead, which is exact and needs no OCR:
+```gherkin
+Then the screen shows 'Start'
+Then the screen should not show 'Start'
+When User waits until the terminal displays 'Ready'
+Then the terminal buffer contains 'Ready'
 ```
 
 ---
@@ -1601,6 +1622,17 @@ Given User loads test data from 'fixtures/user.yaml'
 ```
 
 Each top-level key becomes a `{env:KEY}` variable (uppercased, spaces → underscores).
+
+**Request payloads** (`@api` bodies, and any fixture a later step sends):
+```gherkin
+Given User uses this payload 'payloads/order.json'
+Given User uses these payloads:
+  | payload |
+  | payloads/order.json |
+  | payloads/refund.json |
+```
+The table form takes one file per row under a `| payload |` heading (matched
+case-insensitively).
 
 ---
 

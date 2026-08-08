@@ -2,19 +2,39 @@
 <!-- Branch: NOOD_0057 -->
 
 Every `noodle` subcommand and flag, what it's for, and when to reach for it.
-For a one-line command list see README.md § All commands; for narrative
-walkthroughs see `docs/agent-playbook.md` and
-`docs/workspace-guide.md`. Run `noodle <command> --help` any time for the
-live version of this — that's the source of truth if this drifts.
+For a one-line command list see `docs/manual.md` § All commands; for
+narrative walkthroughs see `docs/agent-playbook.md` and
+`docs/workspace-guide.md`. The machine-readable source of truth is
+`noodle capabilities --json` (NOOD_0241) — the parity manifest mapping every
+operation's tool argument ↔ CLI flag ↔ spec key, built from the live
+signatures. A human at a terminal may still run `noodle <command> --help`;
+an agent workspace's generated shell policy denies `--help` discovery, and
+`capabilities` answers the same question bounded and pipe-free.
 
 Flags shared by nearly every command:
 
-- **`--workspace` / `-w`** *(default: `.`)* — the directory holding this
-  project's `noodle.yaml`, `noodle_tests/`, `.env`. Everything else (`.env`,
-  run output, reports) resolves relative to it. Use it to run commands
-  against a workspace you're not `cd`'d into. It may also point at a single
-  app package (`-w <ws>/noodle_tests/app1`, or just `cd` there) — commands
-  then scope to that app and its `report/` tree (NOOD_0086).
+- **`--workspace` / `-w`** *(default: `$NOODLE_WORKSPACE`, else the nearest
+  ancestor directory holding `noodle.yaml`, else `.` — NOOD_0241)* — the
+  directory holding this project's `noodle.yaml`, `noodle_tests/`, `.env`.
+  Everything else (`.env`, run output, reports) resolves relative to it.
+  You never need to `cd` into a workspace: pass `-w`, or set
+  `NOODLE_WORKSPACE` for the session. It may also point at a single app
+  package (`-w <ws>/noodle_tests/app1`) — commands then scope to that app
+  and its `report/` tree (NOOD_0086).
+
+Machine-facing behaviour shared by every command (NOOD_0241):
+
+- **JSON usage errors** — with `--json` anywhere on the line, or
+  `NOODLE_AGENT_MODE=1`, a usage error returns one bounded JSON envelope on
+  stdout (`error: unknown_option`, every unknown flag, `did_you_mean`,
+  `valid_options`, `spec_keys` where the command takes a spec), exit code
+  preserved, no `--help` suggestion. Human TTY rendering is unchanged.
+- **`payload_complete: true`** — every bounded JSON payload says it is
+  whole; a trimmed one says `payload_complete: false, truncated: true` and
+  names `NOODLE_PAYLOAD_BUDGET_BYTES` as the session-scoped widener.
+- **Command shape** — a shell line is one noodle invocation and its flags;
+  the workspace policy `noodle init` generates enforces that mechanically
+  (see `noodle doctor --policy` below and agent-playbook § 7.7).
 
 ---
 
@@ -53,14 +73,13 @@ and over MCP by passing the app dir as `workspace`.
 | `--tag`, `-t` | none | Filter by tag, e.g. `smoke` | Running a subset instead of the whole suite. |
 | `--browser`, `-b` | workspace config | `chromium \| firefox \| webkit \| safari \| edge` | One-off cross-browser check without editing `noodle.yaml`. |
 | `--retries` | `1` | Re-run a failed scenario N extra times | Flaky suite; `0` disables retries entirely. |
-| `--log-level` | none | `DEBUG \| INFO \| WARNING \| ERROR` | Diagnosing a step/engine issue. |
 | `--name`, `-n` | none | Only scenarios whose name contains this text | Iterating on one scenario in a large file without splitting it out. Combines with `--tag`. |
 | `--failed` | off | Re-run only the scenarios that failed (or errored) in the last run | NOOD_0183: the dev-loop lap that matters on a 1000-scenario suite — read from the last run's Allure results, so it works after a parallel run too. Exits 0 with a message when nothing failed. |
 | `--parallel` | `0` (off) | Run N feature files at once via behavex; `-1` = one worker per CPU core | Large web suites in `--headless` mode; needs `pip install -e ".[parallel]"`. Falls back to `$NOODLE_PARALLEL_PROCESSES` if unset. See [manual.md § Running a suite in parallel without collisions](manual.md#running-a-suite-in-parallel-without-collisions). |
 | `--sequential` | off | Force one process, overriding `$NOODLE_PARALLEL_PROCESSES` and any `--parallel` | NOOD_0183: debugging a workspace that turns parallelism on in `.env`, without editing config. |
 | `--parallel-scheme` | `feature` | With `--parallel`: shard by `feature` or `scenario` | Leave on `feature` — it keeps every scenario in one file sequential and in order on one worker, which is what makes a file that shares a login safe. `scenario` splits a single file across workers and warns that it does; only use it when every scenario in every file is genuinely independent. |
 | `--quiet`, `-q` | off | Suppress the live behave console stream — full output still goes to `<artifacts>/run.log`, stdout gets just the run summary | Agent/CI-driven runs (NOOD_0116): the live stream is the single largest blob an agent's context holds resident per tool call across a multi-step fix loop. NOOD_0187: works with `--parallel` too (behavex's stream diverts to the same `run.log`). NOOD_0117: automatic when stdout isn't a TTY (agent/CI); `NOODLE_QUIET=0` forces the stream back, `NOODLE_QUIET=1` forces quiet. NOOD_0202: quiet no longer means silent in CI — a build console gets a maven-style progress log on stderr (`NOODLE_LOG_PROGRESS`), while an agent's captured pipe stays clean. See [logging.md § The CI build log](logging.md#the-ci-build-log). |
-| `--log-level` | `INFO` | `DEBUG`\|`INFO`\|`WARNING`\|`ERROR` | NOOD_0202: in CI, `DEBUG` adds a line per step to the build log — the `mvn -X` tier, and the one that tells you *where* a wedged suite stopped. At `INFO` you get a line per feature and per scenario (name, result, elapsed). See [logging.md § The CI build log](logging.md#the-ci-build-log). |
+| `--log-level` | none (engine default `INFO`) | `DEBUG`\|`INFO`\|`WARNING`\|`ERROR` | NOOD_0202: in CI, `DEBUG` adds a line per step to the build log — the `mvn -X` tier, and the one that tells you *where* a wedged suite stopped. At `INFO` you get a line per feature and per scenario (name, result, elapsed). See [logging.md § The CI build log](logging.md#the-ci-build-log). |
 | `--preflight` / `--no-preflight` | **on** | Before launching a browser, check every `{env:KEY}` the target references resolves to a real value (not missing, empty, or `CHANGE_ME`) | NOOD_0128/0130: a missing credential aborts the run with exit 2 instead of failing 50s later at the login step — a doomed login run is the most expensive way to learn a secret is a placeholder. `--no-preflight` is the explicit escape hatch. |
 | `--serve/--no-serve` | **on** (auto-off in CI) | After the run, host the Allure + RCA reports on localhost and print the URLs (same as `noodle report serve`) | NOOD_0200: the reports are the deliverable of every run — the second test of a sequential authoring session must hand over a clickable URL without anyone remembering a flag. Auto-off when `CI`/`TF_BUILD` is set; `NOODLE_SERVE_REPORTS=0/1` overrides either way. The server is a detached child, so the URL outlives the run (NOOD_0161). |
 | `--json` | off | Emit one bounded JSON payload — pass/fail summary, failing step, report paths, compact RCA on red, served URLs — instead of the human summary | NOOD_0128: CLI parity with the `run_and_report` MCP tool. NOOD_0156: also carries `verified` / `unverified_reasons` / `warnings` / `healing_events` / `evidence` — success means `failed == 0` **and** `verified: true`, and the compact RCA rides along whenever `verified` is false. Implies `--quiet` (the live stream would corrupt the single object on stdout). NOOD_0187: works under `--parallel` too (it used to print nothing), and `report`/`rca_html` are `null` when the file doesn't exist. |
@@ -121,6 +140,67 @@ capped always-on instruction surface ([NOOD_0159 ledger](llm-performance.md))
 with ~98 bytes of headroom; a Typer flag row costs ~250, so the flag would have
 been paid for by deleting guidance agents read on every call. The env var gives
 the same one-off ergonomics from the shell for free.
+
+## noodle author
+
+Write a whole test package in one transaction — app package,
+`environments.yaml`, POM, feature, missing secret placeholders — validated,
+rolled back on failure (NOOD_0128). With `--run`, the atomic
+author+run+serve pipeline in a single call (NOOD_0137).
+
+```
+noodle author (--prompt <text|file|-> | --spec <doc|file|-> | --spec-text <doc> | --spec-line <line>...) [OPTIONS]
+```
+
+Exactly one input mode: `--prompt` (numbered plain-English steps, expanded
+deterministically to a goal) or one of the three spec spellings (a JSON/YAML
+document of spec keys — `noodle capabilities --operation author` lists
+them). `ready: true` already IS validation — no separate
+`validate`/`preflight` call adds anything.
+
+| Flag | Default | Purpose | When to use |
+|---|---|---|---|
+| `--prompt` | none | Numbered plain-English steps, inline or a file path / `-` for stdin | The normal door; a URL in the steps derives `app_name`/`base_url`/`feature_path`. |
+| `--spec` | none | JSON/YAML spec: inline document, file path, or `-` | Structured callers; multi-line inline → prefer `--spec-text`. |
+| `--spec-text` | none | The whole multi-line spec as ONE argument value | NOOD_0228: no file, no heredoc, no redirection. |
+| `--spec-line` | none | One spec line per flag, joined in order | Hosts that mangle embedded newlines. |
+| `--app-name`, `--app` | none | App package name — exact CLI twin of the tool arg / spec key `app_name` (NOOD_0241) | Mutually exclusive with a spec that also carries the key. |
+| `--base-url` | none | The app's base URL — twin of spec key `base_url` (NOOD_0241) | Same mutual-exclusion rule. |
+| `--feature-path` | derived | Name the `.feature` this authoring writes (NOOD_0236) | Callers that must name their output (the benchmark ledger keys on it). The flag wins over the spec key. |
+| `--run` | off | Atomic author+run: run once after a ready author, serve both reports, fail on 0 passed | The one-call pipeline. |
+| `--headless` / `--headed` | headless | With `--run`: the run leg's browser mode (NOOD_0241) | Same name as on `noodle run`/`run_and_report`. Requires `--run`. |
+| `--retries` | `0` | With `--run`: run-leg retries (NOOD_0241) | Requires `--run`. |
+| `--serve-reports` / `--no-serve-reports` | on | With `--run`: serve the reports after the run leg (NOOD_0241) | Requires `--run`. |
+| `--overwrite` | off | Replace an existing `.feature` at the target path | Re-authoring after a blocked attempt (fix-in-place leaves files behind). |
+| `--brief` | none | The user's verbatim ask; evidence requests compile to `@evidence:` tags | Works WITH `feature_content`, unlike a goal (NOOD_0228). |
+| `--evidence-step` / `--evidence-skip` | none | Explicit 1-based evidence screenshot positions (repeatable) | When you already know which step the picture proves. |
+| `--run-scope` | `feature` | With `--run`: `feature` runs what was authored; `app` runs its whole package | NOOD_0229: every feature in the served report verified by THIS run. |
+| `--auto-fix` | `0` | With `--run`: up to N engine-only self-heal laps on a red run | See `noodle ship` below for the lap rules (NOOD_0223). |
+| `--vocabulary` [`--section`] | off | Print the goal schema / prompt grammar as JSON and exit | The schema on demand; `--section checks\|actions\|goal\|probe\|dismissals\|prompt` for one slice. |
+| `--reset-intent` | none | Clear a recorded intent contract (path, filename, or `all`), then exit | Recovery for a stale BLOCKED contract (NOOD_0227). |
+| `--workspace`, `-w` | resolved | Workspace dir | See the shared-flags note at the top. |
+| `--json` | off | One bounded structured payload | Agents/CI; usage errors honour it too (NOOD_0241). |
+
+A flag and its identically-named spec key are mutually exclusive — two
+spellings of one value silently disagreeing is exactly the drift the
+`capabilities` manifest exists to prevent (`--feature-path` keeps its older
+flag-wins contract, documented on the flag).
+
+## noodle capabilities
+
+The parity manifest — the sanctioned discovery call (NOOD_0241).
+
+```
+noodle capabilities [--operation author|run|probe]
+```
+
+One bounded JSON payload mapping every pipeline operation's tool argument ↔
+CLI flag ↔ spec key, built from the live command and core signatures at
+call time, so it cannot drift from the real surface. When a flag name is
+unknown, this is the answer — never `--help` (banned in agent workspaces,
+prose output), never a pipe. In a no-MCP estate it is also the proof that
+the CLI reaches every documented tool capability. `--operation` returns one
+operation's slice.
 
 ## noodle ship
 
@@ -196,6 +276,7 @@ noodle init [PATH] [OPTIONS]
 | `--llm` | none | `claude \| gemini \| ollama` — persist `NOODLE_MODEL` into `.env` | You want `noodle repl` to have LLM features on every future run without passing `--llm` again. No-op (with a printed note) if `.env` already exists. |
 | `--model` | preset default | Override the model string used with `--llm` | Non-default model, e.g. `--llm claude --model anthropic/claude-haiku-4-5`. |
 | `--force` | off | Refresh outdated template files, backing originals up to `*.bak` | Upgrading an existing workspace after a noodle upgrade (see below). |
+| `--agent-policy` / `--no-agent-policy` | **on** | Write/merge the host tool-permission policy files that enforce "one noodle invocation per shell line" mechanically (NOOD_0241) | On by default so a workspace is born contained; `--no-agent-policy` opts out. Merge-only — your existing entries survive. |
 
 Re-running `init` on an **existing workspace** is the upgrade path
 (NOOD_0089). Files fall into three classes with three policies:
@@ -213,6 +294,15 @@ workspace is agent-ready for Claude Code, VS Code Copilot, and Copilot CLI
 without a separate step. Run `noodle init mcp --force` yourself later only
 if you need to refresh a drifted entry.
 
+It also generates the **agent shell policy** (NOOD_0241) unless
+`--no-agent-policy`: `.claude/settings.json` (permissions allow
+`Bash(noodle:*)`/`Bash(git:*)`, deny the shell-composition metacharacters
+and text-wrangling executables — POSIX and PowerShell spellings),
+`.vscode/settings.json` (terminal auto-approve map — approval gating, so
+reported as advisory), and `.copilot/agent-policy.json` (the canonical
+host-neutral copy). All three merge, never clobber. Verify anytime with
+`noodle doctor --policy`.
+
 Sample:
 ```
 $ noodle init my-project --llm claude
@@ -225,6 +315,12 @@ MCP client config:
   my-project/.mcp.json: created
   my-project/.vscode/mcp.json: created
   my-project/.copilot/mcp-config.json: created
+
+Agent shell policy (noodle-only command lines):
+  my-project/.claude/settings.json: created
+  my-project/.vscode/settings.json: updated
+  my-project/.copilot/agent-policy.json: created
+  → verify anytime: noodle doctor --policy
 
 Next: cd my-project && noodle repl  — next steps in README.md
 ```
@@ -289,6 +385,7 @@ markers share a directory.
 | Flag | Default | Purpose | When to use |
 |---|---|---|---|
 | `--scope` | `auto` | `auto \| engine \| workspace \| install` — force a profile | Unusual nested layout, or install-only verification after a (re)install. `install` probes each PATH launcher with `--version`. |
+| `--policy` | off | The agent shell-policy check ONLY (`workspace.policy`): the generated host permission files exist, carry the current allow/deny sets, and actually deny the canned leak lines (e.g. `noodle author --help \| head -50`) | NOOD_0241: the mechanical verification for a no-MCP estate. Exit 1 when any host's policy is missing, stale, or ineffective; exit 2 outside a workspace. |
 | `--json` | off | One bounded JSON object: `ok`, `context`, `checks` with stable IDs | Agents/CI acting on findings without parsing prose. |
 
 Always checks the install: active build (version, editable/copy, path, git
@@ -297,7 +394,8 @@ identical duplicates are `INFO` (normal: project `.venv` + uv tool shim),
 conflicting builds are `FAIL` with the reinstall cure. In an engine
 checkout it verifies the editable install-link and warns on stray
 workspace files; in a workspace it checks `noodle.yaml`, scaffold glue,
-generated-template drift (`noodle init --force` refreshes), and MCP config.
+generated-template drift (`noodle init --force` refreshes), MCP config,
+and the agent shell policy (`workspace.policy`, NOOD_0241).
 Never writes, never touches the network, never reads secrets. Exit codes:
 `0` healthy (pass/info only), `1` findings (warn/fail), `2` bad
 path/scope. Full check-ID table:
@@ -313,6 +411,35 @@ INFO  [install.launchers] 2 launchers execute the same build — safe; optional 
 PASS  [engine.source-root] engine checkout at /Users/me/Projects/noodle (pyproject metadata readable)
 PASS  [engine.install-link] active noodle package resolves to this checkout
 ```
+
+## noodle update
+
+Re-link the running `noodle` to its engine checkout — THE step after
+`git pull` or `git checkout <branch>` (NOOD_0156).
+
+```
+noodle update
+```
+
+An editable install keeps the code current, but a branch that changed
+dependencies or the version needs the reinstall to land, and a non-editable
+copy needs it for everything. Runs exactly the command `noodle doctor`
+recommends, in the clone, against THIS interpreter. Deliberately never runs
+git — pull and checkout stay yours.
+
+## noodle docs
+
+Token-lean framework lookup — list the docs, fetch one by name, or grep a
+fact (the CLI twin of MCP `read_docs`).
+
+```
+noodle docs [NAME] [--query TEXT] [--section TEXT]
+```
+
+No args: every doc with a one-line summary. `NAME` fetches one
+(`noodle docs agent-playbook`); `--query` greps across all of them;
+`--section` slices a large doc. Needs a repo checkout / editable install
+(wheels don't ship `docs/`).
 
 ## noodle validate
 
@@ -503,6 +630,7 @@ noodle probe URL [OPTIONS]
 | `--compact` | off | Only what an author needs: controls needing a POM entry, paste-ready POM YAML, exact headings; drops the full control dump and next-pages list | NOOD_0117: the readable summary — a fraction of the tokens. Redundant with `--json`, which is compact unless you pass `--full`. |
 | `--section` | `all` | Emit one slice only: `controls` \| `pom` \| `steps` \| `headings` \| `revealed` \| `all` | NOOD_0117: one narrow question instead of grepping the whole dump in context. `revealed` (NOOD_0126) prints ONLY what a `--click` opened — its new controls and steps, nothing from the initial load. |
 | `--max-controls` | none | Cap each control list at N, noting how many were hidden | Long-tail pages. Compact mode caps at 25 by default (NOOD_0119); pass N to widen. |
+| `--brief` | off | Print the step templates once instead of one sentence per control; rows needing a POM entry keep their exact step | NOOD_0169: the cheaper text form for big pages; composes with `--compact` and `--json`. |
 | `--find` | none | Print ONLY the controls, result items, and card actions whose name, selector, step, or caption contains this text — matched PRE-cap, case/space-insensitive, with a selector, suggested step, and POM line per hit; with `--json`, the same hits as `{find, matches}` | NOOD_0169: one control out of a big page (a card's "Add to cart" below the compact cap) without grepping `.noodle/last_payload.json` — noodle output is payload-bounded; never pipe it through `grep`/`head`/`jq`. |
 | `--workspace`, `-w` | `.` | Workspace whose env chain resolves `{env:KEY}` in `--do` values | NOOD_0222: every other command takes `-w`; probing from outside the workspace dir still finds its `environments.yaml`/`secrets.env`. |
 
@@ -620,6 +748,22 @@ which is the confusing failure this whole mechanism exists to prevent.
 Chromium is the default engine and carries no `tag`: its absence means it.
 The human `noodle probe` output prints the same thing as an `Engine:` header,
 above the pages, and only when the engine is not chromium.
+
+## noodle probe-app
+
+Native-app probe (NOOD_0136): start the platform's Appium session, snapshot
+the accessibility tree ONCE, and dump every interactive node with its
+lookup strategy, visibility, a suggested step, and paste-ready POM entries
+for nameless nodes. Snapshot-only — nothing is tapped.
+
+```
+noodle probe-app (android|ios|windows|mac) [--json] [--full]
+```
+
+Picks the app from `NOODLE_<PLATFORM>_APP`; `NOODLE_APPIUM_CAPS` /
+`NOODLE_APPIUM_URL` are honoured exactly like a tagged run. `--json` emits
+the compact author-evidence payload (node list capped, visible first);
+`--full` opts into every node.
 
 ## noodle inspect
 
@@ -872,27 +1016,39 @@ $ noodle cost noodle_tests/web/shop/features/checkout.feature --model anthropic/
   💰 Estimate for noodle_tests/web/shop/features/checkout.feature: 412 input tokens | ~$0.0012 input-cost floor (output tokens unknowable pre-run) | model anthropic/claude-sonnet-5
 ```
 
-## noodle benchmark --gate
+## noodle benchmark
 
-Core-product regression benchmark (NOOD_0185): prove prompt → `.feature`
-generation is still fast and accurate after engine changes. **Runs only when
-asked**, and since NOOD_0190 the bare command *runs it* — one call generates
-both canonical test cases, runs them, serves the reports and prints the
-benchmark table. Full guide:
-[docs/benchmark.md](benchmark.md).
+Engine benchmarks (NOOD_0185/0232). Three modes, one command. Full guide —
+every flag, both workflows: [docs/benchmark.md](benchmark.md).
 
 ```
-noodle benchmark --gate [--json] [--init] [--score results.json]
+noodle benchmark [--gate | --session | --table] [OPTIONS]
 ```
 
-Exit **0 = PASS, 1 = REGRESSED**.
+- **Bare** — the headless spec-shape floor: the six specs in
+  `docs/benchmark-specs.md` sent to the engine as-is (no agent, no model)
+  against the bundled BusterBlock app. Useful for comparing two builds; it
+  is NOT what a user experiences.
+- **`--gate`** — the pre-PR regression gate: five canonical flows in a
+  fresh `<clone>/regression_runs/<stamp>_<build>_<sha>/` workspace, ~90s,
+  exit **0 = PASS, 1 = REGRESSED** (or stale install). Required before
+  every engine-branch PR.
+- **`--session` … `--table`** — the AGENT-DRIVEN run (what "run the
+  benchmark" means): `--session` scaffolds the workspace, hosts the app and
+  prints the runbook; the agent authors each spec through either door (the
+  ledger records `door: cli|mcp`, NOOD_0241); `--table` scores it, prints
+  the table and the verdict, and stops the app.
 
 | Flag / arg | Default | Purpose | When to use |
 |---|---|---|---|
-| (none) | — | Run the benchmark: fresh `<clone>/regression_runs/<stamp>_<build>_<sha>/` workspace → both canonical prompts authored + run → combined Allure + RCA + verdict served → benchmark table printed. Every number (generation time, run time, corrections, generated lines) comes from the engine's own payload | After developing new engine capabilities; also a self-contained demo |
-| `--json` | off | One bounded JSON payload instead of the table | Scripting, or a host that wants the numbers structured |
-| `--init` | off | Scaffold the fresh workspace and stop — don't run the benchmark | Driving the steps by hand for debugging |
-| `--score` | none | Re-score an existing run's `results.json` instead of running: same table, rewrites `verdict.json` + `verdict.html` | Re-scoring after a budget override, or in a script |
+| (none) | — | Headless spec-shape run: six specs, engine-only | Comparing two builds. |
+| `--gate` | off | The 5-flow PR gate; owns the `regression_runs/` workspace | Before opening/updating an engine PR. |
+| `--session` | off | Open an agent-driven session: scaffold workspace, host app, print runbook | "Run the benchmark" — the workflow the product ships as. |
+| `--table` | off | Score the open session, print the table + verdict, stop the app | After authoring all six specs. |
+| `--specs` | `docs/benchmark-specs.md` | Alternate spec document | Custom spec sets. |
+| `--json` | off | One bounded JSON payload instead of the table | Scripting. |
+| `--init` | off | With `--gate`: scaffold the fresh workspace and stop | Driving the gate steps by hand. |
+| `--score` | none | With `--gate`: re-score an existing `results.json` | Re-scoring after a budget override. |
 
 ## noodle rca-report
 
@@ -920,9 +1076,10 @@ RCA report written to artifacts/rca.md
 ## noodle report
 
 Manage test reports. Subcommands: `open`, `generate`, `serve`, `list`,
-`stop`. All take `--workspace`/`-w`; with no explicit directory argument they
-resolve against the workspace's **last-run root** (NOOD_0086): `<app>/report/`
-after a single-app run, `<workspace>/artifacts/` after a workspace-wide one.
+`stop`, `reset`. All take `--workspace`/`-w`; with no explicit directory
+argument they resolve against the workspace's **last-run root** (NOOD_0086):
+`<app>/report/` after a single-app run, `<workspace>/artifacts/` after a
+workspace-wide one.
 
 ### noodle report open
 
@@ -960,7 +1117,8 @@ noodle report serve [REPORT_DIR] [OPTIONS]
 |---|---|---|---|
 | `--workspace`, `-w` | `.` | Workspace dir | See top of doc. |
 | `--host` | `127.0.0.1` | Bind address | Default is local-only. Pass `--host 0.0.0.0` to share with teammates on the same network — failure screenshots/traces in the report can contain credentials typed during the run, so only share on a trusted network. |
-| `--port`, `-p` | `8000` | Port to serve on | Avoiding a collision with another local server. |
+| `--port`, `-p` | none | Port to serve on — foreground tries `8000` first, falling back to an OS-assigned port if it's taken; `--background` starts at an OS-assigned port by design | Pin a port explicitly; otherwise the printed URL is authoritative. |
+| `--background`, `-b` | off | Detach the server, print both URLs, and EXIT — no hung tool call | NOOD_0104: agent-driven serving; stop later with `noodle report stop`. |
 
 Serves reports over HTTP. With no `REPORT_DIR` (NOOD_0082) it hosts the
 last run's reports root — `<app>/report/reports` or
@@ -1010,6 +1168,18 @@ http.server` pointed at a report directory — `noodle report stop` finds
 these via `lsof` (best-effort; no-op on Windows) and kills them too, so an
 agent that bypassed `report serve` doesn't leave a server orphaned. Registry
 entries whose process is already gone are pruned silently.
+
+### noodle report reset
+
+```
+noodle report reset [OPTIONS]
+```
+
+Start the package's report from nothing (NOOD_0229): drop every accumulated
+scenario result and its evidence. The report combines results across runs by
+default — a run replaces only the scenarios it re-ran — so this is the
+explicit "forget history" move when a package's kept results no longer
+describe the suite.
 
 ## noodle clean
 
@@ -1101,6 +1271,45 @@ bundled copy, so MCP-blocked environments get the trigger/field contract
 without `read_docs`.
 
 ---
+
+## noodle pom
+
+POM pin administration — resolve a recorded ambiguity, pin a selector, or
+list every pin (NOOD_0139/0222).
+
+```
+noodle pom resolve <A-id> --choose C<n> [--app NAME] [-w WS] [--json]
+noodle pom set "<phrase>" (--css|--xpath|--id|--testid|--text|--role|--label) <value> [--app NAME] [-w WS] [--json]
+noodle pom list [-w WS] [--json]
+```
+
+`resolve` pins the candidate you meant for an ambiguity id printed by the
+ambiguous-locator warning (the engine already holds each candidate's
+selector — you supply only the choice). `set` is the escape hatch for a
+phrase no probe settles — exactly one selector kind per call. `list` shows
+every pin per file WITH its URL scope, plus any ambiguity the last run
+recorded.
+
+## noodle workspace inspect
+
+Everything a caller would otherwise `ls` for (NOOD_0228): test packages,
+their features and tags, environment KEY NAMES (never values), POM files
+with their URL scope and pinned phrases, whether a secrets file exists
+(never its contents), and where reports land.
+
+```
+noodle workspace inspect [--app NAME] [-w WS] [--json/--no-json]
+```
+
+## noodle migrate evidence-markers
+
+Convert per-step evidence requests written inside step text into
+`@evidence:steps=` / `@evidence:skip=` scenario tags — the only form the
+engine accepts (NOOD_0228). Dry-run by default; `--write` applies.
+
+```
+noodle migrate evidence-markers [--write] [-w WS] [--json]
+```
 
 ## noodle-mcp (MCP server)
 

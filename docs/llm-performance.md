@@ -217,13 +217,17 @@ guards — are the deterministic proxies that shape it:
 - **≤ 2 browser launches** on the green path (probe + run);
 - **0 engine-side LLM calls** on the deterministic path;
 - compact probe / quiet-summary / compact-RCA payloads under their byte
-  ceilings; generated `AGENTS.md` **≤ 70 lines**.
+  ceilings; generated `AGENTS.md` **under its byte ceiling** in
+  `noodle/instruction_budget.py` (line-count ceilings were retired by
+  NOOD_0159 — tokens track bytes, not lines).
 
 `unit_tests/test_nood_0117.py::test_generation_budget_ceilings` guards the
 framework-side artifact sizes (compact probe, quiet summary, compact RCA);
-`test_nood_0128.py`/`test_nood_0129.py` guard the AGENTS.md ceiling and the
-one-call authoring/readiness contract. All run in both CI pipelines (macOS +
-Windows).
+`unit_tests/test_nood_0159.py` is the sole enforcer of the instruction-surface
+ceilings — it reads `instruction_budget.ledger()` and prints the whole ledger
+on failure — and `test_nood_0160.py` additionally holds AGENTS.md to a 512-byte
+headroom floor. `test_nood_0128.py`/`test_nood_0129.py` guard the one-call
+authoring/readiness contract. All run in both CI pipelines (macOS + Windows).
 
 ## 7. AIC is an architecture acceptance criterion (NOOD_0156)
 

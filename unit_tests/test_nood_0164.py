@@ -19,9 +19,14 @@ REPO = Path(__file__).resolve().parent.parent
 
 # --- the trimmer itself ------------------------------------------------------
 
-def test_small_payload_passes_through_untouched():
+def test_small_payload_passes_through_stamped_complete():
+    # NOOD_0241 — the pass-through now carries its own proof of wholeness:
+    # `payload_complete: true`, stamped on a COPY (the caller's dict is not
+    # mutated). Everything else is byte-identical.
     payload = {"ready": True, "blocking": []}
-    assert PB.bound(payload) is payload
+    out = PB.bound(payload)
+    assert out == {**payload, "payload_complete": True}
+    assert "payload_complete" not in payload             # no caller mutation
 
 
 def test_oversized_payload_is_trimmed_and_says_so():
@@ -51,7 +56,10 @@ def test_one_runaway_string_does_not_terminate_early():
 def test_untrimmable_payload_is_returned_whole_and_flagged():
     payload = {f"k{i}": "v" * 100 for i in range(200)}   # nothing big enough
     out = PB.bound(payload)
-    assert len(out) == 201                              # every key kept + note
+    # every key kept + payload_note + payload_complete (NOOD_0241 — returned
+    # WHOLE is exactly what complete means, even while over budget)
+    assert len(out) == 202
+    assert out["payload_complete"] is True
     assert "nothing is trimmable" in out["payload_note"]
 
 

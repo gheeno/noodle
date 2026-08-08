@@ -93,12 +93,16 @@ tests or start test apps unless also asked.
    flags them in RCA warnings (check those after green runs). App-
    specific python scripts live in that app's `resources/scripts/`.
 
-9. **Observability = noodle commands only** (NOOD_0215). Never curl/wget
-   a URL to see if it's up — `noodle probe <url>` names a dead origin
-   itself. Which tests exist? `noodle list`, not ls/find. Payloads are
-   pre-bounded: read as returned, no grep/jq/sed/head. No noodle command
-   for what you need? Say so and stop — that's an engine gap to report,
-   not a shell command to improvise. Table: [AGENTS.md](../AGENTS.md).
+9. **Observability = noodle commands only** (NOOD_0215/0241). A shell
+   line is ONE noodle invocation and its flags — any other executable,
+   or any of `| > < && ; $(` backtick, is forbidden whatever it is;
+   never `cd` first (pass `-w`). Never curl/wget a URL to see if it's
+   up — `noodle probe <url>` names a dead origin itself. Which tests
+   exist? `noodle list`. Payloads are complete as returned
+   (`payload_complete`); unknown flag → `noodle capabilities --json`,
+   never `--help`. No noodle command for what you need? Say so and
+   stop — that's an engine gap to report, not a shell command to
+   improvise. Table: [AGENTS.md](../AGENTS.md).
 10. **"run the benchmark"** → `noodle benchmark --session`, author each
    spec as `spec_<id>.feature` (`--feature-path`), then `--table`.
    `--gate` (5 flows) is the pre-PR check; exit 0 required. Never
