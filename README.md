@@ -378,7 +378,8 @@ uv tool install --editable ".[all]" --with-executables-from playwright
 uv tool update-shell            # adds uv's tool bin dir to PATH — open a NEW terminal after this runs
 
 # Option A — per-terminal venv (only if you're also hacking on Noodle itself)
-# source .venv/bin/activate
+# source .venv/bin/activate         # bash/zsh
+# source .venv/bin/activate.fish    # fish — the plain file above is POSIX syntax fish can't parse
 # uv pip install -e ".[all]"    # everything for MCP + no-LLM manual mode; litellm is opt-in, see below
 # uv pip install -e ".[llm]"    # optional — only if you want LiteLLM-backed manual mode (cloud provider or Ollama)
 
@@ -659,6 +660,9 @@ cd noodle
 uv tool install --editable ".[all]" --with-executables-from playwright
 playwright install chromium
 uv tool update-shell   # then open a NEW terminal — PATH only updates in shells started after this
+                       # Run it from the shell you actually use: it edits that shell's own
+                       # profile (zsh ~/.zshenv, bash ~/.bashrc + ~/.bash_profile,
+                       # fish ~/.config/fish/config.fish). `noodle doctor` verifies it.
 ```
 
 ```powershell

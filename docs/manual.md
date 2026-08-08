@@ -85,7 +85,7 @@ Windows 11, pick one before you start:
 
 | | Option B — permanent PATH (default below) | Option A — per-terminal |
 |---|---|---|
-| Command | `uv tool install --editable ".[all]" …` | `source .venv/bin/activate` / `.venv\Scripts\Activate.ps1` |
+| Command | `uv tool install --editable ".[all]" …` | `source .venv/bin/activate` (fish: `activate.fish`) / `.venv\Scripts\Activate.ps1` |
 | You run it | once, ever | once per new terminal window, every time |
 | Best for | just using Noodle to run tests | hacking on Noodle itself |
 | Jump to | right below | [Option A further down this Part](#option-a--per-terminal-venv-hacking-on-noodle-itself) |
@@ -107,9 +107,11 @@ in this repo still updates the global commands.
 > **`noodle: command not found` right after `uv tool install`?** The tool
 > bin dir (`~/.local/bin` on macOS/Linux, `%USERPROFILE%\.local\bin` on
 > Windows — check either with `uv tool dir --bin`) isn't on `PATH` yet —
-> `uv tool update-shell` (above) edits your shell profile to add it —
-> whichever shell you use: `.zshrc`, `.bashrc`,
-> `~/.config/fish/config.fish`, or the Windows user `PATH` registry key.
+> `uv tool update-shell` (above) edits your shell profile to add it — in
+> that shell's own syntax, whichever shell you use: `~/.zshenv` (zsh),
+> `~/.bashrc` **and** `~/.bash_profile` (bash — both, so a macOS login
+> shell gets it too), `~/.config/fish/config.fish` (fish, written as
+> `fish_add_path`), or the Windows user `PATH` registry key.
 > **Open a new terminal window afterward** — the edit only takes effect in
 > shells started after it ran. Run it *from the shell you actually use*; if
 > `noodle` works in one terminal and not another, that's the shell whose
@@ -155,14 +157,29 @@ below (and every `noodle` command after it) will silently run against your
 system Python instead of this project's:
 
 ```bash
-# macOS
+# macOS/Linux — bash or zsh
 source .venv/bin/activate
+```
+
+```fish
+# macOS/Linux — fish (NOOD_0242)
+source .venv/bin/activate.fish
 ```
 
 ```powershell
 # Windows 11 (PowerShell)
 .venv\Scripts\Activate.ps1
 ```
+
+> **fish users: the `.fish` suffix is not optional.** `uv venv` writes one
+> activate script per shell family, and the plain `.venv/bin/activate` is
+> POSIX-shell syntax that fish cannot parse — sourcing it fails with
+> `Unsupported use of '='` and leaves the venv **inactive**, so the
+> `uv pip install` below then errors with `No virtual environment found`.
+> `ls .venv/bin/activate*` lists every variant uv generated
+> (`.fish`, `.csh`, `.nu`, `.ps1`, …). Option B above sidesteps activation
+> entirely and is shell-agnostic — prefer it unless you need the project-local
+> `.venv`.
 
 **Every new terminal window needs that activate line again** before
 `noodle`/`playwright` commands work — that's the #1 "it worked yesterday"
@@ -1873,8 +1890,10 @@ per user (no admin needed): `Set-ExecutionPolicy -Scope CurrentUser
 -ExecutionPolicy RemoteSigned`, then retry `.venv\Scripts\Activate.ps1`.
 
 **`noodle: command not found`**
-Using the project-local `.venv`? Activate it first — macOS:
-`source .venv/bin/activate`; Windows: `.venv\Scripts\Activate.ps1`. Used
+Using the project-local `.venv`? Activate it first — bash/zsh:
+`source .venv/bin/activate`; **fish: `source .venv/bin/activate.fish`**
+(the plain file is POSIX syntax and errors with `Unsupported use of '='`);
+Windows: `.venv\Scripts\Activate.ps1`. Used
 `uv tool install` instead for a permanent, no-activate `noodle` on `PATH`?
 Run `uv tool update-shell`, then open a **new** terminal — the PATH edit
 doesn't apply to already-open shells. See [Part 2](#part-2--get-the-framework).

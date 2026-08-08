@@ -34,12 +34,18 @@ explicitly asked for that too. Finish by reporting the checklist in §7.
    When a just-installed command isn't found, open a fresh shell (or source
    the profile) before concluding the install failed.
    **Any shell works** (NOOD_0192) — bash, zsh, fish, PowerShell. The install
-   is shell-agnostic because `uv tool update-shell` writes the right file for
-   whichever shell it finds (`~/.zshrc`, `~/.bashrc`,
-   `~/.config/fish/config.fish`, the PowerShell profile). There is no
-   fish-specific install path and none is needed; run the same commands in
-   the user's own shell. `noodle doctor` checks `$SHELL` can actually find
+   is shell-agnostic because `uv tool update-shell` writes the right file, in
+   that shell's own syntax, for whichever shell it finds: `~/.zshenv` (zsh),
+   `~/.bashrc` **and** `~/.bash_profile` (bash — both, so a macOS login shell
+   is covered), `~/.config/fish/config.fish` (fish, as `fish_add_path`), the
+   PowerShell profile. There is no fish-specific install path for §3's
+   `uv tool install` route and none is needed; run the same commands in the
+   user's own shell. `noodle doctor` checks `$SHELL` can actually find
    `noodle` and prints that shell's fix if it can't.
+   **The one command that is NOT shell-agnostic** (NOOD_0242) is the venv
+   activate line in the fallback Option A route — fish needs
+   `source .venv/bin/activate.fish`, never the plain `activate`, which is
+   POSIX syntax fish rejects with `Unsupported use of '='`. See §6.
 5. **Never disable TLS verification** to get around a corporate-proxy
    certificate error — see §6 for the sanctioned fix.
 
@@ -229,6 +235,7 @@ install-plus-run.
 | `noodle` works in one terminal but not the user's own (often **fish**) | The PATH edit landed in a different shell's profile — `uv tool update-shell` was run before that shell existed, or the user switched shells since | Re-run `uv tool update-shell` **from the shell that can't find it**, new terminal. fish fallback: `fish_add_path (uv tool dir --bin)`. `noodle doctor` names this as `install.login-shell` |
 | Any just-installed tool "not found" | PATH edit predates this shell | new terminal first; only then re-investigate |
 | `uv pip install` → `error: No virtual environment found` | Option A path without `uv venv` first | `uv venv`, activate, retry — or switch to the §3 Option B install |
+| fish: `source .venv/bin/activate` → `Unsupported use of '='` (then the `No virtual environment found` row above) | The plain `activate` is POSIX-shell syntax; fish has its own script (NOOD_0242) | `source .venv/bin/activate.fish` — `ls .venv/bin/activate*` lists every variant uv wrote (`.fish`, `.csh`, `.nu`, `.ps1`). Or switch to the shell-agnostic §3 Option B install |
 | `CERTIFICATE_VERIFY_FAILED` deep in a build (usually the `llm` extra, corporate network) | TLS-inspecting proxy the OS trusts but Python build tooling doesn't | Base install is unaffected — proceed without `llm`; see README § Troubleshooting for trusting the proxy CA properly. Never disable TLS verification |
 | `.feature` files uncoloured after install + full VS Code restart | Stale build, or Cucumber owns `.feature` in a workspace with no association | Re-run `noodle install-extension` (replaces the old build); if Cucumber highlights it, run `noodle init` to add the `files.associations`; full quit + reopen |
 | `noodle` works in the clone but not elsewhere | Option A venv install, not Option B | Run the §3 `uv tool install` (Option B) |
